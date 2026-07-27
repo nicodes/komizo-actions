@@ -271,7 +271,7 @@ runs:
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before anything has been published.
     - if: inputs.host != ''
-      uses: nicodes/komizo-actions/connect@958cff422edbd1d1928309ad6e079492932def99
+      uses: nicodes/komizo-actions/connect@c85e8acc09f834d49b0fb271efd50c248469d295
       with:
         host: ${{ inputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', inputs.app) }}
@@ -284,7 +284,7 @@ runs:
     #    asked to deploy this tag.
     - id: config
       if: inputs.config-compose != ''
-      uses: nicodes/komizo-actions/publish-config@958cff422edbd1d1928309ad6e079492932def99
+      uses: nicodes/komizo-actions/publish-config@c85e8acc09f834d49b0fb271efd50c248469d295
       with:
         compose: ${{ inputs.config-compose }}
         caddy: ${{ inputs.config-caddy }}
@@ -295,14 +295,14 @@ runs:
     # 3. Secrets BEFORE the deploy, so the containers it recreates start with
     #    the current values.
     - if: inputs.secrets != ''
-      uses: nicodes/komizo-actions/set-secrets@958cff422edbd1d1928309ad6e079492932def99
+      uses: nicodes/komizo-actions/set-secrets@c85e8acc09f834d49b0fb271efd50c248469d295
       with:
         names: ${{ inputs.secrets }}
         command: doas /usr/local/bin/set-secret-${{ inputs.app }}
 
     # 4. Make the tag live.
     - id: version
-      uses: nicodes/komizo-actions/set-version@958cff422edbd1d1928309ad6e079492932def99
+      uses: nicodes/komizo-actions/set-version@c85e8acc09f834d49b0fb271efd50c248469d295
       with:
         version: ${{ inputs.version }}
         registry: ${{ inputs.registry }}
@@ -313,7 +313,7 @@ runs:
     # 5. Prove it is serving. Skipped entirely when no URL is given.
     - id: health
       if: inputs.health-url != ''
-      uses: nicodes/komizo-actions/healthcheck@958cff422edbd1d1928309ad6e079492932def99
+      uses: nicodes/komizo-actions/healthcheck@c85e8acc09f834d49b0fb271efd50c248469d295
       with:
         url: ${{ inputs.health-url }}
         expect: ${{ inputs.health-expect }}
