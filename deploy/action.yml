@@ -80,6 +80,13 @@ inputs:
       and nothing neighbouring it.
     required: false
     default: ""
+  config-static:
+    description: >
+      A directory of files to serve, published with the config image and
+      unpacked to the app directory. A caddy fragment can serve it with no
+      container behind it. Requires config-image.
+    required: false
+    default: ""
   config-caddy:
     description: >
       Reverse-proxy routes for this app. Newline-separated for more than one.
@@ -183,6 +190,7 @@ runs:
         APP: ${{ inputs.app }}
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
         CONFIG_CADDY: ${{ inputs.config-caddy }}
+        CONFIG_STATIC: ${{ inputs.config-static }}
         CONFIG_IMAGE: ${{ inputs.config-image }}
         SECRET_NAMES: ${{ inputs.secrets }}
       run: |
@@ -238,6 +246,13 @@ runs:
           echo "::error::config-caddy is set but config-compose is empty. They are published together in one image, so nothing would be shipped."
           exit 1
         fi
+        # Same for the static files, and the failure is worse: the routes would
+        # deploy and the site they serve would not, so every one of them 404s
+        # from a green pipeline.
+        if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_STATIC" ]; then
+          echo "::error::config-static is set but config-compose is empty. They are published together in one image, so nothing would be shipped."
+          exit 1
+        fi
 
         # Confirm each named secret reached this step, so a value that failed
         # to propagate surfaces here with full context rather than deeper in.
@@ -273,6 +288,7 @@ runs:
       with:
         compose: ${{ inputs.config-compose }}
         caddy: ${{ inputs.config-caddy }}
+        static: ${{ inputs.config-static }}
         image: ${{ inputs.config-image }}
         tag: ${{ inputs.version }}
 
