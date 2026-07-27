@@ -1,0 +1,306 @@
+name: Deploy
+description: >
+  The whole deploy, in one step: connect, publish this commit's config, set
+  secrets, make the tag live, and check the result is serving.
+
+  Everything except `version` and `app` is optional. Supply what your app needs
+  and the rest is skipped — no config, no secrets, no health check.
+
+  This wraps connect, publish-config, set-secrets, set-version and healthcheck.
+  Those remain the primitives; reach for them when you need your own steps
+  interleaved, and use this for everything else.
+
+  It exists because the order is not obvious and two of the ways to get it
+  wrong fail SILENTLY:
+
+    * secrets set after the deploy — containers read their environment at
+      start, and the deploy is what restarts them, so a secret written
+      afterwards sits unused until the next deploy.
+    * config published after the deploy — the host pulls the PREVIOUS commit's
+      compose.yml and reports success.
+
+inputs:
+  # --- what to deploy -------------------------------------------------------
+  version:
+    description: Tag to deploy, normally the commit SHA.
+    required: true
+
+  # --- connection -----------------------------------------------------------
+  # Omit `host` if the connect action already ran in this job, e.g. because you
+  # needed `ssh deploy-target ...` for a backup before deploying.
+  host:
+    description: >
+      Server hostname. Supplying it makes this action connect for you. Leave it
+      empty if the connect action has already run in this job.
+    required: false
+    default: ""
+  user:
+    description: >
+      Deploy account. Defaults to komizo-<app>, which is what `komizo` creates, so
+      you only need this if you overrode it. Only used when host is set.
+    required: false
+    default: ""
+  key:
+    description: Private half of the deploy key. Required when host is set.
+    required: false
+    default: ""
+  known-hosts:
+    description: >
+      `ssh-keyscan` output for the host, verified against the server's own
+      /etc/ssh/ssh_host_*_key.pub. Required when host is set, unless
+      allow-unpinned-host is true.
+    required: false
+    default: ""
+  port:
+    description: SSH port.
+    required: false
+    default: "22"
+  allow-unpinned-host:
+    description: >
+      Discover the host key at deploy time instead of pinning it. This is
+      trust-on-first-use on EVERY run. Opt in only for throwaway hosts.
+    required: false
+    default: "false"
+
+  # --- which app on the host -------------------------------------------------
+  app:
+    description: >
+      App name, matching the one you gave it in `komizo`. Every app on a server
+      has its own name, whether or not it shares the box: it selects the deploy
+      account (komizo-<app>) and the privileged commands (deploy-<app> and
+      set-secret-<app>).
+    required: true
+
+  # --- config ---------------------------------------------------------------
+  config-compose:
+    description: >
+      Path to this app's compose file, published for this commit. Empty skips
+      the config publish entirely, leaving whatever compose.yml the host
+      already has. Named explicitly, so the image holds exactly what you list
+      and nothing neighbouring it.
+    required: false
+    default: ""
+  config-caddy:
+    description: >
+      Reverse-proxy routes for this app. Newline-separated for more than one.
+      Leave empty for an app not served over the shared proxy.
+    required: false
+    default: ""
+  config-image:
+    description: >
+      Image reference WITHOUT a tag for the config image, e.g.
+      ghcr.io/you/myapp-config. Must match the host's CONFIG_IMAGE.
+      Required when config-compose is set.
+    required: false
+    default: ""
+
+  # --- secrets --------------------------------------------------------------
+  secrets:
+    description: >
+      Newline-separated secret names to push before deploying. Each must exist
+      as an environment variable on THIS step — pass them under `env:`, never
+      `with:`, since an action input is recorded in the run and readable via
+      the API.
+    required: false
+    default: ""
+
+  # --- registry -------------------------------------------------------------
+  registry:
+    description: Registry the host authenticates against before pulling. Empty to skip.
+    required: false
+    default: ghcr.io
+  registry-user:
+    description: Registry username.
+    required: false
+    default: ""
+  registry-token:
+    description: >
+      Registry password. Prefer the run-scoped GITHUB_TOKEN so nothing
+      long-lived is left on the server.
+    required: false
+    default: ""
+
+  # --- health check ---------------------------------------------------------
+  # Setting health-url is what enables the check; the rest are overrides. There
+  # is no boolean toggle because a check without a URL has nothing to poll.
+  health-url:
+    description: URL to poll after deploying. Empty skips the check entirely.
+    required: false
+    default: ""
+  health-expect:
+    description: >
+      Substring the response body must contain. Empty means any 2xx counts,
+      which is usually what you want.
+    required: false
+    default: ""
+  health-attempts:
+    description: How many times to try before giving up.
+    required: false
+    default: "30"
+  health-delay:
+    description: Seconds between attempts.
+    required: false
+    default: "5"
+  health-timeout:
+    description: Seconds before a single request is considered failed.
+    required: false
+    default: "10"
+
+outputs:
+  version:
+    description: The version that was deployed. Echoes the input, for chaining.
+    value: ${{ steps.version.outputs.version }}
+  previous-version:
+    description: >
+      The version that was live before this ran, as reported by the host. Empty
+      on a first deploy. This is what makes an automatic rollback possible from
+      a later step — see the README.
+    value: ${{ steps.version.outputs.previous-version }}
+  config-image-ref:
+    description: >
+      Full reference of the config image published, INCLUDING the tag — unlike
+      the `config-image` input, which must not carry one. Empty if no config
+      was published.
+    value: ${{ steps.config.outputs.image-ref }}
+  health-attempts-used:
+    description: >
+      Attempts the health check actually needed, if it ran. Named apart from
+      the `health-attempts` input, which is the ceiling rather than the result.
+    value: ${{ steps.health.outputs.attempts-used }}
+
+runs:
+  using: composite
+  steps:
+    # Everything is checked before anything is published or restarted, so a
+    # misconfiguration costs a failed step rather than a half-applied deploy.
+    - name: Validate inputs
+      shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+        KEY: ${{ inputs.key }}
+        KNOWN_HOSTS: ${{ inputs.known-hosts }}
+        ALLOW_UNPINNED: ${{ inputs.allow-unpinned-host }}
+        APP: ${{ inputs.app }}
+        CONFIG_COMPOSE: ${{ inputs.config-compose }}
+        CONFIG_CADDY: ${{ inputs.config-caddy }}
+        CONFIG_IMAGE: ${{ inputs.config-image }}
+        SECRET_NAMES: ${{ inputs.secrets }}
+      run: |
+        set -euo pipefail
+
+        if [ -n "${HOST:-}" ]; then
+          if [ -z "${KEY:-}" ]; then
+            # D holds a bare dollar so the two-brace sequence is never present
+            # in this file. Actions parses ${'{{'} out of a composite action's
+            # template before bash runs, and a composite action has no secrets
+            # context -- so writing the hint literally makes the action fail to
+            # LOAD, for every caller, regardless of shell escaping.
+            D='$'
+            echo "::error::host is set but key is empty. Pass the deploy private key, e.g. 'key: ${D}{{ secrets.SSH_DEPLOY_KEY }}'."
+            exit 1
+          fi
+          if [ -z "${KNOWN_HOSTS:-}" ] && [ "${ALLOW_UNPINNED:-false}" != "true" ]; then
+            echo "::error::host is set but known-hosts is empty. Capture it with 'ssh-keyscan $HOST', verify it against the server's own /etc/ssh/ssh_host_*_key.pub, and store it as a repository VARIABLE. To skip pinning anyway, set allow-unpinned-host: true."
+            exit 1
+          fi
+        else
+          # No host given, so an earlier step must have run connect. Check the
+          # file connect writes rather than asking ssh: OpenSSH resolves
+          # ~/.ssh/config from the passwd database, not $HOME, which makes
+          # `ssh -G` answer for the wrong home in some environments.
+          if ! grep -qE '^[[:space:]]*Host[[:space:]]+deploy-target[[:space:]]*$' "$HOME/.ssh/config" 2>/dev/null; then
+            echo "::error::No 'host' input and no deploy-target entry in ~/.ssh/config. Either pass host/key/known-hosts to this action, or run the connect action in an earlier step."
+            exit 1
+          fi
+          echo "Using the deploy-target configured by an earlier step."
+        fi
+
+        # Interpolated into a command path below, so constrain it.
+        case "${APP:-}" in
+          '') ;;
+          *[!A-Za-z0-9_-]*)
+            echo "::error::app must be letters, digits, underscore or hyphen; got '$APP'."
+            exit 1 ;;
+        esac
+
+        if [ -n "$CONFIG_COMPOSE" ] && [ -z "$CONFIG_IMAGE" ]; then
+          echo "::error::config-compose is set but config-image is empty. Pass the registry path the host was bootstrapped with (its CONFIG_IMAGE)."
+          exit 1
+        fi
+        if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_IMAGE" ]; then
+          echo "::error::config-image is set but config-compose is empty. Point config-compose at this app's compose file."
+          exit 1
+        fi
+        # The caddy routes ride along with the compose file in one image, so
+        # naming them without it publishes nothing and silently does nothing --
+        # which would look exactly like a working deploy.
+        if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_CADDY" ]; then
+          echo "::error::config-caddy is set but config-compose is empty. They are published together in one image, so nothing would be shipped."
+          exit 1
+        fi
+
+        # Confirm each named secret reached this step, so a value that failed
+        # to propagate surfaces here with full context rather than deeper in.
+        missing=()
+        while IFS= read -r name; do
+          name="${name//[[:space:]]/}"
+          [ -z "$name" ] && continue
+          [ -z "${!name+set}" ] && missing+=("$name")
+        done <<< "$SECRET_NAMES"
+        if [ ${#missing[@]} -gt 0 ]; then
+          D='$'
+          echo "::error::No environment variable for: ${missing[*]}. Pass each under env: on this step, e.g. '${missing[0]}: ${D}{{ secrets.${missing[0]} }}'. Environment-scoped secrets are invisible to jobs without that environment."
+          exit 1
+        fi
+
+    # 1. Connect, unless an earlier step already did. This verifies the
+    #    connection, so a bad key fails before anything has been published.
+    - if: inputs.host != ''
+      uses: nicodes/komizo-actions/connect@v0
+      with:
+        host: ${{ inputs.host }}
+        user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', inputs.app) }}
+        key: ${{ inputs.key }}
+        known-hosts: ${{ inputs.known-hosts }}
+        port: ${{ inputs.port }}
+        allow-unpinned-host: ${{ inputs.allow-unpinned-host }}
+
+    # 2. Publish this commit's compose.yml, so the host has it before it is
+    #    asked to deploy this tag.
+    - id: config
+      if: inputs.config-compose != ''
+      uses: nicodes/komizo-actions/publish-config@v0
+      with:
+        compose: ${{ inputs.config-compose }}
+        caddy: ${{ inputs.config-caddy }}
+        image: ${{ inputs.config-image }}
+        tag: ${{ inputs.version }}
+
+    # 3. Secrets BEFORE the deploy, so the containers it recreates start with
+    #    the current values.
+    - if: inputs.secrets != ''
+      uses: nicodes/komizo-actions/set-secrets@v0
+      with:
+        names: ${{ inputs.secrets }}
+        command: doas /usr/local/bin/set-secret-${{ inputs.app }}
+
+    # 4. Make the tag live.
+    - id: version
+      uses: nicodes/komizo-actions/set-version@v0
+      with:
+        version: ${{ inputs.version }}
+        registry: ${{ inputs.registry }}
+        registry-user: ${{ inputs.registry-user }}
+        registry-token: ${{ inputs.registry-token }}
+        command: doas /usr/local/bin/deploy-${{ inputs.app }}
+
+    # 5. Prove it is serving. Skipped entirely when no URL is given.
+    - id: health
+      if: inputs.health-url != ''
+      uses: nicodes/komizo-actions/healthcheck@v0
+      with:
+        url: ${{ inputs.health-url }}
+        expect: ${{ inputs.health-expect }}
+        attempts: ${{ inputs.health-attempts }}
+        delay: ${{ inputs.health-delay }}
+        timeout: ${{ inputs.health-timeout }}
