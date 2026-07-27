@@ -32,6 +32,22 @@ inputs:
       empty for an app that is not served over the shared proxy.
     required: false
     default: ""
+  static:
+    description: >
+      A directory of files to serve, published under /config/public and
+      unpacked by the host to <app dir>/public.
+
+      This is the one input that is a DIRECTORY rather than named files, and
+      deliberately so: a built site is thousands of files nobody is going to
+      list, and it is an artifact your build produced rather than something
+      sitting in your repository next to a private key. Point it at the output
+      directory — dist/, build/, _site/ — not at your source tree.
+
+      The shared proxy mounts the app directory read-only, so a caddy fragment
+      can serve this with no container behind it. An app that is only files
+      needs no compose service at all.
+    required: false
+    default: ""
   image:
     description: >
       Image reference WITHOUT a tag, e.g. ghcr.io/you/myapp-config. Must
@@ -57,6 +73,7 @@ runs:
       env:
         COMPOSE: ${{ inputs.compose }}
         CADDY: ${{ inputs.caddy }}
+        STATIC: ${{ inputs.static }}
         IMAGE: ${{ inputs.image }}
         TAG: ${{ inputs.tag }}
       run: |
@@ -118,6 +135,29 @@ runs:
             cp "$f" "$stage/caddy/$base"
             included="$included"$'\n'"caddy/$base <- $f"
           done <<< "$CADDY"
+        fi
+
+        if [ -n "$STATIC" ]; then
+          if [ ! -d "$STATIC" ]; then
+            echo "::error::static directory '$STATIC' does not exist. It is a path in your repository or build output, relative to the workspace."
+            exit 1
+          fi
+          # Refused rather than published. A workspace root as the document root
+          # would put .git, the workflow that built it and every source file on
+          # the public internet, and the mistake is a single wrong character.
+          if [ "$(cd "$STATIC" && pwd -P)" = "$(pwd -P)" ]; then
+            echo "::error::static must not be the workspace root. Point it at your build output — dist/, build/, _site/ — not at the whole checkout."
+            exit 1
+          fi
+          if [ -e "$STATIC/.git" ]; then
+            echo "::error::static directory '$STATIC' contains a .git directory; that is a source tree, not build output."
+            exit 1
+          fi
+          mkdir -p "$stage/public"
+          # The trailing /. copies the CONTENTS, so the directory named here
+          # becomes the document root rather than a folder inside it.
+          cp -a "$STATIC/." "$stage/public/"
+          included="$included"$'\n'"public/ <- $STATIC ($(find "$STATIC" -type f | wc -l | tr -d ' ') files)"
         fi
 
         # Written outside the stage so it is not itself packaged into /config.

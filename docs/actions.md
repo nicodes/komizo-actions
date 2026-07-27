@@ -87,6 +87,7 @@ tag — in the one order that is correct.
 | `app` | yes | — | Which app — selects the account `komizo-<app>` and the commands `deploy-<app>` and `set-secret-<app>`. Matches the name you gave it in `komizo`. |
 | `config-compose` | no | `""` | Path to the compose file to publish for this commit. Empty skips the config publish. |
 | `config-caddy` | no | `""` | Reverse-proxy routes. Newline-separated for more than one. |
+| `config-static` | no | `""` | A directory of files to serve. Unpacked to the app directory, where the shared proxy can serve it with no container behind it. |
 | `config-image` | no | `""` | Config image reference **without** a tag. Required with `config-compose`. |
 | `secrets` | no | `""` | Newline-separated secret names. Each must be an env var on the step. |
 | `registry` | no | `ghcr.io` | Registry the host authenticates against. Empty to skip. |
@@ -219,6 +220,19 @@ Each file is **named explicitly**, and only named files are published. There is
 no directory sweep, so a stray key or a second environment's config sitting
 next to your compose file cannot ride along into a registry.
 
+`static` is the one exception, and it is a directory on purpose: a built site is
+thousands of files nobody is going to list, and it is output your build produced
+rather than something sitting in your repo beside a private key. The host
+unpacks it to `<app dir>/public`, which the shared proxy mounts read-only — so a
+caddy fragment can serve it with **no container behind it**. An app that is only
+files needs no compose service at all; see
+[an app that is only files](https://github.com/nicodes/komizo-be/blob/main/docs/proxy.md).
+
+Point it at build output, not at your repository. The action refuses the
+workspace root, and refuses any directory containing `.git`: publishing either
+would put your source and your history on the public internet, and the mistake
+is one wrong character.
+
 No Dockerfile needed in your repo — the action stages the files under their
 canonical names and generates `FROM scratch` + `COPY . /config`.
 
@@ -226,6 +240,7 @@ canonical names and generates `FROM scratch` + `COPY . /config`.
 | --- | --- | --- | --- |
 | `compose` | yes | — | Path to the compose file. Published as `/config/compose.yml`, so the name on disk is yours to choose. |
 | `caddy` | no | `""` | Reverse-proxy routes. Newline-separated for more than one; published under `/config/caddy/`. |
+| `static` | no | `""` | A **directory** of files to serve, published under `/config/public/`. See below. |
 | `image` | yes | — | Image reference **without** a tag. Must match the host's `CONFIG_IMAGE`. |
 | `tag` | yes | — | Tag to publish, normally the commit SHA. |
 
