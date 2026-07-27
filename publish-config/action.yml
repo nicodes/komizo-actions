@@ -1,0 +1,139 @@
+name: Publish config image
+description: >
+  Publish this commit's compose.yml — and optionally its reverse-proxy routes —
+  as a container image the host extracts at deploy time.
+
+  This is what lets a compose.yml change ship on merge without giving the
+  deploy user write access to the host. The file travels as a registry layer
+  that root unpacks, so altering what runs still requires registry push — which
+  already implied code execution on the box. Copying compose.yml to the host
+  instead would make the deploy key root-equivalent, because that file can
+  grant a container the host filesystem.
+
+  Each file is named explicitly rather than a directory being swept up, so the
+  contents of the image are exactly what the workflow lists. Nothing can ride
+  along: a stray key or a second environment's config in the same folder is not
+  published, because it was not named.
+
+  Assumes you have already authenticated to the registry, e.g. with
+  docker/login-action.
+
+inputs:
+  compose:
+    description: >
+      Path to this app's compose file. Published as /config/compose.yml, which
+      is where the host looks, so the name on disk does not matter — point it at
+      compose.prod.yml if that is what you have.
+    required: true
+  caddy:
+    description: >
+      Reverse-proxy routes for this app, published under /config/caddy/.
+      Newline-separated for more than one; the host concatenates them. Leave
+      empty for an app that is not served over the shared proxy.
+    required: false
+    default: ""
+  image:
+    description: >
+      Image reference WITHOUT a tag, e.g. ghcr.io/you/myapp-config. Must
+      match the CONFIG_IMAGE the host was bootstrapped with.
+    required: true
+  tag:
+    description: Tag to publish, normally the commit SHA.
+    required: true
+
+outputs:
+  image-ref:
+    description: >
+      Full reference of the pushed image, INCLUDING the tag — unlike the
+      `image` input, which must not carry one.
+    value: ${{ steps.push.outputs.image-ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build and push the config image
+      id: push
+      shell: bash
+      env:
+        COMPOSE: ${{ inputs.compose }}
+        CADDY: ${{ inputs.caddy }}
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+
+        # A tag is a colon AFTER the last slash. Testing the whole string would
+        # reject a registry with a port, e.g. registry.internal:5000/app-config.
+        case "$IMAGE" in
+          *@*)
+            echo "::error::image must not include a digest (got '$IMAGE'); pass a tag separately."
+            exit 1
+            ;;
+        esac
+        case "${IMAGE##*/}" in
+          *:*)
+            echo "::error::image must not include a tag (got '$IMAGE'); pass the tag separately."
+            exit 1
+            ;;
+        esac
+        case "$TAG" in
+          ""|*[!A-Za-z0-9._-]*)
+            echo "::error::tag must be a plain image tag (letters, digits, dot, underscore, hyphen); got '$TAG'."
+            exit 1
+            ;;
+        esac
+
+        # Staged into a directory of our own rather than built from wherever the
+        # files happen to live. Two reasons: the host looks for fixed names
+        # (/config/compose.yml), and building from the repo would sweep in every
+        # neighbouring file — which is exactly what naming them explicitly is
+        # meant to prevent.
+        stage="$RUNNER_TEMP/komizo-config"
+        rm -rf "$stage"
+        mkdir -p "$stage"
+
+        if [ ! -f "$COMPOSE" ]; then
+          echo "::error::compose file '$COMPOSE' does not exist. It is a path in your repository, relative to the workspace — did the checkout run?"
+          exit 1
+        fi
+        cp "$COMPOSE" "$stage/compose.yml"
+        included="compose.yml <- $COMPOSE"
+
+        if [ -n "$CADDY" ]; then
+          mkdir -p "$stage/caddy"
+          while IFS= read -r f; do
+            # Skip blank lines, so a trailing newline in a YAML block scalar is
+            # not read as a missing file.
+            [ -n "${f// /}" ] || continue
+            f="$(echo "$f" | xargs)"
+            if [ ! -f "$f" ]; then
+              echo "::error::caddy file '$f' does not exist."
+              exit 1
+            fi
+            base="$(basename "$f")"
+            if [ -e "$stage/caddy/$base" ]; then
+              echo "::error::two caddy files are both named '$base'; one would overwrite the other. Rename one."
+              exit 1
+            fi
+            cp "$f" "$stage/caddy/$base"
+            included="$included"$'\n'"caddy/$base <- $f"
+          done <<< "$CADDY"
+        fi
+
+        # Written outside the stage so it is not itself packaged into /config.
+        #
+        # The CMD is never executed. It exists because `docker create` rejects
+        # an image with no command at all, and the host creates a container to
+        # copy the files out of. The host passes --entrypoint for the same
+        # reason, so this is belt-and-braces rather than load-bearing.
+        df="$RUNNER_TEMP/Dockerfile.config"
+        printf 'FROM scratch\nCOPY . /config\nCMD ["/config/compose.yml"]\n' > "$df"
+
+        docker build -f "$df" -t "$IMAGE:$TAG" "$stage"
+        # No :latest. This image is only ever addressed by exact tag; a floating
+        # tag would be a way to change the stack without a deploy.
+        docker push "$IMAGE:$TAG"
+
+        echo "image-ref=$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
+        echo "Published $IMAGE:$TAG containing:"
+        printf '%s\n' "$included" | sed 's/^/  /'

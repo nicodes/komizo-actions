@@ -1,0 +1,76 @@
+name: Set secrets on the host
+description: >
+  Push secret values to the host's write-only secret store. Requires the
+  connect action to have run first.
+
+  Values are read from the step's ENVIRONMENT, not from `with:` — an action
+  input is recorded in the workflow run and visible in the API, and would also
+  land in the process list. Pass each secret as an env var whose name matches
+  the entry in `names`.
+
+inputs:
+  names:
+    description: >
+      Newline-separated list of secret names to push. Each must exist as an
+      environment variable on this step.
+    required: true
+  command:
+    description: >
+      Privileged secret command on the host, as installed by `komizo`. Named
+      after the app, e.g. `doas /usr/local/bin/set-secret-blog`.
+    required: true
+
+outputs:
+  count:
+    description: How many secrets were set.
+    value: ${{ steps.push.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    - name: Push secrets
+      id: push
+      shell: bash
+      env:
+        NAMES: ${{ inputs.names }}
+        SECRET_CMD: ${{ inputs.command }}
+      run: |
+        set -euo pipefail
+
+        pushed=0
+        while IFS= read -r name; do
+          name="${name//[[:space:]]/}"
+          [ -z "$name" ] && continue
+
+          # Same charset the host enforces. Checked here so a typo fails with a
+          # useful message instead of a remote rejection.
+          if [[ ! "$name" =~ ^[A-Za-z0-9_]+$ ]]; then
+            echo "::error::'$name' is not a valid secret name (letters, digits, underscore)."
+            exit 1
+          fi
+
+          # Indirect expansion rather than eval: a value containing a backtick
+          # or $(...) must never be re-parsed by this shell.
+          if [ -z "${!name+set}" ]; then
+            # See the note in actions/deploy: the two-brace sequence cannot
+            # appear in this file or the action fails to load.
+            D='$'
+            echo "::error::No environment variable '$name' on this step. Add it under env: — e.g. '$name: ${D}{{ secrets.$name }}'. Environment-scoped secrets are invisible to jobs without that environment."
+            exit 1
+          fi
+
+          # Piped to stdin, never an argument: arguments are visible in the
+          # host's process list to any other user on the box. The name is
+          # single-quoted, which is safe only because the charset above
+          # excludes quotes.
+          printf '%s' "${!name}" | ssh deploy-target "$SECRET_CMD '$name'" >/dev/null
+          echo "Set $name"
+          pushed=$((pushed + 1))
+        done <<< "$NAMES"
+
+        if [ "$pushed" -eq 0 ]; then
+          echo "::error::names was empty — nothing to push."
+          exit 1
+        fi
+        echo "count=$pushed" >> "$GITHUB_OUTPUT"
+        echo "Pushed $pushed secret(s)."

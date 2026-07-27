@@ -1,0 +1,144 @@
+name: Connect to the deploy target
+description: >
+  Install a deploy key and a PINNED host key, then expose the server as the
+  ssh alias "deploy-target". Fails closed if the host key is not pinned.
+
+  Run this before deploy, set-secrets or set-version — they all ride the alias
+  it leaves behind. So can your own steps: `ssh deploy-target ...` works in any
+  later step, which is the hook for anything this toolkit does not cover.
+
+  It verifies the connection before finishing, so a wrong key or user fails
+  here rather than midway through a deploy. Put it first in the job and a bad
+  credential costs you nothing else.
+
+inputs:
+  host:
+    description: Hostname or IP of the server.
+    required: true
+  user:
+    description: Deploy account on the server, `komizo-<app>` unless you overrode it.
+    required: true
+  key:
+    description: Private half of the deploy key. Pass a secret.
+    required: true
+  known-hosts:
+    description: >
+      Output of `ssh-keyscan <host>`, verified against the server's own
+      /etc/ssh/ssh_host_*_key.pub. Required unless allow-unpinned-host is true.
+    required: false
+    default: ""
+  port:
+    description: SSH port.
+    required: false
+    default: "22"
+  allow-unpinned-host:
+    description: >
+      Discover the host key with ssh-keyscan at deploy time instead of pinning
+      it. This is trust-on-first-use on EVERY run: anyone who can influence DNS
+      or routing from the runner collects whatever this job sends. Opt in only
+      for throwaway hosts.
+    required: false
+    default: "false"
+
+outputs:
+  host:
+    description: The host this connected to. Echoes the input, for chaining.
+    value: ${{ steps.verify.outputs.host }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install deploy key and host key
+      shell: bash
+      # Inputs arrive as env vars, never as ${{ }} inside the script. Direct
+      # interpolation pastes the secret into the shell source, where a backtick
+      # or $(...) in a key would execute on the runner and GitHub's log masking
+      # cannot see it.
+      env:
+        SSH_HOST: ${{ inputs.host }}
+        SSH_USER: ${{ inputs.user }}
+        SSH_KEY: ${{ inputs.key }}
+        SSH_KNOWN_HOSTS: ${{ inputs.known-hosts }}
+        SSH_PORT: ${{ inputs.port }}
+        ALLOW_UNPINNED: ${{ inputs.allow-unpinned-host }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$SSH_KEY" ]; then
+          echo "::error::key input is empty — check the secret exists and the job can read it (environment-scoped secrets are invisible to jobs without that environment)."
+          exit 1
+        fi
+
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+        chmod 600 ~/.ssh/id_deploy
+
+        if [ -n "$SSH_KNOWN_HOSTS" ]; then
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          # Catch a bad paste here rather than as an opaque "Host key
+          # verification failed" on the first connection. The value must be
+          # known_hosts LINES ("<host> <keytype> <base64>"), which is what
+          # ssh-keyscan prints — not the server's .pub file, which has no
+          # hostname field and so matches no host.
+          if ! ssh-keygen -F "[$SSH_HOST]:$SSH_PORT" -f ~/.ssh/known_hosts >/dev/null 2>&1 \
+             && ! ssh-keygen -F "$SSH_HOST" -f ~/.ssh/known_hosts >/dev/null 2>&1; then
+            lines=$(grep -cve '^[[:space:]]*$' ~/.ssh/known_hosts || true)
+            fields=$(awk '!/^[[:space:]]*($|#)/ {print $1}' ~/.ssh/known_hosts | sort -u | paste -sd',' -)
+            echo "::error::known-hosts contains no entry for $SSH_HOST ($lines non-empty line(s); first fields: ${fields:-none}). If those look like key types (ssh-ed25519, ssh-rsa, ecdsa-*), you pasted the server's .pub file — it has no hostname field. Re-capture with 'ssh-keyscan -p $SSH_PORT $SSH_HOST' and verify the base64 against the host's /etc/ssh/ssh_host_*_key.pub."
+            exit 1
+          fi
+          # Only key types are echoed, no key material.
+          echo "Pinned host keys for $SSH_HOST: $(awk '!/^[[:space:]]*($|#)/ {print $2}' ~/.ssh/known_hosts | sort -u | paste -sd',' -)"
+        elif [ "$ALLOW_UNPINNED" = "true" ]; then
+          echo "::warning::Host key not pinned — trusting whatever answers on $SSH_HOST:$SSH_PORT. Anything this job sends the server is exposed to whoever can influence DNS or routing from the runner."
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+        else
+          echo "::error::known-hosts is unset. Capture it with 'ssh-keyscan -p $SSH_PORT $SSH_HOST', verify it against the server's own /etc/ssh/ssh_host_*_key.pub, then store it as a repository VARIABLE (it is not confidential, and leaving it unmasked keeps a host-key mismatch legible in the log). To skip pinning anyway, set allow-unpinned-host: true."
+          exit 1
+        fi
+
+        # Drop any existing deploy-target block before writing ours, so running
+        # this action twice does not leave two. It resolves either way — ssh
+        # takes the first match — but a stale block silently winning over a
+        # newer one is exactly the kind of bug that costs an afternoon.
+        touch ~/.ssh/config
+        awk '
+          /^[[:space:]]*Host[[:space:]]+deploy-target[[:space:]]*$/ { drop = 1; next }
+          /^[[:space:]]*Host[[:space:]]/                            { drop = 0 }
+          !drop
+        ' ~/.ssh/config > ~/.ssh/config.tmp
+        mv ~/.ssh/config.tmp ~/.ssh/config
+
+        # IdentitiesOnly: offer id_deploy and nothing else. Without it ssh also
+        # offers agent and default keys, and sshd cuts the connection at
+        # MaxAuthTries — so "this account cannot log in" arrives as "Too many
+        # authentication failures" instead.
+        # BatchMode: never wait on a password prompt with no one to answer it.
+        cat >> ~/.ssh/config <<CFG
+        Host deploy-target
+            HostName $SSH_HOST
+            User $SSH_USER
+            Port $SSH_PORT
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+        CFG
+        chmod 600 ~/.ssh/config
+
+    - name: Verify connectivity
+      id: verify
+      shell: bash
+      env:
+        SSH_HOST: ${{ inputs.host }}
+      run: |
+        set -euo pipefail
+        if ! ssh deploy-target true; then
+          echo "::error::Cannot open an SSH session as the deploy user. Check the public half of this key is in that user's ~/.ssh/authorized_keys, and that sshd is reachable on the configured port."
+          exit 1
+        fi
+        echo "host=$SSH_HOST" >> "$GITHUB_OUTPUT"
+        echo "Connected to deploy-target."
