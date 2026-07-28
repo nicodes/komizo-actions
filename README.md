@@ -5,13 +5,13 @@ GitHub Actions that deploy to your own server. Merge, and it's live.
 ```yaml
 - uses: nicodes/komizo-actions/deploy@v0
   env:
-    KOMIZO_URL: ${{ vars.KOMIZO_URL }}
+    KOMIZO_APP_NAME: ${{ vars.KOMIZO_APP_NAME }}
+    KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
     KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
     KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
 
     KOMIZO_SECRET_DATABASE_URL: ${{ secrets.DATABASE_URL }}
   with:
-    app: myapp
     version: ${{ github.sha }}
     config-compose: deploy/compose.yml
     config-image: ghcr.io/you/myapp-config
@@ -20,14 +20,21 @@ GitHub Actions that deploy to your own server. Merge, and it's live.
     health-url: https://myapp.example.com/health
 ```
 
-The first three are the names komizo tells you to store, and the ones these
-actions look for. Passing them as `host:`, `key:` and `known-hosts:` still works
-and takes precedence — the environment is the default, not a replacement.
+The first four are the names komizo tells you to store, and the ones these
+actions look for. Passing them as `app:`, `host:`, `key:` and `known-hosts:`
+still works and takes precedence — the environment is the default, not a
+replacement.
 
-Keeping the server's address out of the workflow is worth more than the two
-lines it saves: moving an app to another box, or reaching a box by a different
-name while its public DNS is mid-cutover, becomes a repository variable rather
-than a commit and a deploy.
+Keeping the server's address out of the workflow is worth more than the line it
+saves: moving an app to another box, or reaching a box by a different name while
+its public DNS is mid-cutover, becomes a repository variable rather than a commit
+and a deploy.
+
+`KOMIZO_APP_NAME` is the one to hold loosely. The app name is also written into
+the app's own `compose.yml` (network aliases), its Caddy fragment
+(`/srv/<app>/...`) and its image references — all committed, all of which must
+agree with it. Changing it in settings alone deploys into a directory the
+shipped config does not describe, and nothing reports that.
 
 **Everything named `KOMIZO_SECRET_<NAME>` is pushed to the host as `<NAME>`.** A
 composite action cannot read `secrets` itself — GitHub exposes that context to

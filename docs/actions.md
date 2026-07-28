@@ -84,7 +84,7 @@ tag — in the one order that is correct.
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `version` | yes | — | Tag to deploy, normally the commit SHA. |
-| `app` | yes | — | Which app — selects the account `komizo-<app>` and the commands `deploy-<app>` and `set-secret-<app>`. Matches the name you gave it in `komizo`. |
+| `app` | no | `KOMIZO_APP_NAME` | Which app — selects the account `komizo-<app>` and the commands `deploy-<app>` and `set-secret-<app>`. Matches the name you gave it in `komizo`. Required in one form or the other. |
 | `config-compose` | no | `""` | Path to the compose file to publish for this commit. Empty skips the config publish. |
 | `config-caddy` | no | `""` | Reverse-proxy routes. Newline-separated for more than one. |
 | `config-static` | no | `""` | A directory of files to serve. Unpacked to the app directory, where the shared proxy can serve it with no container behind it. |
@@ -93,7 +93,7 @@ tag — in the one order that is correct.
 | `registry` | no | `ghcr.io` | Registry the host authenticates against. Empty to skip. |
 | `registry-user` | no | `""` | Registry username. |
 | `registry-token` | no | `""` | Registry password. Prefer the run-scoped `GITHUB_TOKEN`. |
-| `host` | no | `$KOMIZO_URL` | Server hostname. Supplying it makes this action connect for you; leave empty if `connect` already ran in the job. |
+| `host` | no | `$KOMIZO_SERVER_URL` | Server hostname. Supplying it makes this action connect for you; leave empty if `connect` already ran in the job. |
 | `user` | no | `komizo-<app>` | Deploy account. Only needed if you overrode it. |
 | `key` | no | `""` | Private half of the deploy key. Required when `host` is set. |
 | `known-hosts` | no | `""` | Pinned host keys. Required when `host` is set. |
@@ -103,7 +103,8 @@ tag — in the one order that is correct.
 ```yaml
 - uses: nicodes/komizo-actions/deploy@v0
   env:
-    KOMIZO_URL: ${{ vars.KOMIZO_URL }}
+    KOMIZO_APP_NAME: ${{ vars.KOMIZO_APP_NAME }}
+    KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
     KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
     KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
 
@@ -111,7 +112,6 @@ tag — in the one order that is correct.
     KOMIZO_SECRET_APP_ADMIN_PASSWORD: ${{ secrets.PB_ADMIN_PASSWORD }}
   with:
     version: ${{ github.sha }}
-    app: myapp
     config-compose: deploy/compose.yml
     config-caddy: deploy/caddy/app.caddy
     config-image: ghcr.io/you/myapp-config
@@ -195,7 +195,7 @@ message instead of midway through a deploy.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `host` | no | `$KOMIZO_URL` | Hostname or IP. Pass it, or set `KOMIZO_URL` under `env:` and leave this out. |
+| `host` | no | `$KOMIZO_SERVER_URL` | Hostname or IP. Pass it, or set `KOMIZO_SERVER_URL` under `env:` and leave this out. |
 | `user` | yes | — | Deploy account, `komizo-<app>` unless you overrode it. |
 | `key` | no | `$KOMIZO_DEPLOY_KEY` | Private deploy key. Pass a secret, or set `KOMIZO_DEPLOY_KEY` under `env:` and leave this out. |
 | `known-hosts` | no | `$KOMIZO_KNOWN_HOSTS` | Standard `known_hosts` lines, one per name per key — what `komizo` copies. Required unless `allow-unpinned-host` is true. |
@@ -205,7 +205,7 @@ message instead of midway through a deploy.
 ```yaml
 - uses: nicodes/komizo-actions/connect@v0
   env:
-    KOMIZO_URL: ${{ vars.KOMIZO_URL }}
+    KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
     KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
     KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
   with:

@@ -9,9 +9,10 @@ description: >
   Secrets are declared once, in the environment, by name:
 
       env:
-        KOMIZO_URL:          <the vars.KOMIZO_URL expression>
-        KOMIZO_DEPLOY_KEY:   <the secrets.KOMIZO_DEPLOY_KEY expression>
-        KOMIZO_KNOWN_HOSTS:  <the vars.KOMIZO_KNOWN_HOSTS expression>
+        KOMIZO_APP_NAME:    <the vars.KOMIZO_APP_NAME expression>
+        KOMIZO_SERVER_URL:  <the vars.KOMIZO_SERVER_URL expression>
+        KOMIZO_DEPLOY_KEY:  <the secrets.KOMIZO_DEPLOY_KEY expression>
+        KOMIZO_KNOWN_HOSTS: <the vars.KOMIZO_KNOWN_HOSTS expression>
 
         KOMIZO_SECRET_DATABASE_URL: <the secrets.DATABASE_URL expression>
 
@@ -52,7 +53,7 @@ inputs:
       Server hostname. Supplying it makes this action connect for you. Leave it
       empty if the connect action has already run in this job.
 
-      Falls back to the KOMIZO_URL environment variable, which is the name
+      Falls back to the KOMIZO_SERVER_URL environment variable, which is the name
       komizo tells you to store the server's address under -- so moving an app
       to another box is a repository variable rather than a commit.
     required: false
@@ -101,7 +102,17 @@ inputs:
       has its own name, whether or not it shares the box: it selects the deploy
       account (komizo-<app>) and the privileged commands (deploy-<app> and
       set-secret-<app>).
-    required: true
+
+      Falls back to the KOMIZO_APP_NAME environment variable, so a workflow can
+      name it in settings alongside the other three rather than in this file.
+
+      Note what that does NOT decouple: the name also appears in the app's own
+      compose.yml (network aliases), its caddy fragment (/srv/<app>/...) and its
+      image references, all of which are committed. Changing it in settings
+      alone deploys into a directory the shipped config does not describe, and
+      nothing reports that -- so if you move it, move all of them together.
+    required: false
+    default: ""
 
   # --- config ---------------------------------------------------------------
   config-compose:
@@ -218,7 +229,7 @@ runs:
     # A step output rather than a bare fallback in each place that needs it,
     # because one of those places is an `if:` -- the connect step below runs
     # only when there is a host, and an expression cannot see a value that a
-    # later shell would have defaulted. Without this, setting only KOMIZO_URL
+    # later shell would have defaulted. Without this, setting only KOMIZO_SERVER_URL
     # skipped the connection and failed two steps later complaining about an
     # ~/.ssh/config entry nobody asked for.
     #
@@ -229,16 +240,23 @@ runs:
       shell: bash
       env:
         HOST: ${{ inputs.host }}
+        APP: ${{ inputs.app }}
         SECRET_NAMES: ${{ inputs.secrets }}
       run: |
         set -euo pipefail
-        : "${HOST:=${KOMIZO_URL:-}}"
+        : "${HOST:=${KOMIZO_SERVER_URL:-}}"
         # A hostname, not a URL. See connect: a scheme is stripped rather than
         # rejected, because it is the obvious thing to paste into a variable
         # with that name and ssh cannot use it.
         HOST="${HOST#*://}"
         HOST="${HOST%%/*}"
         echo "host=$HOST" >> "$GITHUB_OUTPUT"
+
+        # Same treatment for the app name, and for the same reason: it decides
+        # the ssh user and the two privileged command names, and those are read
+        # by composed steps that cannot re-derive a shell default.
+        : "${APP:=${KOMIZO_APP_NAME:-}}"
+        echo "app=$APP" >> "$GITHUB_OUTPUT"
 
         # Whether there are secrets to push, for the same reason as the host:
         # the set-secrets step below is guarded by an `if:`, and an expression
@@ -260,7 +278,7 @@ runs:
         KEY: ${{ inputs.key }}
         KNOWN_HOSTS: ${{ inputs.known-hosts }}
         ALLOW_UNPINNED: ${{ inputs.allow-unpinned-host }}
-        APP: ${{ inputs.app }}
+        APP: ${{ steps.cfg.outputs.app }}
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
         CONFIG_CADDY: ${{ inputs.config-caddy }}
         CONFIG_STATIC: ${{ inputs.config-static }}
@@ -302,9 +320,15 @@ runs:
           echo "Using the deploy-target configured by an earlier step."
         fi
 
-        # Interpolated into a command path below, so constrain it.
-        case "${APP:-}" in
-          '') ;;
+        # Interpolated into a command path below, so constrain it. Required:
+        # without it the deploy would target `deploy-` and `komizo-`, which is
+        # not a smaller mistake than a wrong name, only a stranger one.
+        if [ -z "${APP:-}" ]; then
+          D='$'
+          echo "::error::No app name. Set the repository variable KOMIZO_APP_NAME and pass 'KOMIZO_APP_NAME: ${D}{{ vars.KOMIZO_APP_NAME }}' under env:, or pass 'app:' directly. It is the name you gave the app in komizo."
+          exit 1
+        fi
+        case "$APP" in
           *[!A-Za-z0-9_-]*)
             echo "::error::app must be letters, digits, underscore or hyphen; got '$APP'."
             exit 1 ;;
@@ -378,7 +402,7 @@ runs:
       uses: nicodes/komizo-actions/connect@f6a130ec1342be91d527dcd7fe6abfcea01e6ae2
       with:
         host: ${{ steps.cfg.outputs.host }}
-        user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', inputs.app) }}
+        user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', steps.cfg.outputs.app) }}
         key: ${{ inputs.key }}
         known-hosts: ${{ inputs.known-hosts }}
         port: ${{ inputs.port }}
@@ -402,7 +426,7 @@ runs:
       uses: nicodes/komizo-actions/set-secrets@f6a130ec1342be91d527dcd7fe6abfcea01e6ae2
       with:
         names: ${{ inputs.secrets }}
-        command: doas /usr/local/bin/set-secret-${{ inputs.app }}
+        command: doas /usr/local/bin/set-secret-${{ steps.cfg.outputs.app }}
 
     # 4. Make the tag live.
     - id: version
@@ -412,7 +436,7 @@ runs:
         registry: ${{ inputs.registry }}
         registry-user: ${{ inputs.registry-user }}
         registry-token: ${{ inputs.registry-token }}
-        command: doas /usr/local/bin/deploy-${{ inputs.app }}
+        command: doas /usr/local/bin/deploy-${{ steps.cfg.outputs.app }}
 
     # 5. Prove it is serving. Skipped entirely when no URL is given.
     - id: health

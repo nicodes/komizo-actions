@@ -14,7 +14,7 @@ description: >
 inputs:
   host:
     description: >
-      Hostname or IP of the server. Falls back to the KOMIZO_URL environment
+      Hostname or IP of the server. Falls back to the KOMIZO_SERVER_URL environment
       variable, the name komizo tells you to store it under.
     required: false
     default: ""
@@ -84,7 +84,7 @@ runs:
 
         # komizo's own names, used when the caller passed nothing. This is what
         # lets a workflow set them once under env: and never mention them again.
-        : "${SSH_HOST:=${KOMIZO_URL:-}}"
+        : "${SSH_HOST:=${KOMIZO_SERVER_URL:-}}"
         # A hostname, not a URL, whatever the variable is called. Strip a
         # scheme and anything after the host rather than failing on it: ssh
         # takes "komizo.example.com", and "https://komizo.example.com/" is the
@@ -95,7 +95,7 @@ runs:
         : "${SSH_KNOWN_HOSTS:=${KOMIZO_KNOWN_HOSTS:-}}"
 
         if [ -z "$SSH_HOST" ]; then
-          echo "::error::No host. Pass 'host:', or set KOMIZO_URL under env: on the job."
+          echo "::error::No host. Pass 'host:', or set KOMIZO_SERVER_URL under env: on the job."
           exit 1
         fi
 
@@ -174,7 +174,7 @@ runs:
         # The same fallback the step above used. Only for the output; the
         # connection itself goes through the deploy-target block already
         # written to ~/.ssh/config.
-        : "${SSH_HOST:=${KOMIZO_URL:-}}"
+        : "${SSH_HOST:=${KOMIZO_SERVER_URL:-}}"
         # A hostname, not a URL, whatever the variable is called. Strip a
         # scheme and anything after the host rather than failing on it: ssh
         # takes "komizo.example.com", and "https://komizo.example.com/" is the
