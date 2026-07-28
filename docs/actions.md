@@ -93,7 +93,7 @@ tag — in the one order that is correct.
 | `registry` | no | `ghcr.io` | Registry the host authenticates against. Empty to skip. |
 | `registry-user` | no | `""` | Registry username. |
 | `registry-token` | no | `""` | Registry password. Prefer the run-scoped `GITHUB_TOKEN`. |
-| `host` | no | `""` | Server hostname. Supplying it makes this action connect for you; leave empty if `connect` already ran in the job. |
+| `host` | no | `$KOMIZO_URL` | Server hostname. Supplying it makes this action connect for you; leave empty if `connect` already ran in the job. |
 | `user` | no | `komizo-<app>` | Deploy account. Only needed if you overrode it. |
 | `key` | no | `""` | Private half of the deploy key. Required when `host` is set. |
 | `known-hosts` | no | `""` | Pinned host keys. Required when `host` is set. |
@@ -186,21 +186,28 @@ message instead of midway through a deploy.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `host` | yes | — | Hostname or IP. |
+| `host` | no | `$KOMIZO_URL` | Hostname or IP. Pass it, or set `KOMIZO_URL` under `env:` and leave this out. |
 | `user` | yes | — | Deploy account, `komizo-<app>` unless you overrode it. |
-| `key` | yes | — | Private deploy key. Pass a secret. |
-| `known-hosts` | no | `""` | Standard `known_hosts` lines, one per name per key — what `komizo` prints. Required unless `allow-unpinned-host` is true. |
+| `key` | no | `$KOMIZO_DEPLOY_KEY` | Private deploy key. Pass a secret, or set `KOMIZO_DEPLOY_KEY` under `env:` and leave this out. |
+| `known-hosts` | no | `$KOMIZO_KNOWN_HOSTS` | Standard `known_hosts` lines, one per name per key — what `komizo` copies. Required unless `allow-unpinned-host` is true. |
 | `port` | no | `22` | SSH port. |
 | `allow-unpinned-host` | no | `false` | Discover the host key at deploy time instead of pinning it. |
 
 ```yaml
 - uses: nicodes/komizo-actions/connect@v0
+  env:
+    KOMIZO_URL: ${{ vars.KOMIZO_URL }}
+    KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
+    KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
   with:
-    host: app.example.com
     user: komizo-blog
-    key: ${{ secrets.SSH_DEPLOY_KEY }}
-    known-hosts: ${{ vars.SSH_KNOWN_HOSTS }}
 ```
+
+Those three environment variables are the names komizo stores under, and what
+both actions fall back to. A composite action cannot read `secrets` itself —
+GitHub gives that context to workflows only — so the fallback is an env var set
+once on the job or the step, rather than an input repeated on each one. An
+explicit `key:` or `known-hosts:` still wins.
 
 > `allow-unpinned-host: true` is trust-on-first-use on *every* run: anyone who
 > can influence DNS or routing from the runner collects whatever the job sends.

@@ -32,6 +32,10 @@ inputs:
     description: >
       Server hostname. Supplying it makes this action connect for you. Leave it
       empty if the connect action has already run in this job.
+
+      Falls back to the KOMIZO_URL environment variable, which is the name
+      komizo tells you to store the server's address under -- so moving an app
+      to another box is a repository variable rather than a commit.
     required: false
     default: ""
   user:
@@ -41,14 +45,23 @@ inputs:
     required: false
     default: ""
   key:
-    description: Private half of the deploy key. Required when host is set.
+    description: >
+      Private half of the deploy key. Required when host is set, unless the
+      KOMIZO_DEPLOY_KEY environment variable carries it -- which is the name
+      komizo tells you to store it under, and the one this falls back to.
+
+      A composite action cannot read `secrets` itself; GitHub exposes that
+      context to workflows only. So the fallback is an env var the caller sets
+      once on the job rather than an input repeated on every step.
     required: false
     default: ""
   known-hosts:
     description: >
-      `ssh-keyscan` output for the host, verified against the server's own
-      /etc/ssh/ssh_host_*_key.pub. Required when host is set, unless
+      The server's host keys as known_hosts LINES -- what komizo copies when
+      you press `h` on an app's row. Required when host is set, unless
       allow-unpinned-host is true.
+
+      Falls back to KOMIZO_KNOWN_HOSTS, for the same reason as `key` above.
     required: false
     default: ""
   port:
@@ -178,12 +191,38 @@ outputs:
 runs:
   using: composite
   steps:
+    # Which box, resolved once and read from here on.
+    #
+    # A step output rather than a bare fallback in each place that needs it,
+    # because one of those places is an `if:` -- the connect step below runs
+    # only when there is a host, and an expression cannot see a value that a
+    # later shell would have defaulted. Without this, setting only KOMIZO_URL
+    # skipped the connection and failed two steps later complaining about an
+    # ~/.ssh/config entry nobody asked for.
+    #
+    # The KEY is deliberately not resolved here: a step output is stored with
+    # the job, and a private key belongs in an environment variable that goes
+    # no further than the step reading it. connect does that fallback itself.
+    - id: cfg
+      shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+      run: |
+        set -euo pipefail
+        : "${HOST:=${KOMIZO_URL:-}}"
+        # A hostname, not a URL. See connect: a scheme is stripped rather than
+        # rejected, because it is the obvious thing to paste into a variable
+        # with that name and ssh cannot use it.
+        HOST="${HOST#*://}"
+        HOST="${HOST%%/*}"
+        echo "host=$HOST" >> "$GITHUB_OUTPUT"
+
     # Everything is checked before anything is published or restarted, so a
     # misconfiguration costs a failed step rather than a half-applied deploy.
     - name: Validate inputs
       shell: bash
       env:
-        HOST: ${{ inputs.host }}
+        HOST: ${{ steps.cfg.outputs.host }}
         KEY: ${{ inputs.key }}
         KNOWN_HOSTS: ${{ inputs.known-hosts }}
         ALLOW_UNPINNED: ${{ inputs.allow-unpinned-host }}
@@ -197,6 +236,12 @@ runs:
         set -euo pipefail
 
         if [ -n "${HOST:-}" ]; then
+          # komizo's own names, used when the caller passed nothing. connect
+          # does the same, so a workflow can set these once under env: and
+          # never name them again.
+          : "${KEY:=${KOMIZO_DEPLOY_KEY:-}}"
+          : "${KNOWN_HOSTS:=${KOMIZO_KNOWN_HOSTS:-}}"
+
           if [ -z "${KEY:-}" ]; then
             # D holds a bare dollar so the two-brace sequence is never present
             # in this file. Actions parses ${'{{'} out of a composite action's
@@ -204,11 +249,11 @@ runs:
             # context -- so writing the hint literally makes the action fail to
             # LOAD, for every caller, regardless of shell escaping.
             D='$'
-            echo "::error::host is set but key is empty. Pass the deploy private key, e.g. 'key: ${D}{{ secrets.SSH_DEPLOY_KEY }}'."
+            echo "::error::host is set but no deploy key was given. Pass 'key: ${D}{{ secrets.KOMIZO_DEPLOY_KEY }}', or set KOMIZO_DEPLOY_KEY under env: on the job. komizo prints the value when you add an app, and copies it to your clipboard when you rotate one."
             exit 1
           fi
           if [ -z "${KNOWN_HOSTS:-}" ] && [ "${ALLOW_UNPINNED:-false}" != "true" ]; then
-            echo "::error::host is set but known-hosts is empty. Capture it with 'ssh-keyscan $HOST', verify it against the server's own /etc/ssh/ssh_host_*_key.pub, and store it as a repository VARIABLE. To skip pinning anyway, set allow-unpinned-host: true."
+            echo "::error::host is set but no host keys were given. Pass 'known-hosts:', or set KOMIZO_KNOWN_HOSTS under env: on the job -- komizo copies the value when you press 'h' on the app's row. Store it as a repository VARIABLE rather than a secret: it needs integrity, not secrecy, and leaving it unmasked keeps a host-key mismatch legible in the log. To skip pinning anyway, set allow-unpinned-host: true."
             exit 1
           fi
         else
@@ -270,10 +315,10 @@ runs:
 
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before anything has been published.
-    - if: inputs.host != ''
+    - if: steps.cfg.outputs.host != ''
       uses: nicodes/komizo-actions/connect@c85e8acc09f834d49b0fb271efd50c248469d295
       with:
-        host: ${{ inputs.host }}
+        host: ${{ steps.cfg.outputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', inputs.app) }}
         key: ${{ inputs.key }}
         known-hosts: ${{ inputs.known-hosts }}

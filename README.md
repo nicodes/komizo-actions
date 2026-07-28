@@ -4,18 +4,28 @@ GitHub Actions that deploy to your own server. Merge, and it's live.
 
 ```yaml
 - uses: nicodes/komizo-actions/deploy@v0
+  env:
+    KOMIZO_URL: ${{ vars.KOMIZO_URL }}
+    KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
+    KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
   with:
     app: myapp
     version: ${{ github.sha }}
-    host: myapp.example.com
-    key: ${{ secrets.SSH_DEPLOY_KEY }}
-    known-hosts: ${{ vars.SSH_KNOWN_HOSTS }}
     config-compose: deploy/compose.yml
     config-image: ghcr.io/you/myapp-config
     registry-user: ${{ github.actor }}
     registry-token: ${{ secrets.GITHUB_TOKEN }}
     health-url: https://myapp.example.com/health
 ```
+
+Those three are the names komizo tells you to store, and the ones these actions
+look for. Passing them as `host:`, `key:` and `known-hosts:` still works and
+takes precedence — the environment is the default, not a replacement.
+
+Keeping the server's address out of the workflow is worth more than the two
+lines it saves: moving an app to another box, or reaching a box by a different
+name while its public DNS is mid-cutover, becomes a repository variable rather
+than a commit and a deploy.
 
 That connects over SSH, publishes this commit's `compose.yml` as an image, sets
 any secrets, makes the tag live, and polls until the app answers — failing the
