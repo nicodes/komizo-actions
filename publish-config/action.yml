@@ -30,6 +30,16 @@ inputs:
       Path to a file listing the hostnames this app answers on, one per line,
       `#` comments allowed. Published as /config/hostnames.
 
+      A line may say which container serves the name:
+
+          api.example.com -> api
+
+      That is read for DISPLAY only — the host generates the route from the
+      name alone, so a wrong arrow mislabels a chart and cannot misroute a
+      request. It exists because nothing on the server can work it out: the
+      shared proxy only ever talks to your gateway, and which container answers
+      is decided inside it.
+
       This is the WHOLE of what an app tells the server about routing. The host
       generates the reverse-proxy config from it and points every one of these
       names at your app's gateway container — so an app cannot author server
@@ -126,11 +136,31 @@ runs:
             line="${line%%#*}"
             line="$(echo "$line" | xargs || true)"
             [ -n "$line" ] || continue
+            # A line may say where the name goes -- "api.example.com -> api".
+            # Only the NAME is validated: the rest is a label for the interface
+            # and never reaches any config. Splitting here rather than rejecting
+            # the line is the whole difference between an annotation and a
+            # syntax error.
+            name="${line%% *}"
+            rest="$(echo "${line#"$name"}" | xargs || true)"
+            case "$rest" in
+              '') ;;
+              '->'*)
+                svc="$(echo "${rest#->}" | xargs || true)"
+                case "$svc" in
+                  ''|*[!A-Za-z0-9_-]*)
+                    echo "::error::'$line' names no valid container after '->'. Use a compose service name: letters, digits, underscore, hyphen."
+                    exit 1 ;;
+                esac ;;
+              *)
+                echo "::error::'$line' has something after the hostname that is not '-> <container>'."
+                exit 1 ;;
+            esac
             n=$((n + 1))
-            case "$line" in
-              *[!A-Za-z0-9.*-]*|'*'|*' '*) bad="$bad $line" ;;
-              \*.*) case "${line#\*.}" in *'*'*) bad="$bad $line" ;; esac ;;
-              *'*'*) bad="$bad $line" ;;
+            case "$name" in
+              *[!A-Za-z0-9.*-]*|'*') bad="$bad $name" ;;
+              \*.*) case "${name#\*.}" in *'*'*) bad="$bad $name" ;; esac ;;
+              *'*'*) bad="$bad $name" ;;
             esac
           done < "$HOSTNAMES"
           if [ -n "$bad" ]; then

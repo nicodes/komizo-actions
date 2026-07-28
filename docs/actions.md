@@ -255,6 +255,12 @@ terminator at `:80` and your app serves.
 Static files go in that image too. There is no longer a `public/` directory in
 the config image and nothing is served off the host's disk.
 
+A line may say which container serves the name — `api.example.com -> api`. Only
+the name is validated and only the name is routed on; the rest is a label for
+the interface, so a wrong arrow mislabels a chart and cannot misroute a request.
+It exists because nothing on the server can work it out: the shared proxy only
+ever talks to your gateway, and which container answers is decided inside it.
+
 Names are validated here as well as on the host: letters, digits, dot and
 hyphen, with an optional leading `*.`. The host has to refuse a bad one because
 it writes them into a config the whole box loads — but finding out in CI, before
