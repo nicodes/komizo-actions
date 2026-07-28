@@ -5,15 +5,35 @@ description: >
 
   Values are read from the step's ENVIRONMENT, not from `with:` — an action
   input is recorded in the workflow run and visible in the API, and would also
-  land in the process list. Pass each secret as an env var whose name matches
-  the entry in `names`.
+  land in the process list.
+
+  Name each one KOMIZO_SECRET_<NAME> and it is pushed as <NAME>:
+
+      env:
+        KOMIZO_SECRET_DATABASE_URL: <the secrets.DATABASE_URL expression>
+        KOMIZO_SECRET_STRIPE_KEY:   <the secrets.STRIPE_KEY expression>
+
+  A composite action cannot read the `secrets` context itself — GitHub exposes
+  it to workflows only — so a value has to arrive as an environment variable.
+  The prefix is what makes that env block the whole declaration: it says which
+  secrets exist AND which ones the host gets, in one place, so there is no
+  second list to keep in agreement with it.
+
+  What the host receives is exactly what is written here and nothing else,
+  which is the property worth protecting. Everything else in the job's
+  environment stays out of it.
 
 inputs:
   names:
     description: >
-      Newline-separated list of secret names to push. Each must exist as an
-      environment variable on this step.
-    required: true
+      Newline-separated secret names, for values passed as plain environment
+      variables under their own names rather than with the KOMIZO_SECRET_
+      prefix. Use it for a value computed during the job.
+
+      Leave it empty — the normal case — and the KOMIZO_SECRET_* variables on
+      the step are the list.
+    required: false
+    default: ""
   command:
     description: >
       Privileged secret command on the host, as installed by `komizo`. Named
@@ -37,11 +57,32 @@ runs:
       run: |
         set -euo pipefail
 
-        pushed=0
+        names=()
+
         while IFS= read -r name; do
           name="${name//[[:space:]]/}"
           [ -z "$name" ] && continue
+          names+=("$name")
+        done <<< "$NAMES"
 
+        # The KOMIZO_SECRET_* variables ARE the list. Sorted so the log reads
+        # the same way on every run.
+        while IFS= read -r var; do
+          [ -z "$var" ] && continue
+          names+=("${var#KOMIZO_SECRET_}")
+        done < <(compgen -v | grep '^KOMIZO_SECRET_' | sort || true)
+
+        if [ ${#names[@]} -eq 0 ]; then
+          echo "::error::Nothing to push. Pass each secret as a KOMIZO_SECRET_<NAME> environment variable on this step."
+          exit 1
+        fi
+
+        # Resolved in full before anything is sent, so a run that is going to
+        # fail fails having written nothing. Half a set of secrets on the host
+        # is worse than none: the deploy that follows would start containers on
+        # a mixture of this commit's values and the last one's.
+        declare -A value=()
+        for name in "${names[@]}"; do
           # Same charset the host enforces. Checked here so a typo fails with a
           # useful message instead of a remote rejection.
           if [[ ! "$name" =~ ^[A-Za-z0-9_]+$ ]]; then
@@ -51,26 +92,41 @@ runs:
 
           # Indirect expansion rather than eval: a value containing a backtick
           # or $(...) must never be re-parsed by this shell.
-          if [ -z "${!name+set}" ]; then
+          prefixed="KOMIZO_SECRET_$name"
+          if [ -n "${!prefixed+set}" ]; then
+            v="${!prefixed}"; from="$prefixed"
+          elif [ -n "${!name+set}" ]; then
+            v="${!name}"; from="$name"
+          else
             # See the note in actions/deploy: the two-brace sequence cannot
             # appear in this file or the action fails to load.
             D='$'
-            echo "::error::No environment variable '$name' on this step. Add it under env: — e.g. '$name: ${D}{{ secrets.$name }}'. Environment-scoped secrets are invisible to jobs without that environment."
+            echo "::error::No environment variable '$prefixed' on this step. Add it under env: — e.g. '$prefixed: ${D}{{ secrets.$name }}'. Environment-scoped secrets are invisible to jobs without that environment."
             exit 1
           fi
 
+          # GitHub substitutes an empty string for a secret that does not
+          # exist, so "declared but never created" arrives here looking exactly
+          # like "supplied". Left unchecked it deploys an app configured with
+          # an empty password, from a green pipeline.
+          if [ -z "$v" ]; then
+            echo "::error::'$from' is empty. GitHub substitutes an empty string for a secret that does not exist — check it is actually set in this repository, and in the environment this job declares if that is where its secrets live."
+            exit 1
+          fi
+
+          value["$name"]="$v"
+        done
+
+        pushed=0
+        for name in "${names[@]}"; do
           # Piped to stdin, never an argument: arguments are visible in the
           # host's process list to any other user on the box. The name is
           # single-quoted, which is safe only because the charset above
           # excludes quotes.
-          printf '%s' "${!name}" | ssh deploy-target "$SECRET_CMD '$name'" >/dev/null
+          printf '%s' "${value[$name]}" | ssh deploy-target "$SECRET_CMD '$name'" >/dev/null
           echo "Set $name"
           pushed=$((pushed + 1))
-        done <<< "$NAMES"
+        done
 
-        if [ "$pushed" -eq 0 ]; then
-          echo "::error::names was empty — nothing to push."
-          exit 1
-        fi
         echo "count=$pushed" >> "$GITHUB_OUTPUT"
         echo "Pushed $pushed secret(s)."
