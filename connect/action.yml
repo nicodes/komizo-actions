@@ -13,18 +13,33 @@ description: >
 
 inputs:
   host:
-    description: Hostname or IP of the server.
-    required: true
+    description: >
+      Hostname or IP of the server. Falls back to the KOMIZO_URL environment
+      variable, the name komizo tells you to store it under.
+    required: false
+    default: ""
   user:
     description: Deploy account on the server, `komizo-<app>` unless you overrode it.
     required: true
   key:
-    description: Private half of the deploy key. Pass a secret.
-    required: true
+    description: >
+      Private half of the deploy key. Pass a secret.
+
+      Optional because it falls back to the KOMIZO_DEPLOY_KEY environment
+      variable, which is the name komizo tells you to store it under. A
+      composite action cannot read `secrets` itself -- GitHub only exposes that
+      context to workflows -- so the fallback is an env var the caller sets
+      once on the job rather than an input threaded through every step.
+    required: false
+    default: ""
   known-hosts:
     description: >
-      Output of `ssh-keyscan <host>`, verified against the server's own
-      /etc/ssh/ssh_host_*_key.pub. Required unless allow-unpinned-host is true.
+      The server's host keys as known_hosts LINES, which is what komizo copies
+      when you press `h` on an app's row. Required unless allow-unpinned-host
+      is true.
+
+      Falls back to the KOMIZO_KNOWN_HOSTS environment variable, for the same
+      reason as `key` above.
     required: false
     default: ""
   port:
@@ -57,6 +72,9 @@ runs:
       env:
         SSH_HOST: ${{ inputs.host }}
         SSH_USER: ${{ inputs.user }}
+        # The input wins; the environment is the fallback. Written this way
+        # round so an explicit input is never silently overridden by a variable
+        # left set on the job.
         SSH_KEY: ${{ inputs.key }}
         SSH_KNOWN_HOSTS: ${{ inputs.known-hosts }}
         SSH_PORT: ${{ inputs.port }}
@@ -64,8 +82,25 @@ runs:
       run: |
         set -euo pipefail
 
+        # komizo's own names, used when the caller passed nothing. This is what
+        # lets a workflow set them once under env: and never mention them again.
+        : "${SSH_HOST:=${KOMIZO_URL:-}}"
+        # A hostname, not a URL, whatever the variable is called. Strip a
+        # scheme and anything after the host rather than failing on it: ssh
+        # takes "komizo.example.com", and "https://komizo.example.com/" is the
+        # obvious thing to paste into something named _URL.
+        SSH_HOST="${SSH_HOST#*://}"
+        SSH_HOST="${SSH_HOST%%/*}"
+        : "${SSH_KEY:=${KOMIZO_DEPLOY_KEY:-}}"
+        : "${SSH_KNOWN_HOSTS:=${KOMIZO_KNOWN_HOSTS:-}}"
+
+        if [ -z "$SSH_HOST" ]; then
+          echo "::error::No host. Pass 'host:', or set KOMIZO_URL under env: on the job."
+          exit 1
+        fi
+
         if [ -z "$SSH_KEY" ]; then
-          echo "::error::key input is empty — check the secret exists and the job can read it (environment-scoped secrets are invisible to jobs without that environment)."
+          echo "::error::No deploy key. Pass 'key:', or set KOMIZO_DEPLOY_KEY under env: on the job — komizo prints the value when you add an app or rotate its key. Environment-scoped secrets are invisible to jobs without that environment."
           exit 1
         fi
 
@@ -96,7 +131,7 @@ runs:
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
           chmod 600 ~/.ssh/known_hosts
         else
-          echo "::error::known-hosts is unset. Capture it with 'ssh-keyscan -p $SSH_PORT $SSH_HOST', verify it against the server's own /etc/ssh/ssh_host_*_key.pub, then store it as a repository VARIABLE (it is not confidential, and leaving it unmasked keeps a host-key mismatch legible in the log). To skip pinning anyway, set allow-unpinned-host: true."
+          echo "::error::No host keys. Pass 'known-hosts:', or set KOMIZO_KNOWN_HOSTS under env: on the job — komizo copies the value when you press 'h' on the app's row. Store it as a repository VARIABLE rather than a secret: it is not confidential, and leaving it unmasked keeps a host-key mismatch legible in the log. To skip pinning anyway, set allow-unpinned-host: true."
           exit 1
         fi
 
@@ -136,6 +171,16 @@ runs:
         SSH_HOST: ${{ inputs.host }}
       run: |
         set -euo pipefail
+        # The same fallback the step above used. Only for the output; the
+        # connection itself goes through the deploy-target block already
+        # written to ~/.ssh/config.
+        : "${SSH_HOST:=${KOMIZO_URL:-}}"
+        # A hostname, not a URL, whatever the variable is called. Strip a
+        # scheme and anything after the host rather than failing on it: ssh
+        # takes "komizo.example.com", and "https://komizo.example.com/" is the
+        # obvious thing to paste into something named _URL.
+        SSH_HOST="${SSH_HOST#*://}"
+        SSH_HOST="${SSH_HOST%%/*}"
         if ! ssh deploy-target true; then
           echo "::error::Cannot open an SSH session as the deploy user. Check the public half of this key is in that user's ~/.ssh/authorized_keys, and that sshd is reachable on the configured port."
           exit 1
