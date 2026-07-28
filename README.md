@@ -8,6 +8,8 @@ GitHub Actions that deploy to your own server. Merge, and it's live.
     KOMIZO_URL: ${{ vars.KOMIZO_URL }}
     KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
     KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
+
+    KOMIZO_SECRET_DATABASE_URL: ${{ secrets.DATABASE_URL }}
   with:
     app: myapp
     version: ${{ github.sha }}
@@ -18,14 +20,26 @@ GitHub Actions that deploy to your own server. Merge, and it's live.
     health-url: https://myapp.example.com/health
 ```
 
-Those three are the names komizo tells you to store, and the ones these actions
-look for. Passing them as `host:`, `key:` and `known-hosts:` still works and
-takes precedence — the environment is the default, not a replacement.
+The first three are the names komizo tells you to store, and the ones these
+actions look for. Passing them as `host:`, `key:` and `known-hosts:` still works
+and takes precedence — the environment is the default, not a replacement.
 
 Keeping the server's address out of the workflow is worth more than the two
 lines it saves: moving an app to another box, or reaching a box by a different
 name while its public DNS is mid-cutover, becomes a repository variable rather
 than a commit and a deploy.
+
+**Everything named `KOMIZO_SECRET_<NAME>` is pushed to the host as `<NAME>`.** A
+composite action cannot read `secrets` itself — GitHub exposes that context to
+workflows only — so a value has to arrive as an environment variable either way.
+The prefix is what lets that env block be the only place a secret is named,
+rather than a list of values and a second list agreeing with it. Renaming comes
+free, since the left side is the name the host receives.
+
+The host gets exactly what is written there and nothing else. Handing the action
+`toJSON(secrets)` would be shorter still and is deliberately not how this works:
+it would put every secret the job can see into the step's environment, including
+the ones the app has no business holding.
 
 That connects over SSH, publishes this commit's `compose.yml` as an image, sets
 any secrets, makes the tag live, and polls until the app answers — failing the

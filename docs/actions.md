@@ -89,7 +89,7 @@ tag — in the one order that is correct.
 | `config-caddy` | no | `""` | Reverse-proxy routes. Newline-separated for more than one. |
 | `config-static` | no | `""` | A directory of files to serve. Unpacked to the app directory, where the shared proxy can serve it with no container behind it. |
 | `config-image` | no | `""` | Config image reference **without** a tag. Required with `config-compose`. |
-| `secrets` | no | `""` | Newline-separated secret names. Each must be an env var on the step. |
+| `secrets` | no | `""` | Rarely needed — names for values passed as plain env vars. Normally the `KOMIZO_SECRET_*` env vars are the list. |
 | `registry` | no | `ghcr.io` | Registry the host authenticates against. Empty to skip. |
 | `registry-user` | no | `""` | Registry username. |
 | `registry-token` | no | `""` | Registry password. Prefer the run-scoped `GITHUB_TOKEN`. |
@@ -103,15 +103,18 @@ tag — in the one order that is correct.
 ```yaml
 - uses: nicodes/komizo-actions/deploy@v0
   env:
-    DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    KOMIZO_URL: ${{ vars.KOMIZO_URL }}
+    KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
+    KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
+
+    KOMIZO_SECRET_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    KOMIZO_SECRET_APP_ADMIN_PASSWORD: ${{ secrets.PB_ADMIN_PASSWORD }}
   with:
     version: ${{ github.sha }}
     app: myapp
     config-compose: deploy/compose.yml
     config-caddy: deploy/caddy/app.caddy
     config-image: ghcr.io/you/myapp-config
-    secrets: |
-      DATABASE_URL
     registry-user: ${{ github.actor }}
     registry-token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -155,8 +158,14 @@ when you want it.
 Both are invisible in a green run. `deploy` makes them unrepresentable.
 
 It validates everything up front — the `config-compose`/`config-image` pair,
-and that every named secret actually reached the step — so a misconfiguration
+and that every secret resolves to a **non-empty** value — so a misconfiguration
 fails before anything is published or restarted.
+
+Non-empty matters as much as present: GitHub substitutes an empty string for a
+secret that does not exist, so a name declared in the workflow and never created
+in the repository is indistinguishable from one that was supplied, to any check
+that only asks whether the name is set. Unchecked, that deploys an app
+configured with an empty password from a green pipeline.
 
 ## The `deploy-target` seam
 
@@ -282,19 +291,16 @@ Pushes secret values into the host's write-only store. Requires `connect`.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `names` | yes | — | Newline-separated secret names. Each must exist as an env var on the step. |
+| `names` | no | `""` | Rarely needed — names for values passed as plain env vars under their own names. Normally the `KOMIZO_SECRET_*` env vars are the list. |
 | `command` | yes | — | Privileged secret command on the host, e.g. `doas /usr/local/bin/set-secret-blog`. |
 
 ```yaml
 - uses: nicodes/komizo-actions/set-secrets@v0
   env:
-    DATABASE_URL: ${{ secrets.DATABASE_URL }}
-    STRIPE_KEY: ${{ secrets.STRIPE_KEY }}
+    KOMIZO_SECRET_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    KOMIZO_SECRET_STRIPE_KEY: ${{ secrets.STRIPE_KEY }}
   with:
     command: doas /usr/local/bin/set-secret-myapp
-    names: |
-      DATABASE_URL
-      STRIPE_KEY
 ```
 
 **Values come from `env:`, not `with:`.** An action input is recorded in the
@@ -302,8 +308,27 @@ workflow run and readable through the API; an environment variable is not. The
 value then travels over stdin rather than argv, so it never appears in the
 host's process list either.
 
-Names are validated against `[A-Za-z0-9_]` on both sides, and a value
-containing a newline is rejected — an env file cannot represent one.
+**`KOMIZO_SECRET_<NAME>` is pushed as `<NAME>`,** and the env block is therefore
+the whole declaration — which secrets exist and which the host gets, in one
+place, with no second list to keep in agreement with it. The left side is the
+name the host receives, so `KOMIZO_SECRET_APP_ADMIN_PASSWORD:
+${{ secrets.PB_ADMIN_PASSWORD }}` renames in passing, and one repository secret
+can land under two names the app expects.
+
+Only prefixed variables are swept up. `KOMIZO_DEPLOY_KEY`, `GITHUB_TOKEN` and
+everything else in the job's environment stay out of it — which is the point,
+and the reason this is not `toJSON(secrets)`.
+
+**Empty is an error.** GitHub substitutes an empty string for a secret that does
+not exist, so a name declared in the workflow and never created in the
+repository looks exactly like one that was supplied. Every value is resolved and
+checked before any of them is sent, so a run that is going to fail writes
+nothing: half a set of secrets on the host is worse than none, because the
+deploy that follows would start containers on a mixture of this commit's values
+and the last one's.
+
+Names are validated against `[A-Za-z0-9_]`, and a value containing a newline is
+rejected by the host — an env file cannot represent one.
 
 Writing a secret does not restart anything. Run this *before* `set-version`
 if the new value must take effect immediately; Compose picks it up when the

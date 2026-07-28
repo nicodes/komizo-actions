@@ -6,6 +6,25 @@ description: >
   Everything except `version` and `app` is optional. Supply what your app needs
   and the rest is skipped — no config, no secrets, no health check.
 
+  Secrets are declared once, in the environment, by name:
+
+      env:
+        KOMIZO_URL:          <the vars.KOMIZO_URL expression>
+        KOMIZO_DEPLOY_KEY:   <the secrets.KOMIZO_DEPLOY_KEY expression>
+        KOMIZO_KNOWN_HOSTS:  <the vars.KOMIZO_KNOWN_HOSTS expression>
+
+        KOMIZO_SECRET_DATABASE_URL: <the secrets.DATABASE_URL expression>
+
+  Everything named KOMIZO_SECRET_<NAME> is pushed to the host as <NAME>. A
+  composite action cannot read `secrets` itself — GitHub exposes that context
+  to workflows only — so a value has to arrive as an environment variable
+  either way; the prefix is what lets that env block be the only place a secret
+  is named. Renaming comes free, since the left side is the name the host gets.
+
+  What the host receives is exactly what is listed there and nothing else. That
+  is the property worth keeping: the rest of the job's environment, including
+  every secret this step does not need, stays out of it.
+
   This wraps connect, publish-config, set-secrets, set-version and healthcheck.
   Those remain the primitives; reach for them when you need your own steps
   interleaved, and use this for everything else.
@@ -117,10 +136,13 @@ inputs:
   # --- secrets --------------------------------------------------------------
   secrets:
     description: >
-      Newline-separated secret names to push before deploying. Each must exist
-      as an environment variable on THIS step — pass them under `env:`, never
-      `with:`, since an action input is recorded in the run and readable via
-      the API.
+      Rarely needed. Newline-separated names for values passed as plain
+      environment variables under their own names, rather than with the
+      KOMIZO_SECRET_ prefix — use it for a value computed during the job.
+
+      Normally leave this empty: name each secret KOMIZO_SECRET_<NAME> under
+      `env:` and it is pushed as <NAME>, with no list to keep in agreement.
+      See the top of this file.
     required: false
     default: ""
 
@@ -207,6 +229,7 @@ runs:
       shell: bash
       env:
         HOST: ${{ inputs.host }}
+        SECRET_NAMES: ${{ inputs.secrets }}
       run: |
         set -euo pipefail
         : "${HOST:=${KOMIZO_URL:-}}"
@@ -216,6 +239,17 @@ runs:
         HOST="${HOST#*://}"
         HOST="${HOST%%/*}"
         echo "host=$HOST" >> "$GITHUB_OUTPUT"
+
+        # Whether there are secrets to push, for the same reason as the host:
+        # the set-secrets step below is guarded by an `if:`, and an expression
+        # cannot see environment variables that only exist at run time. With
+        # the KOMIZO_SECRET_ prefix the env block is the list, so there is no
+        # input for that `if:` to test.
+        if [ -n "${SECRET_NAMES//[[:space:]]/}" ] || compgen -v | grep -q '^KOMIZO_SECRET_'; then
+          echo "has-secrets=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "has-secrets=false" >> "$GITHUB_OUTPUT"
+        fi
 
     # Everything is checked before anything is published or restarted, so a
     # misconfiguration costs a failed step rather than a half-applied deploy.
@@ -299,17 +333,42 @@ runs:
           exit 1
         fi
 
-        # Confirm each named secret reached this step, so a value that failed
-        # to propagate surfaces here with full context rather than deeper in.
-        missing=()
+        # Confirm every secret has a non-empty value, so one that failed to
+        # propagate surfaces here -- before anything is published or restarted
+        # -- rather than as an app that starts misconfigured.
+        #
+        # Empty matters as much as missing: GitHub substitutes an empty string
+        # for a secret that does not exist, so a name declared in the workflow
+        # and never created in the repository is indistinguishable from one
+        # that was supplied, to a check that only asks whether the name is set.
+        names=()
         while IFS= read -r name; do
           name="${name//[[:space:]]/}"
-          [ -z "$name" ] && continue
-          [ -z "${!name+set}" ] && missing+=("$name")
+          [ -n "$name" ] && names+=("$name")
         done <<< "$SECRET_NAMES"
+        while IFS= read -r var; do
+          [ -n "$var" ] && names+=("${var#KOMIZO_SECRET_}")
+        done < <(compgen -v | grep '^KOMIZO_SECRET_' | sort || true)
+
+        missing=() blank=()
+        for name in "${names[@]:-}"; do
+          [ -z "$name" ] && continue
+          prefixed="KOMIZO_SECRET_$name"
+          if [ -n "${!prefixed+set}" ]; then
+            [ -n "${!prefixed}" ] || blank+=("$name")
+          elif [ -n "${!name+set}" ]; then
+            [ -n "${!name}" ] || blank+=("$name")
+          else
+            missing+=("$name")
+          fi
+        done
         if [ ${#missing[@]} -gt 0 ]; then
           D='$'
-          echo "::error::No environment variable for: ${missing[*]}. Pass each under env: on this step, e.g. '${missing[0]}: ${D}{{ secrets.${missing[0]} }}'. Environment-scoped secrets are invisible to jobs without that environment."
+          echo "::error::No environment variable for: ${missing[*]}. Pass each under env: on this step, e.g. 'KOMIZO_SECRET_${missing[0]}: ${D}{{ secrets.${missing[0]} }}'. Environment-scoped secrets are invisible to jobs without that environment."
+          exit 1
+        fi
+        if [ ${#blank[@]} -gt 0 ]; then
+          echo "::error::Empty value for: ${blank[*]}. GitHub substitutes an empty string for a secret that does not exist, so check each is actually set in this repository -- and in the environment this job declares, if that is where its secrets live."
           exit 1
         fi
 
@@ -339,7 +398,7 @@ runs:
 
     # 3. Secrets BEFORE the deploy, so the containers it recreates start with
     #    the current values.
-    - if: inputs.secrets != ''
+    - if: steps.cfg.outputs.has-secrets == 'true'
       uses: nicodes/komizo-actions/set-secrets@62a7fd8454852a988fc9a2ee65c185567b67cb3c
       with:
         names: ${{ inputs.secrets }}
