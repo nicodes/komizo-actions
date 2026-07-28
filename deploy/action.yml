@@ -123,17 +123,18 @@ inputs:
       and nothing neighbouring it.
     required: false
     default: ""
-  config-static:
+  config-hostnames:
     description: >
-      A directory of files to serve, published with the config image and
-      unpacked to the app directory. A caddy fragment can serve it with no
-      container behind it. Requires config-image.
-    required: false
-    default: ""
-  config-caddy:
-    description: >
-      Reverse-proxy routes for this app. Newline-separated for more than one.
-      Leave empty for an app not served over the shared proxy.
+      Path to a file listing the hostnames this app answers on, one per line.
+      Published with the config image; the host generates the reverse-proxy
+      config from it and points every name at this app's gateway container.
+
+      That is the whole of what an app tells the server about routing. What a
+      request meets after the hostname match is inside your gateway, in a config
+      you built into an image -- not a fragment concatenated into a file shared
+      with every other app on the box.
+
+      Leave empty for an app nothing outside reaches.
     required: false
     default: ""
   config-image:
@@ -280,8 +281,7 @@ runs:
         ALLOW_UNPINNED: ${{ inputs.allow-unpinned-host }}
         APP: ${{ steps.cfg.outputs.app }}
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
-        CONFIG_CADDY: ${{ inputs.config-caddy }}
-        CONFIG_STATIC: ${{ inputs.config-static }}
+        CONFIG_HOSTNAMES: ${{ inputs.config-hostnames }}
         CONFIG_IMAGE: ${{ inputs.config-image }}
         SECRET_NAMES: ${{ inputs.secrets }}
       run: |
@@ -342,18 +342,11 @@ runs:
           echo "::error::config-image is set but config-compose is empty. Point config-compose at this app's compose file."
           exit 1
         fi
-        # The caddy routes ride along with the compose file in one image, so
-        # naming them without it publishes nothing and silently does nothing --
-        # which would look exactly like a working deploy.
-        if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_CADDY" ]; then
-          echo "::error::config-caddy is set but config-compose is empty. They are published together in one image, so nothing would be shipped."
-          exit 1
-        fi
-        # Same for the static files, and the failure is worse: the routes would
-        # deploy and the site they serve would not, so every one of them 404s
-        # from a green pipeline.
-        if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_STATIC" ]; then
-          echo "::error::config-static is set but config-compose is empty. They are published together in one image, so nothing would be shipped."
+        # The hostnames ride along with the compose file in one image, so naming
+        # them without it publishes nothing and silently does nothing -- which
+        # would look exactly like a working deploy.
+        if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_HOSTNAMES" ]; then
+          echo "::error::config-hostnames is set but config-compose is empty. They are published together in one image, so nothing would be shipped."
           exit 1
         fi
 
@@ -415,8 +408,7 @@ runs:
       uses: nicodes/komizo-actions/publish-config@b4d3fadf319a55a5f844f81eb6f658fc0eac708a
       with:
         compose: ${{ inputs.config-compose }}
-        caddy: ${{ inputs.config-caddy }}
-        static: ${{ inputs.config-static }}
+        hostnames: ${{ inputs.config-hostnames }}
         image: ${{ inputs.config-image }}
         tag: ${{ inputs.version }}
 

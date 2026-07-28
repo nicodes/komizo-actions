@@ -30,11 +30,11 @@ saves: moving an app to another box, or reaching a box by a different name while
 its public DNS is mid-cutover, becomes a repository variable rather than a commit
 and a deploy.
 
-`KOMIZO_APP_NAME` is the one to hold loosely. The app name is also written into
-the app's own `compose.yml` (network aliases), its Caddy fragment
-(`/srv/<app>/...`) and its image references — all committed, all of which must
-agree with it. Changing it in settings alone deploys into a directory the
-shipped config does not describe, and nothing reports that.
+`KOMIZO_APP_NAME` is the one to hold loosely. The app name is also the name of
+its gateway service in `compose.yml` — the shared proxy is pointed at
+`<app>-gateway` — and it appears in its image references. Both are committed and
+both must agree with it. Changing it in settings alone points the proxy at a
+container that does not exist, and nothing reports that.
 
 **Everything named `KOMIZO_SECRET_<NAME>` is pushed to the host as `<NAME>`.** A
 composite action cannot read `secrets` itself — GitHub exposes that context to
@@ -93,7 +93,7 @@ Most workflows need only `deploy`, which composes the rest in the right order.
 | --- | --- |
 | [`deploy`](./deploy) | Everything below, correctly sequenced |
 | [`connect`](./connect) | Installs the key and the pinned host key |
-| [`publish-config`](./publish-config) | Ships `compose.yml` as an image |
+| [`publish-config`](./publish-config) | Ships `compose.yml` and the hostname list as an image |
 | [`set-secrets`](./set-secrets) | Writes secrets the host cannot read back |
 | [`set-version`](./set-version) | Makes one tag the live version |
 | [`healthcheck`](./healthcheck) | Polls a URL until it answers |

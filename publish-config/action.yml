@@ -25,27 +25,23 @@ inputs:
       is where the host looks, so the name on disk does not matter — point it at
       compose.prod.yml if that is what you have.
     required: true
-  caddy:
+  hostnames:
     description: >
-      Reverse-proxy routes for this app, published under /config/caddy/.
-      Newline-separated for more than one; the host concatenates them. Leave
-      empty for an app that is not served over the shared proxy.
-    required: false
-    default: ""
-  static:
-    description: >
-      A directory of files to serve, published under /config/public and
-      unpacked by the host to <app dir>/public.
+      Path to a file listing the hostnames this app answers on, one per line,
+      `#` comments allowed. Published as /config/hostnames.
 
-      This is the one input that is a DIRECTORY rather than named files, and
-      deliberately so: a built site is thousands of files nobody is going to
-      list, and it is an artifact your build produced rather than something
-      sitting in your repository next to a private key. Point it at the output
-      directory — dist/, build/, _site/ — not at your source tree.
+      This is the WHOLE of what an app tells the server about routing. The host
+      generates the reverse-proxy config from it and points every one of these
+      names at your app's gateway container — so an app cannot author server
+      config, and no app's mistake can be another app's outage.
 
-      The shared proxy mounts the app directory read-only, so a caddy fragment
-      can serve this with no container behind it. An app that is only files
-      needs no compose service at all.
+      Everything a request meets after the hostname match belongs to your
+      gateway: paths, headers, static files, which service answers what. That is
+      a whole config in an image you built, not a fragment of a file shared with
+      strangers.
+
+      Leave empty for an app nothing outside reaches — a worker, a queue
+      consumer, a cron job.
     required: false
     default: ""
   image:
@@ -72,8 +68,7 @@ runs:
       shell: bash
       env:
         COMPOSE: ${{ inputs.compose }}
-        CADDY: ${{ inputs.caddy }}
-        STATIC: ${{ inputs.static }}
+        HOSTNAMES: ${{ inputs.hostnames }}
         IMAGE: ${{ inputs.image }}
         TAG: ${{ inputs.tag }}
       run: |
@@ -116,48 +111,38 @@ runs:
         cp "$COMPOSE" "$stage/compose.yml"
         included="compose.yml <- $COMPOSE"
 
-        if [ -n "$CADDY" ]; then
-          mkdir -p "$stage/caddy"
-          while IFS= read -r f; do
-            # Skip blank lines, so a trailing newline in a YAML block scalar is
-            # not read as a missing file.
-            [ -n "${f// /}" ] || continue
-            f="$(echo "$f" | xargs)"
-            if [ ! -f "$f" ]; then
-              echo "::error::caddy file '$f' does not exist."
-              exit 1
-            fi
-            base="$(basename "$f")"
-            if [ -e "$stage/caddy/$base" ]; then
-              echo "::error::two caddy files are both named '$base'; one would overwrite the other. Rename one."
-              exit 1
-            fi
-            cp "$f" "$stage/caddy/$base"
-            included="$included"$'\n'"caddy/$base <- $f"
-          done <<< "$CADDY"
-        fi
-
-        if [ -n "$STATIC" ]; then
-          if [ ! -d "$STATIC" ]; then
-            echo "::error::static directory '$STATIC' does not exist. It is a path in your repository or build output, relative to the workspace."
+        if [ -n "$HOSTNAMES" ]; then
+          if [ ! -f "$HOSTNAMES" ]; then
+            echo "::error::hostnames file '$HOSTNAMES' does not exist. It is a path in your repository, relative to the workspace."
             exit 1
           fi
-          # Refused rather than published. A workspace root as the document root
-          # would put .git, the workflow that built it and every source file on
-          # the public internet, and the mistake is a single wrong character.
-          if [ "$(cd "$STATIC" && pwd -P)" = "$(pwd -P)" ]; then
-            echo "::error::static must not be the workspace root. Point it at your build output — dist/, build/, _site/ — not at the whole checkout."
+          # Checked here as well as on the host. The host is the one that has to
+          # refuse a bad name -- it writes them into a config the whole box
+          # loads -- but finding out in CI, before anything is published, is
+          # cheaper than finding out from a deploy that reverted.
+          bad=""
+          n=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%%#*}"
+            line="$(echo "$line" | xargs || true)"
+            [ -n "$line" ] || continue
+            n=$((n + 1))
+            case "$line" in
+              *[!A-Za-z0-9.*-]*|'*'|*' '*) bad="$bad $line" ;;
+              \*.*) case "${line#\*.}" in *'*'*) bad="$bad $line" ;; esac ;;
+              *'*'*) bad="$bad $line" ;;
+            esac
+          done < "$HOSTNAMES"
+          if [ -n "$bad" ]; then
+            echo "::error::not valid hostnames:$bad. Letters, digits, dot and hyphen, with an optional leading '*.' -- one per line."
             exit 1
           fi
-          if [ -e "$STATIC/.git" ]; then
-            echo "::error::static directory '$STATIC' contains a .git directory; that is a source tree, not build output."
+          if [ "$n" -eq 0 ]; then
+            echo "::error::hostnames file '$HOSTNAMES' has no hostnames in it. Leave the input empty for an app nothing outside reaches."
             exit 1
           fi
-          mkdir -p "$stage/public"
-          # The trailing /. copies the CONTENTS, so the directory named here
-          # becomes the document root rather than a folder inside it.
-          cp -a "$STATIC/." "$stage/public/"
-          included="$included"$'\n'"public/ <- $STATIC ($(find "$STATIC" -type f | wc -l | tr -d ' ') files)"
+          cp "$HOSTNAMES" "$stage/hostnames"
+          included="$included"$'\n'"hostnames <- $HOSTNAMES ($n name(s))"
         fi
 
         # Written outside the stage so it is not itself packaged into /config.
