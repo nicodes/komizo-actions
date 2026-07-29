@@ -3,7 +3,7 @@ description: >
   Install a deploy key and a PINNED host key, then expose the server as the
   ssh alias "deploy-target". Fails closed if the host key is not pinned.
 
-  Run this before deploy, set-secrets or set-version — they all ride the alias
+  Run this before deploy, set-secrets or activate — they all ride the alias
   it leaves behind. So can your own steps: `ssh deploy-target ...` works in any
   later step, which is the hook for anything this toolkit does not cover.
 
@@ -64,6 +64,7 @@ runs:
   using: composite
   steps:
     - name: Install deploy key and host key
+      id: install
       shell: bash
       # Inputs arrive as env vars, never as ${{ }} inside the script. Direct
       # interpolation pastes the secret into the shell source, where a backtick
@@ -104,13 +105,42 @@ runs:
           exit 1
         fi
 
+        # These three are written into ~/.ssh/config below, and ssh_config is a
+        # line-oriented format with directives that RUN THINGS -- ProxyCommand
+        # among them. A newline in any of them stops being a bad hostname and
+        # becomes arbitrary code on this runner. They are repository variables
+        # rather than attacker input, which is why this is a guard and not an
+        # emergency, but the values are constrained on the komizo side and there
+        # is no reason for them not to be constrained here.
+        case "$SSH_HOST" in
+          *[!A-Za-z0-9.:_-]*)
+            echo "::error::host contains characters that are not valid in a hostname: '$SSH_HOST'"
+            exit 1 ;;
+        esac
+        case "$SSH_USER" in
+          ''|*[!A-Za-z0-9._-]*)
+            echo "::error::user must be letters, digits, dot, underscore or hyphen; got '$SSH_USER'."
+            exit 1 ;;
+        esac
+        case "$SSH_PORT" in
+          ''|*[!0-9]*)
+            echo "::error::port must be a number; got '$SSH_PORT'."
+            exit 1 ;;
+        esac
+
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
         printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
         chmod 600 ~/.ssh/id_deploy
 
         if [ -n "$SSH_KNOWN_HOSTS" ]; then
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # Appended, not written over. A job that connects to two servers --
+          # deploying an app that spans them, or copying between them -- used to
+          # keep only the pins of whichever ran last, and the earlier host then
+          # failed verification with its keys sitting in a file it had been
+          # removed from.
+          touch ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
           # Catch a bad paste here rather than as an opaque "Host key
           # verification failed" on the first connection. The value must be
@@ -128,7 +158,8 @@ runs:
           echo "Pinned host keys for $SSH_HOST: $(awk '!/^[[:space:]]*($|#)/ {print $2}' ~/.ssh/known_hosts | sort -u | paste -sd',' -)"
         elif [ "$ALLOW_UNPINNED" = "true" ]; then
           echo "::warning::Host key not pinned — trusting whatever answers on $SSH_HOST:$SSH_PORT. Anything this job sends the server is exposed to whoever can influence DNS or routing from the runner."
-          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          touch ~/.ssh/known_hosts
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           chmod 600 ~/.ssh/known_hosts
         else
           echo "::error::No host keys. Pass 'known-hosts:', or set KOMIZO_KNOWN_HOSTS under env: on the job — komizo copies the value when you press 'h' on the app's row. Store it as a repository VARIABLE rather than a secret: it is not confidential, and leaving it unmasked keeps a host-key mismatch legible in the log. To skip pinning anyway, set allow-unpinned-host: true."
@@ -152,6 +183,12 @@ runs:
         # MaxAuthTries — so "this account cannot log in" arrives as "Too many
         # authentication failures" instead.
         # BatchMode: never wait on a password prompt with no one to answer it.
+        #
+        # ControlMaster: one connection for the whole job. A deploy opens a
+        # session per step and set-secrets opens one PER SECRET, each paying a
+        # full handshake and authentication against a box on the other side of
+        # the internet. They now ride the connection the verify step below
+        # opens, which persists to the end of the job.
         cat >> ~/.ssh/config <<CFG
         Host deploy-target
             HostName $SSH_HOST
@@ -161,28 +198,25 @@ runs:
             IdentitiesOnly yes
             BatchMode yes
             StrictHostKeyChecking yes
+            ControlMaster auto
+            ControlPath ~/.ssh/komizo-%C
+            ControlPersist 10m
         CFG
         chmod 600 ~/.ssh/config
+
+        # Resolved here so the verify step below, and the deploy action's
+        # output, do not each repeat the fallback and the scheme-stripping.
+        echo "host=$SSH_HOST" >> "$GITHUB_OUTPUT"
 
     - name: Verify connectivity
       id: verify
       shell: bash
       env:
-        SSH_HOST: ${{ inputs.host }}
+        SSH_HOST: ${{ steps.install.outputs.host }}
       run: |
         set -euo pipefail
-        # The same fallback the step above used. Only for the output; the
-        # connection itself goes through the deploy-target block already
-        # written to ~/.ssh/config.
-        : "${SSH_HOST:=${KOMIZO_SERVER_URL:-}}"
-        # A hostname, not a URL, whatever the variable is called. Strip a
-        # scheme and anything after the host rather than failing on it: ssh
-        # takes "komizo.example.com", and "https://komizo.example.com/" is the
-        # obvious thing to paste into something named _URL.
-        SSH_HOST="${SSH_HOST#*://}"
-        SSH_HOST="${SSH_HOST%%/*}"
         if ! ssh deploy-target true; then
-          echo "::error::Cannot open an SSH session as the deploy user. Check the public half of this key is in that user's ~/.ssh/authorized_keys, and that sshd is reachable on the configured port."
+          echo "::error::Cannot open an SSH session as the deploy user. Check the public half of this key is in that user's authorized_keys on the server, and that sshd is reachable on the configured port."
           exit 1
         fi
         echo "host=$SSH_HOST" >> "$GITHUB_OUTPUT"

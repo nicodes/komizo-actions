@@ -362,8 +362,7 @@ config is unaffected keep running untouched. Requires `connect` to have run
 first.
 
 Called `set-version` until it was renamed: the old name described the smallest
-thing it does rather than the thing it is. `set-version` still works and
-forwards here, with a notice, and will be removed.
+thing it does rather than the thing it is. There is no shim for the old name.
 
 Most workflows should use [`deploy`](#deploy), which runs this *after*
 publishing config and setting secrets. Use this directly only when you need

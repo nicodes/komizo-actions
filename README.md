@@ -102,11 +102,10 @@ Reach for the primitives when you need your own steps interleaved — a database
 backup before the deploy, or a migration between the config publish and the
 restart.
 
-`activate` and `health-check` were called `set-version` and `healthcheck`. Both
-old names still work, forward to the new ones, and print a notice; they will be
-removed. `set-version` was renamed because it described the smallest thing it
-does — writing `APP_VERSION` — rather than the thing it is, which is the only
-action here that changes what is running.
+`activate` was briefly called `set-version`, and `health-check` was
+`healthcheck`. There are no forwarding shims for the old names: nothing has
+been released under them, and a shim is a second definition of an action's
+defaults that changes every omitted input the moment the two disagree.
 
 ## Pinning
 

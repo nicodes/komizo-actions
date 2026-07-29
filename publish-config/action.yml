@@ -130,11 +130,31 @@ runs:
           # refuse a bad name -- it writes them into a config the whole box
           # loads -- but finding out in CI, before anything is published, is
           # cheaper than finding out from a deploy that reverted.
+          # Trimmed by parameter expansion, never with xargs and never by word
+          # splitting.
+          #
+          # xargs PARSES its input: it honours quotes and backslashes and fails
+          # on an unmatched one. With `|| true` after it that failure became an
+          # EMPTY line, which this loop skips -- so a hostname containing a
+          # quote was silently dropped here and shipped anyway, to a host whose
+          # awk has no such notion and rejects it for real. CI and the host
+          # disagreeing about which lines exist is the one thing this check
+          # must not do.
+          #
+          # Unquoted word splitting would have the same class of problem from
+          # the other end: every wildcard hostname starts with '*', and an
+          # unquoted expansion in a workspace full of files is a glob.
+          trim() {
+            local s="$1"
+            s="${s#"${s%%[![:space:]]*}"}"
+            s="${s%"${s##*[![:space:]]}"}"
+            printf '%s' "$s"
+          }
           bad=""
           n=0
           while IFS= read -r line || [ -n "$line" ]; do
             line="${line%%#*}"
-            line="$(echo "$line" | xargs || true)"
+            line="$(trim "$line")"
             [ -n "$line" ] || continue
             # A line may say where the name goes -- "api.example.com -> api".
             # Only the NAME is validated: the rest is a label for the interface
@@ -142,11 +162,11 @@ runs:
             # the line is the whole difference between an annotation and a
             # syntax error.
             name="${line%% *}"
-            rest="$(echo "${line#"$name"}" | xargs || true)"
+            rest="$(trim "${line#"$name"}")"
             case "$rest" in
               '') ;;
               '->'*)
-                svc="$(echo "${rest#->}" | xargs || true)"
+                svc="$(trim "${rest#->}")"
                 case "$svc" in
                   ''|*[!A-Za-z0-9_-]*)
                     echo "::error::'$line' names no valid container after '->'. Use a compose service name: letters, digits, underscore, hyphen."
