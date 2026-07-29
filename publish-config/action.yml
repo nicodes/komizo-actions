@@ -104,6 +104,14 @@ runs:
             exit 1
             ;;
         esac
+        # A registry reference and nothing else -- a newline here would forge a
+        # second line in the `image-ref` output written at the end of this step.
+        case "$IMAGE" in
+          ""|*[!A-Za-z0-9._:/-]*)
+            echo "::error::image contains characters not valid in an image reference: '$IMAGE'."
+            exit 1
+            ;;
+        esac
 
         # Staged into a directory of our own rather than built from wherever the
         # files happen to live. Two reasons: the host looks for fixed names
@@ -114,6 +122,34 @@ runs:
         rm -rf "$stage"
         mkdir -p "$stage"
 
+        # Confine each named file to the checked-out workspace, following no
+        # symlinks. `-f` and `cp` both follow symlinks and neither is bounded to
+        # the repo, so a ref carrying `deploy/compose.yml -> ~/.ssh/id_deploy`
+        # (or a symlinked directory anywhere in the path) would publish the
+        # deploy KEY as a public layer of this image. Explicit naming stops the
+        # directory sweep but not the symlink -- this does. Called as a plain
+        # statement, never in $(...): its `exit` must terminate the step, and an
+        # exit inside a command substitution only leaves the subshell.
+        confine() {
+          local label="$1" path="$2" resolved root
+          if [ -L "$path" ]; then
+            echo "::error::$label '$path' is a symlink; refusing to follow it out of the workspace."
+            exit 1
+          fi
+          if ! resolved="$(realpath -e "$path" 2>/dev/null)"; then
+            echo "::error::$label '$path' does not exist. It is a path in your repository, relative to the workspace — did the checkout run?"
+            exit 1
+          fi
+          root="$(realpath -e "$GITHUB_WORKSPACE" 2>/dev/null || printf '%s' "${GITHUB_WORKSPACE:-}")"
+          case "$resolved" in
+            "$root"/*) ;;
+            *)
+              echo "::error::$label '$path' resolves to '$resolved', which is outside the workspace ($root); only checked-out files can be published."
+              exit 1 ;;
+          esac
+        }
+
+        confine "compose file" "$COMPOSE"
         if [ ! -f "$COMPOSE" ]; then
           echo "::error::compose file '$COMPOSE' does not exist. It is a path in your repository, relative to the workspace — did the checkout run?"
           exit 1
@@ -122,6 +158,7 @@ runs:
         included="compose.yml <- $COMPOSE"
 
         if [ -n "$HOSTNAMES" ]; then
+          confine "hostnames file" "$HOSTNAMES"
           if [ ! -f "$HOSTNAMES" ]; then
             echo "::error::hostnames file '$HOSTNAMES' does not exist. It is a path in your repository, relative to the workspace."
             exit 1

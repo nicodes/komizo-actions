@@ -1,0 +1,79 @@
+name: Lint
+
+# Static analysis for the composite actions and the release script. There is no
+# build to run here -- these are shell embedded in YAML -- so the two things that
+# can go wrong are workflow/action syntax and the bash inside `run:` blocks.
+
+on:
+  push:
+  pull_request:
+
+# Read-only: this workflow only inspects the tree.
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Lints the workflow files under .github/workflows (this one included) for
+      # schema and expression errors. Pinned to a tag, as the repo's own docs
+      # preach for anything in a key-holding job.
+      - uses: raven-actions/actionlint@v2
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # shellcheck ships on the ubuntu-latest image, but install it explicitly so
+      # a base-image change cannot silently turn this job into a no-op.
+      # python3-yaml is Debian's PyYAML -- used to pull the `run:` blocks out of
+      # the composite actions below.
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-yaml
+
+      # The one standalone script. The "at minimum" of shell coverage.
+      - name: Lint scripts/release.sh
+        run: shellcheck scripts/release.sh
+
+      # actionlint validates workflow files, not action-metadata (action.yml)
+      # files, so the bash embedded in the six composite actions is checked here
+      # instead: each `run:` block is extracted to a file and shellchecked, which
+      # is the same analysis actionlint would apply to a workflow's run steps.
+      - name: Lint the bash embedded in each action.yml
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, os, subprocess, sys, tempfile
+          import yaml
+
+          rc = 0
+          for path in sorted(glob.glob("*/action.yml")):
+              doc = yaml.safe_load(open(path)) or {}
+              steps = (doc.get("runs") or {}).get("steps") or []
+              for i, step in enumerate(steps):
+                  if step.get("shell") != "bash" or "run" not in step:
+                      continue
+                  with tempfile.NamedTemporaryFile(
+                      "w", suffix=".sh", delete=False
+                  ) as f:
+                      f.write("#!/usr/bin/env bash\n")
+                      f.write(step["run"])
+                      name = f.name
+                  # SC2154: these fragments read values from the step's own env:
+                  # block, which the extracted file does not carry, so a
+                  # "referenced but not assigned" report is expected, not a bug.
+                  r = subprocess.run(
+                      ["shellcheck", "--shell=bash", "--exclude=SC2154", name]
+                  )
+                  os.unlink(name)
+                  if r.returncode != 0:
+                      label = step.get("name", "unnamed")
+                      print(f"::error::shellcheck failed: {path} step #{i + 1} ({label})")
+                      rc = 1
+          sys.exit(rc)
+          PY

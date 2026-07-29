@@ -128,10 +128,28 @@ runs:
             exit 1 ;;
         esac
 
+        # Per-job SSH state lives under $RUNNER_TEMP, not ~/.ssh. On a
+        # self-hosted or otherwise reused runner ~/.ssh persists between jobs:
+        # id_deploy and a lingering ControlMaster socket would hand the key and a
+        # still-authenticated channel to whatever runs next as the same user, and
+        # socket reuse skips host-key verification entirely. $RUNNER_TEMP is
+        # per-job, so the key, the pins and the socket all share the job's
+        # lifetime. Only the deploy-target alias itself is left in ~/.ssh/config,
+        # pointing at the files here -- that is the documented seam later steps
+        # ride.
+        komizo_dir="$RUNNER_TEMP/komizo"
+        mkdir -p "$komizo_dir"
+        chmod 700 "$komizo_dir"
+
         mkdir -p ~/.ssh
         chmod 700 ~/.ssh
-        printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
-        chmod 600 ~/.ssh/id_deploy
+
+        # umask before the redirect, not chmod after it: `> file` creates it with
+        # the default mask (0644) and it stays world-readable for the statement
+        # until `chmod 600` runs -- a window a reused runner can lose. Scoped to
+        # a subshell so the mask does not outlive the write.
+        (umask 077; printf '%s\n' "$SSH_KEY" > "$komizo_dir/id_deploy")
+        chmod 600 "$komizo_dir/id_deploy"
 
         if [ -n "$SSH_KNOWN_HOSTS" ]; then
           # Appended, not written over. A job that connects to two servers --
@@ -139,44 +157,48 @@ runs:
           # keep only the pins of whichever ran last, and the earlier host then
           # failed verification with its keys sitting in a file it had been
           # removed from.
-          touch ~/.ssh/known_hosts
-          printf '%s\n' "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          touch "$komizo_dir/known_hosts"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" >> "$komizo_dir/known_hosts"
+          chmod 600 "$komizo_dir/known_hosts"
           # Catch a bad paste here rather than as an opaque "Host key
           # verification failed" on the first connection. The value must be
           # known_hosts LINES ("<host> <keytype> <base64>"), which is what
           # ssh-keyscan prints — not the server's .pub file, which has no
           # hostname field and so matches no host.
-          if ! ssh-keygen -F "[$SSH_HOST]:$SSH_PORT" -f ~/.ssh/known_hosts >/dev/null 2>&1 \
-             && ! ssh-keygen -F "$SSH_HOST" -f ~/.ssh/known_hosts >/dev/null 2>&1; then
-            lines=$(grep -cve '^[[:space:]]*$' ~/.ssh/known_hosts || true)
-            fields=$(awk '!/^[[:space:]]*($|#)/ {print $1}' ~/.ssh/known_hosts | sort -u | paste -sd',' -)
+          if ! ssh-keygen -F "[$SSH_HOST]:$SSH_PORT" -f "$komizo_dir/known_hosts" >/dev/null 2>&1 \
+             && ! ssh-keygen -F "$SSH_HOST" -f "$komizo_dir/known_hosts" >/dev/null 2>&1; then
+            lines=$(grep -cve '^[[:space:]]*$' "$komizo_dir/known_hosts" || true)
+            fields=$(awk '!/^[[:space:]]*($|#)/ {print $1}' "$komizo_dir/known_hosts" | sort -u | paste -sd',' -)
             echo "::error::known-hosts contains no entry for $SSH_HOST ($lines non-empty line(s); first fields: ${fields:-none}). If those look like key types (ssh-ed25519, ssh-rsa, ecdsa-*), you pasted the server's .pub file — it has no hostname field. Re-capture with 'ssh-keyscan -p $SSH_PORT $SSH_HOST' and verify the base64 against the host's /etc/ssh/ssh_host_*_key.pub."
             exit 1
           fi
           # Only key types are echoed, no key material.
-          echo "Pinned host keys for $SSH_HOST: $(awk '!/^[[:space:]]*($|#)/ {print $2}' ~/.ssh/known_hosts | sort -u | paste -sd',' -)"
+          echo "Pinned host keys for $SSH_HOST: $(awk '!/^[[:space:]]*($|#)/ {print $2}' "$komizo_dir/known_hosts" | sort -u | paste -sd',' -)"
         elif [ "$ALLOW_UNPINNED" = "true" ]; then
           echo "::warning::Host key not pinned — trusting whatever answers on $SSH_HOST:$SSH_PORT. Anything this job sends the server is exposed to whoever can influence DNS or routing from the runner."
-          touch ~/.ssh/known_hosts
-          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          chmod 600 ~/.ssh/known_hosts
+          touch "$komizo_dir/known_hosts"
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> "$komizo_dir/known_hosts" 2>/dev/null
+          chmod 600 "$komizo_dir/known_hosts"
         else
           echo "::error::No host keys. Pass 'known-hosts:', or set KOMIZO_KNOWN_HOSTS under env: on the job — komizo copies the value when you press 'h' on the app's row. Store it as a repository VARIABLE rather than a secret: it is not confidential, and leaving it unmasked keeps a host-key mismatch legible in the log. To skip pinning anyway, set allow-unpinned-host: true."
           exit 1
         fi
 
         # Drop any existing deploy-target block before writing ours, so running
-        # this action twice does not leave two. It resolves either way — ssh
-        # takes the first match — but a stale block silently winning over a
-        # newer one is exactly the kind of bug that costs an afternoon.
+        # this action twice does not leave two. The match is on any Host line
+        # whose whitespace-separated tokens INCLUDE deploy-target, not the exact
+        # line `Host deploy-target` -- a planted `Host deploy-target somethingelse`
+        # names our alias too and has to be dropped, or it survives earlier in
+        # the file and wins.
         touch ~/.ssh/config
         awk '
-          /^[[:space:]]*Host[[:space:]]+deploy-target[[:space:]]*$/ { drop = 1; next }
-          /^[[:space:]]*Host[[:space:]]/                            { drop = 0 }
+          $1 == "Host" {
+            drop = 0
+            for (i = 2; i <= NF; i++) if ($i == "deploy-target") drop = 1
+            if (drop) next
+          }
           !drop
         ' ~/.ssh/config > ~/.ssh/config.tmp
-        mv ~/.ssh/config.tmp ~/.ssh/config
 
         # IdentitiesOnly: offer id_deploy and nothing else. Without it ssh also
         # offers agent and default keys, and sshd cuts the connection at
@@ -187,21 +209,42 @@ runs:
         # ControlMaster: one connection for the whole job. A deploy opens a
         # session per step and set-secrets opens one PER SECRET, each paying a
         # full handshake and authentication against a box on the other side of
-        # the internet. They now ride the connection the verify step below
-        # opens, which persists to the end of the job.
-        cat >> ~/.ssh/config <<CFG
+        # the internet. They ride the connection the verify step below opens.
+        # ControlPersist is short: the socket is an authenticated channel to the
+        # host, so it should outlive the last step by as little as possible.
+        #
+        # PREPENDED, not appended: ssh takes the FIRST value it sees for each
+        # parameter, so a pre-existing `Host *` earlier in the file (with its own
+        # HostName/ProxyCommand/`StrictHostKeyChecking no`) would otherwise win
+        # and silently redirect or unpin this connection. Ours goes first.
+        #
+        # IdentityFile/UserKnownHostsFile/ControlPath all point under
+        # $RUNNER_TEMP/komizo -- see the note above the key write. The block here
+        # is the only ssh state left in the shared ~/.ssh, and it just names the
+        # per-job files.
+        #
+        # A composite action cannot declare a `post:` step, so this leaves no
+        # automatic cleanup. On ephemeral runners the job's teardown removes
+        # $RUNNER_TEMP and ~/.ssh for you; on a SELF-HOSTED or reused runner add
+        # a final `if: always()` step to close the socket and drop the state --
+        # see docs/actions.md ("Cleanup on self-hosted runners").
+        cat > ~/.ssh/config.new <<CFG
         Host deploy-target
             HostName $SSH_HOST
             User $SSH_USER
             Port $SSH_PORT
-            IdentityFile ~/.ssh/id_deploy
+            IdentityFile $komizo_dir/id_deploy
+            UserKnownHostsFile $komizo_dir/known_hosts
             IdentitiesOnly yes
             BatchMode yes
             StrictHostKeyChecking yes
             ControlMaster auto
-            ControlPath ~/.ssh/komizo-%C
-            ControlPersist 10m
+            ControlPath $komizo_dir/control-%C
+            ControlPersist 1m
         CFG
+        cat ~/.ssh/config.tmp >> ~/.ssh/config.new
+        rm -f ~/.ssh/config.tmp
+        mv ~/.ssh/config.new ~/.ssh/config
         chmod 600 ~/.ssh/config
 
         # Resolved here so the verify step below, and the deploy action's

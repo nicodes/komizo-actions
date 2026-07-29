@@ -226,6 +226,29 @@ explicit `key:` or `known-hosts:` still wins.
 Re-running `connect` is safe: it rewrites its `~/.ssh/config` block rather than
 appending, so a second run replaces the first instead of racing it.
 
+### Cleanup on self-hosted runners
+
+`connect` keeps its per-job SSH state — the deploy key, the pinned host keys and
+the multiplexed control socket — under `$RUNNER_TEMP/komizo`, and leaves only the
+`deploy-target` alias in `~/.ssh/config`. On GitHub-hosted runners that is all
+disposable: the runner is destroyed after the job. On a **self-hosted or reused
+runner** nothing is, and a composite action cannot declare a `post:` step to tidy
+up after itself — so add a final step that runs however the job ends:
+
+```yaml
+- name: Tear down the SSH connection
+  if: always()
+  run: |
+    ssh -O exit deploy-target 2>/dev/null || true
+    rm -rf "$RUNNER_TEMP/komizo"
+```
+
+`ssh -O exit` closes the live control socket so it cannot outlive the job; the
+`rm -rf` drops the key and the pins. Without it, the socket lingers for
+`ControlPersist` (one minute) and the key sits in `$RUNNER_TEMP` until the next
+job that reuses the directory — either of which is a credential the following
+workload on that runner could pick up.
+
 ## `publish-config`
 
 Publishes this commit's config as `<image>:<tag>`, which the host unpacks into

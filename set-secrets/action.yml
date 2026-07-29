@@ -90,6 +90,17 @@ runs:
             exit 1
           fi
 
+          # Denylist. The bare-name fallback below resolves a name straight from
+          # this step's environment, so `names: GITHUB_TOKEN` would push the job
+          # token to the host, and `KOMIZO_DEPLOY_KEY` would push the deploy key
+          # itself. Refuse the runner's own variables and komizo's key rather
+          # than let a value cross from CI into an app's secret store.
+          case "$name" in
+            GITHUB_*|RUNNER_*|KOMIZO_DEPLOY_KEY)
+              echo "::error::'$name' is a reserved name (GITHUB_*, RUNNER_* and KOMIZO_DEPLOY_KEY cannot be pushed as secrets)."
+              exit 1 ;;
+          esac
+
           # Indirect expansion rather than eval: a value containing a backtick
           # or $(...) must never be re-parsed by this shell.
           prefixed="KOMIZO_SECRET_$name"

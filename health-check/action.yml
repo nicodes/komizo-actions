@@ -49,11 +49,47 @@ runs:
       run: |
         set -uo pipefail
 
+        # Numeric inputs, validated before they reach $((ATTEMPTS * DELAY))
+        # below. $(( )) re-evaluates the CONTENTS of a variable as an arithmetic
+        # expression, so a value like 'x[$(cmd)]' runs `cmd` on the runner --
+        # and this step holds the deploy key and every secret. Same restricted
+        # `case` the port input already uses in connect.
+        case "$ATTEMPTS" in
+          ''|*[!0-9]*)
+            echo "::error::attempts must be a number; got '$ATTEMPTS'."
+            exit 1 ;;
+        esac
+        case "$DELAY" in
+          ''|*[!0-9]*)
+            echo "::error::delay must be a number; got '$DELAY'."
+            exit 1 ;;
+        esac
+        case "$TIMEOUT" in
+          ''|*[!0-9]*)
+            echo "::error::timeout must be a number; got '$TIMEOUT'."
+            exit 1 ;;
+        esac
+
+        # An http(s) URL, and nothing else. curl's -K/--config reads directives
+        # from a file and file:// reads local files -- both echoed back below,
+        # so a value that is not a web URL is an exfiltration primitive rather
+        # than a health check.
+        case "$URL" in
+          http://*|https://*) ;;
+          *)
+            echo "::error::url must be an http:// or https:// URL; got '$URL'."
+            exit 1 ;;
+        esac
+
         body=""
         for i in $(seq 1 "$ATTEMPTS"); do
           # No -f: a 5xx body is worth showing on the final failure, and -f
           # discards it.
-          if body=$(curl -sS --max-time "$TIMEOUT" --write-out '\n%{http_code}' "$URL" 2>&1); then
+          #
+          # --url, not a bare positional: a value beginning with '-' would
+          # otherwise be parsed as a curl option (the scheme check above already
+          # refuses that, this is belt-and-braces).
+          if body=$(curl -sS --max-time "$TIMEOUT" --write-out '\n%{http_code}' --url "$URL" 2>&1); then
             code="${body##*$'\n'}"
             payload="${body%$'\n'*}"
             if [ "${code#2}" != "$code" ] && [ ${#code} -eq 3 ]; then
@@ -73,6 +109,14 @@ runs:
         if [ -n "$EXPECT" ]; then
           echo "::error::Expected the body to contain: $EXPECT"
         fi
+        # The response body comes from the endpoint, which may be attacker
+        # controlled -- a compromised target could embed `::error::` or other
+        # workflow commands in it and forge annotations in this job. Fence it
+        # with an unpredictable stop-commands token so anything inside is echoed
+        # literally rather than interpreted.
+        fence="komizo-$(date +%s%N)-$RANDOM"
         echo "Last response:" >&2
+        echo "::stop-commands::$fence" >&2
         printf '%s\n' "$body" >&2
+        echo "::$fence::" >&2
         exit 1
