@@ -26,7 +26,7 @@ description: >
   is the property worth keeping: the rest of the job's environment, including
   every secret this step does not need, stays out of it.
 
-  This wraps connect, publish-config, set-secrets, set-version and healthcheck.
+  This wraps connect, publish-config, set-secrets, activate and health-check.
   Those remain the primitives; reach for them when you need your own steps
   interleaved, and use this for everything else.
 
@@ -270,45 +270,28 @@ runs:
           echo "has-secrets=false" >> "$GITHUB_OUTPUT"
         fi
 
-    # Everything is checked before anything is published or restarted, so a
-    # misconfiguration costs a failed step rather than a half-applied deploy.
+    # Everything this action alone can check, checked before anything is
+    # published or restarted -- so a misconfiguration costs a failed step rather
+    # than a half-applied deploy.
+    #
+    # Deliberately NOT re-checking what the composed actions check for
+    # themselves. The deploy key, the host keys and every secret's value used to
+    # be validated here as well, in forty lines that had already drifted from
+    # the originals in their wording. connect runs first and set-secrets runs
+    # before activate, so those failures still land before anything on the host
+    # changes -- which is the property that matters, and it is theirs to keep.
     - name: Validate inputs
       shell: bash
       env:
         HOST: ${{ steps.cfg.outputs.host }}
-        KEY: ${{ inputs.key }}
-        KNOWN_HOSTS: ${{ inputs.known-hosts }}
-        ALLOW_UNPINNED: ${{ inputs.allow-unpinned-host }}
         APP: ${{ steps.cfg.outputs.app }}
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
         CONFIG_HOSTNAMES: ${{ inputs.config-hostnames }}
         CONFIG_IMAGE: ${{ inputs.config-image }}
-        SECRET_NAMES: ${{ inputs.secrets }}
       run: |
         set -euo pipefail
 
-        if [ -n "${HOST:-}" ]; then
-          # komizo's own names, used when the caller passed nothing. connect
-          # does the same, so a workflow can set these once under env: and
-          # never name them again.
-          : "${KEY:=${KOMIZO_DEPLOY_KEY:-}}"
-          : "${KNOWN_HOSTS:=${KOMIZO_KNOWN_HOSTS:-}}"
-
-          if [ -z "${KEY:-}" ]; then
-            # D holds a bare dollar so the two-brace sequence is never present
-            # in this file. Actions parses ${'{{'} out of a composite action's
-            # template before bash runs, and a composite action has no secrets
-            # context -- so writing the hint literally makes the action fail to
-            # LOAD, for every caller, regardless of shell escaping.
-            D='$'
-            echo "::error::host is set but no deploy key was given. Pass 'key: ${D}{{ secrets.KOMIZO_DEPLOY_KEY }}', or set KOMIZO_DEPLOY_KEY under env: on the job. komizo prints the value when you add an app, and copies it to your clipboard when you rotate one."
-            exit 1
-          fi
-          if [ -z "${KNOWN_HOSTS:-}" ] && [ "${ALLOW_UNPINNED:-false}" != "true" ]; then
-            echo "::error::host is set but no host keys were given. Pass 'known-hosts:', or set KOMIZO_KNOWN_HOSTS under env: on the job -- komizo copies the value when you press 'h' on the app's row. Store it as a repository VARIABLE rather than a secret: it needs integrity, not secrecy, and leaving it unmasked keeps a host-key mismatch legible in the log. To skip pinning anyway, set allow-unpinned-host: true."
-            exit 1
-          fi
-        else
+        if [ -z "${HOST:-}" ]; then
           # No host given, so an earlier step must have run connect. Check the
           # file connect writes rather than asking ssh: OpenSSH resolves
           # ~/.ssh/config from the passwd database, not $HOME, which makes
@@ -347,45 +330,6 @@ runs:
         # would look exactly like a working deploy.
         if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_HOSTNAMES" ]; then
           echo "::error::config-hostnames is set but config-compose is empty. They are published together in one image, so nothing would be shipped."
-          exit 1
-        fi
-
-        # Confirm every secret has a non-empty value, so one that failed to
-        # propagate surfaces here -- before anything is published or restarted
-        # -- rather than as an app that starts misconfigured.
-        #
-        # Empty matters as much as missing: GitHub substitutes an empty string
-        # for a secret that does not exist, so a name declared in the workflow
-        # and never created in the repository is indistinguishable from one
-        # that was supplied, to a check that only asks whether the name is set.
-        names=()
-        while IFS= read -r name; do
-          name="${name//[[:space:]]/}"
-          [ -n "$name" ] && names+=("$name")
-        done <<< "$SECRET_NAMES"
-        while IFS= read -r var; do
-          [ -n "$var" ] && names+=("${var#KOMIZO_SECRET_}")
-        done < <(compgen -v | grep '^KOMIZO_SECRET_' | sort || true)
-
-        missing=() blank=()
-        for name in "${names[@]:-}"; do
-          [ -z "$name" ] && continue
-          prefixed="KOMIZO_SECRET_$name"
-          if [ -n "${!prefixed+set}" ]; then
-            [ -n "${!prefixed}" ] || blank+=("$name")
-          elif [ -n "${!name+set}" ]; then
-            [ -n "${!name}" ] || blank+=("$name")
-          else
-            missing+=("$name")
-          fi
-        done
-        if [ ${#missing[@]} -gt 0 ]; then
-          D='$'
-          echo "::error::No environment variable for: ${missing[*]}. Pass each under env: on this step, e.g. 'KOMIZO_SECRET_${missing[0]}: ${D}{{ secrets.${missing[0]} }}'. Environment-scoped secrets are invisible to jobs without that environment."
-          exit 1
-        fi
-        if [ ${#blank[@]} -gt 0 ]; then
-          echo "::error::Empty value for: ${blank[*]}. GitHub substitutes an empty string for a secret that does not exist, so check each is actually set in this repository -- and in the environment this job declares, if that is where its secrets live."
           exit 1
         fi
 

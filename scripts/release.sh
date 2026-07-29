@@ -39,7 +39,7 @@
 # --- the one gotcha -------------------------------------------------------
 #
 # Between releases, `deploy@main` runs sub-actions from the LAST release, not
-# from main. Testing a change to connect/ or healthcheck/ through deploy/ means
+# from main. Testing a change to connect/ or health-check/ through deploy/ means
 # either releasing first, or temporarily pointing the refs at your branch. It
 # is the standard trade for deterministic pins and worth knowing before it
 # confuses you.
@@ -48,10 +48,9 @@ set -eu
 
 TAG="${1:-v0}"
 REPO="nicodes/komizo-actions"
-# Every action.yml that composes a sibling -- deploy/, plus any deprecation
-# shim forwarding an old name to its new one. Discovered rather than listed: a
-# shim added and forgotten here would ship a floating ref, which is the one
-# thing this script exists to prevent. Filled in after the cd below.
+# Every action.yml that composes a sibling -- deploy/ today. Discovered rather
+# than listed: one added and forgotten here would ship a floating ref, which is
+# the one thing this script exists to prevent. Filled in after the cd below.
 COMPOSED=""
 # Every sibling deploy/ composes. Listed rather than globbed so a new action
 # has to be added here on purpose: one that is composed but not pinned would
