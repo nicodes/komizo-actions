@@ -1,0 +1,140 @@
+name: Activate a version
+description: >
+  Run the deploy on the host: pull the config image for this tag, unpack it,
+  write APP_VERSION, and bring the stack up. This is the step that changes what
+  is running — everything before it publishes and prepares.
+
+  Compose recreates only what the new config actually changed, so services whose
+  resolved config is unaffected keep running untouched.
+
+  It reports the version it replaced, so a later step can roll back to it.
+
+  Requires the connect action to have run first. Most workflows should use the
+  deploy action, which runs this after publishing config and setting secrets;
+  reach for this directly only when you need your own steps in between.
+
+inputs:
+  version:
+    description: >
+      Image tag to deploy, normally a commit SHA. Persisted on the host as
+      APP_VERSION so a later manual `docker compose up -d` keeps running this
+      commit instead of drifting back to :latest.
+    required: true
+  registry:
+    description: Registry to authenticate against before pulling. Empty to skip.
+    required: false
+    default: ghcr.io
+  registry-user:
+    description: Registry username.
+    required: false
+    default: ""
+  registry-token:
+    description: >
+      Registry password. Prefer the run-scoped GITHUB_TOKEN so nothing
+      long-lived is left on the server.
+    required: false
+    default: ""
+  command:
+    description: >
+      Privileged deploy command on the host, as installed by `komizo`. Named
+      after the app, e.g. `doas /usr/local/bin/deploy-blog`.
+    required: true
+
+outputs:
+  version:
+    description: The version that was deployed. Echoes the input, for chaining.
+    value: ${{ steps.run.outputs.version }}
+  previous-version:
+    description: >
+      The version that was live before this ran, as reported by the host. Empty
+      on a first deploy, or if the host predates this feature. Use it to roll
+      back from a later step.
+    value: ${{ steps.run.outputs.previous-version }}
+
+runs:
+  using: composite
+  steps:
+    # NOTE ON COHESION. This action does three things — log the host into the
+    # registry, deploy, log it out — where one would be tidier. That is
+    # deliberate: composite actions cannot declare `post:` cleanup steps (only
+    # JavaScript actions can), so splitting the login out would mean every
+    # caller who forgets the matching logout leaves registry credentials sitting
+    # on the box. The bracket stays welded to the operation it protects.
+    - name: Validate version
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        # Rejected here as well as on the host: a bad value should fail with a
+        # clear message rather than surface as a remote sed error. Everything
+        # downstream single-quotes this value, which is only safe because the
+        # character set is constrained to exclude quotes entirely.
+        case "$VERSION" in
+          ""|*[!A-Za-z0-9._-]*)
+            echo "::error::version must be a plain image tag (letters, digits, dot, underscore, hyphen); got '$VERSION'."
+            exit 1
+            ;;
+        esac
+
+    - name: Deploy
+      id: run
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        DEPLOY_CMD: ${{ inputs.command }}
+        REGISTRY: ${{ inputs.registry }}
+        REGISTRY_USER: ${{ inputs.registry-user }}
+        REGISTRY_TOKEN: ${{ inputs.registry-token }}
+      run: |
+        set -euo pipefail
+        echo "Deploying $VERSION"
+
+        # Registry credentials go to the DEPLOY COMMAND, which runs as root, and
+        # not to a separate `ssh docker login`. The pull happens as root, so it
+        # reads root's ~/.docker/config.json; a login over this SSH session would
+        # write to the deploy user's home instead and the pull would still be
+        # anonymous. That fails only against a private registry, and looks like a
+        # missing image rather than an auth problem.
+        #
+        # The token travels on stdin, never as an argument — arguments are
+        # visible in the host's process list to every other user on the box. The
+        # host drops the credentials when the deploy exits, however it exits.
+        # Safe to single-quote unvalidated only because both values are checked
+        # against a restricted character set on the host before they are used.
+        creds=""
+        if [ -n "$REGISTRY" ] && [ -n "$REGISTRY_TOKEN" ]; then
+          if [ -z "$REGISTRY_USER" ]; then
+            echo "::error::registry-token is set but registry-user is empty; the host cannot log in without a username."
+            exit 1
+          fi
+          creds=" '$REGISTRY' '$REGISTRY_USER'"
+        fi
+
+        # tee so the deploy's own output still reaches the log while we keep a
+        # copy to read the previous version out of. pipefail (set above) is what
+        # makes a failed deploy still fail this step despite the pipe.
+        log="$RUNNER_TEMP/set-version.log"
+        printf '%s' "$REGISTRY_TOKEN" \
+          | ssh deploy-target "$DEPLOY_CMD '$VERSION'$creds" 2>&1 | tee "$log"
+
+        # The host prints this because the deploy user cannot read .env itself.
+        # Absent on a host bootstrapped by an older version, so treat it as
+        # optional rather than failing a deploy that otherwise worked.
+        previous="$(sed -n 's/^deploy: previous-version=//p' "$log" | head -n 1)"
+        if [ -z "$previous" ]; then
+          echo "::notice::Host did not report a previous version — nothing to roll back to, or the host predates this feature (re-run 'komizo add' on it to update)."
+        fi
+        {
+          echo "version=$VERSION"
+          echo "previous-version=$previous"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Report rollback instructions
+      if: failure()
+      shell: bash
+      env:
+        DEPLOY_CMD: ${{ inputs.command }}
+      run: |
+        echo "::error::Deploy failed. Roll back by SSHing to the host and running:"
+        echo "::error::  $DEPLOY_CMD <previous-sha>"

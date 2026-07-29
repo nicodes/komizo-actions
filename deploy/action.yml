@@ -422,7 +422,7 @@ runs:
 
     # 4. Make the tag live.
     - id: version
-      uses: nicodes/komizo-actions/set-version@f73d223d61825f8b7f0bf5e618038f8af9e623d6
+      uses: nicodes/komizo-actions/activate@f73d223d61825f8b7f0bf5e618038f8af9e623d6
       with:
         version: ${{ inputs.version }}
         registry: ${{ inputs.registry }}
@@ -433,7 +433,7 @@ runs:
     # 5. Prove it is serving. Skipped entirely when no URL is given.
     - id: health
       if: inputs.health-url != ''
-      uses: nicodes/komizo-actions/healthcheck@f73d223d61825f8b7f0bf5e618038f8af9e623d6
+      uses: nicodes/komizo-actions/health-check@f73d223d61825f8b7f0bf5e618038f8af9e623d6
       with:
         url: ${{ inputs.health-url }}
         expect: ${{ inputs.health-expect }}

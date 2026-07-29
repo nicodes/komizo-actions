@@ -48,16 +48,22 @@ set -eu
 
 TAG="${1:-v0}"
 REPO="nicodes/komizo-actions"
-DEPLOY="deploy/action.yml"
+# Every action.yml that composes a sibling -- deploy/, plus any deprecation
+# shim forwarding an old name to its new one. Discovered rather than listed: a
+# shim added and forgotten here would ship a floating ref, which is the one
+# thing this script exists to prevent. Filled in after the cd below.
+COMPOSED=""
 # Every sibling deploy/ composes. Listed rather than globbed so a new action
 # has to be added here on purpose: one that is composed but not pinned would
 # float silently, which is exactly the bug this script exists to prevent.
-SUBACTIONS="connect publish-config set-secrets set-version healthcheck"
+SUBACTIONS="connect publish-config set-secrets activate health-check"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 cd "$(dirname "$0")/.."
-[ -f "$DEPLOY" ] || die "run this from the komizo-actions checkout ($DEPLOY not found)"
+[ -f deploy/action.yml ] || die "run this from the komizo-actions checkout (deploy/action.yml not found)"
+COMPOSED="$(grep -lE "$REPO/[a-z-]+@" */action.yml 2>/dev/null || true)"
+[ -n "$COMPOSED" ] || die "no action composes a sibling -- has the repo layout changed?"
 
 [ -z "$(git status --porcelain)" ] || die "working tree is not clean -- commit or stash first"
 
@@ -76,9 +82,11 @@ printf 'Releasing %s from %s (%s)\n\n' "$TAG" "$branch" "$(git rev-parse --short
 
 # Rewrite each ref to the base commit, whatever it currently points at -- a
 # tag, a branch, or an older release's SHA.
-for a in $SUBACTIONS; do
-	sed -i -E "s|($REPO/$a)@[A-Za-z0-9._/-]+|\1@$base|g" "$DEPLOY"
-	printf '  pinned %-16s -> %s\n' "$a" "$(git rev-parse --short "$base")"
+for f in $COMPOSED; do
+	for a in $SUBACTIONS; do
+		sed -i -E "s|($REPO/$a)@[A-Za-z0-9._/-]+|\1@$base|g" "$f"
+	done
+	printf '  pinned refs in %-24s -> %s\n' "$f" "$(git rev-parse --short "$base")"
 done
 
 # Nothing floating: catch a sibling that was composed but missing from the list
@@ -87,22 +95,28 @@ done
 # Collected BEFORE reverting -- afterwards every ref is unpinned again, so the
 # same grep would report all five and hide which one was actually the problem.
 #
-# Matched broadly -- any sibling, not just the listed ones -- so that adding an
-# action to deploy/ without adding it to SUBACTIONS is caught here rather than
-# shipping unpinned. deploy/ cannot compose itself, so a self-reference in a
-# comment or example is excluded rather than reported.
-unpinned="$(grep -nE "$REPO/[a-z-]+@" "$DEPLOY" \
-	| grep -vE "$REPO/deploy@" | grep -v "@$base" || true)"
+# Matched broadly -- any sibling, not just the listed ones -- so that composing
+# an action without adding it to SUBACTIONS is caught here rather than shipping
+# unpinned. An action cannot compose itself, so a self-reference in a comment or
+# an example is excluded rather than reported.
+unpinned=""
+for f in $COMPOSED; do
+	self="${f%/action.yml}"
+	found="$(grep -nE "$REPO/[a-z-]+@" "$f" \
+		| grep -vE "$REPO/$self@" | grep -v "@$base" || true)"
+	[ -z "$found" ] || unpinned="$unpinned$f:$found
+"
+done
 if [ -n "$unpinned" ]; then
-	git checkout -- "$DEPLOY"
+	git checkout -- $COMPOSED
 	printf '\n%s\n\n' "$unpinned" >&2
 	die "the refs above were not pinned -- add them to SUBACTIONS and re-run (reverted)"
 fi
 
-if git diff --quiet -- "$DEPLOY"; then
+if git diff --quiet -- $COMPOSED; then
 	printf '\nAlready pinned to %s; nothing to commit.\n' "$(git rev-parse --short "$base")"
 else
-	git add "$DEPLOY"
+	git add $COMPOSED
 	git commit -q -m "release $TAG: pin composed actions to ${base}"
 	printf '\n  committed %s\n' "$(git rev-parse --short HEAD)"
 fi

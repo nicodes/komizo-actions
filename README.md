@@ -95,12 +95,18 @@ Most workflows need only `deploy`, which composes the rest in the right order.
 | [`connect`](./connect) | Installs the key and the pinned host key |
 | [`publish-config`](./publish-config) | Ships `compose.yml` and the hostname list as an image |
 | [`set-secrets`](./set-secrets) | Writes secrets the host cannot read back |
-| [`set-version`](./set-version) | Makes one tag the live version |
-| [`healthcheck`](./healthcheck) | Polls a URL until it answers |
+| [`activate`](./activate) | Runs the deploy on the host — the step that changes what is running |
+| [`health-check`](./health-check) | Polls a URL until it answers |
 
 Reach for the primitives when you need your own steps interleaved — a database
 backup before the deploy, or a migration between the config publish and the
 restart.
+
+`activate` and `health-check` were called `set-version` and `healthcheck`. Both
+old names still work, forward to the new ones, and print a notice; they will be
+removed. `set-version` was renamed because it described the smallest thing it
+does — writing `APP_VERSION` — rather than the thing it is, which is the only
+action here that changes what is running.
 
 ## Pinning
 

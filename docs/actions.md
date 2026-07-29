@@ -63,8 +63,8 @@ config publish and the restart:
 | [`connect`](#connect) | Installs the key + pinned host key, defines `deploy-target` | — |
 | [`publish-config`](#publish-config) | Publishes `compose.yml` as an image | registry login |
 | [`set-secrets`](#set-secrets) | Writes secrets the host can't read back | `connect` |
-| [`set-version`](#set-version) | Makes one tag the live version | `connect` |
-| [`healthcheck`](#healthcheck) | Polls a URL until it answers | — |
+| [`activate`](#activate) | Runs the deploy on the host — the step that changes what is running | `connect` |
+| [`health-check`](#health-check) | Polls a URL until it answers | — |
 
 The two layers mix: run `connect` yourself, do whatever you need over
 `ssh deploy-target`, then call `deploy` **without** `host` and it will use the
@@ -74,7 +74,7 @@ connection you already made.
 
 - [`deploy`](#deploy) — the whole sequence in one step
 - [The `deploy-target` seam](#the-deploy-target-seam) — running your own commands on the host
-- [`connect`](#connect) · [`publish-config`](#publish-config) · [`set-secrets`](#set-secrets) · [`set-version`](#set-version) · [`healthcheck`](#healthcheck) — the primitives, in execution order
+- [`connect`](#connect) · [`publish-config`](#publish-config) · [`set-secrets`](#set-secrets) · [`activate`](#activate) · [`health-check`](#health-check) — the primitives, in execution order
 
 ## `deploy`
 
@@ -139,7 +139,7 @@ when you want it.
 
 - name: Roll back
   if: failure() && steps.deploy.outputs.previous-version != ''
-  uses: nicodes/komizo-actions/set-version@v0
+  uses: nicodes/komizo-actions/activate@v0
   with:
     version: ${{ steps.deploy.outputs.previous-version }}
     command: doas /usr/local/bin/deploy-myapp
@@ -346,17 +346,24 @@ and the last one's.
 Names are validated against `[A-Za-z0-9_]`, and a value containing a newline is
 rejected by the host — an env file cannot represent one.
 
-Writing a secret does not restart anything. Run this *before* `set-version`
+Writing a secret does not restart anything. Run this *before* `activate`
 if the new value must take effect immediately; Compose picks it up when the
 container is recreated.
 
 **Outputs:** `count` — how many secrets were set.
 
-## `set-version`
+## `activate`
 
-Makes one image tag the live version. Writes `APP_VERSION` on the host and lets
-Compose recreate whatever changed as a result — services whose resolved config
-is unaffected keep running untouched. Requires `connect` to have run first.
+Runs the deploy on the host: pulls the config image for this tag, unpacks it,
+writes `APP_VERSION`, and brings the stack up. **This is the step that changes
+what is running** — everything before it publishes and prepares. Compose
+recreates only what the new config actually changed, so services whose resolved
+config is unaffected keep running untouched. Requires `connect` to have run
+first.
+
+Called `set-version` until it was renamed: the old name described the smallest
+thing it does rather than the thing it is. `set-version` still works and
+forwards here, with a notice, and will be removed.
 
 Most workflows should use [`deploy`](#deploy), which runs this *after*
 publishing config and setting secrets. Use this directly only when you need
@@ -371,7 +378,7 @@ your own steps in between.
 | `command` | yes | — | Privileged deploy command on the host, e.g. `doas /usr/local/bin/deploy-blog`. |
 
 ```yaml
-- uses: nicodes/komizo-actions/set-version@v0
+- uses: nicodes/komizo-actions/activate@v0
   with:
     command: doas /usr/local/bin/deploy-myapp
     version: ${{ github.sha }}
@@ -401,7 +408,7 @@ The host reports `previous-version` because the deploy user cannot read
 `/srv/<app>/.env` itself — it is `600` root. The deploy script prints it before
 changing anything, so it stays correct even when a later stage fails.
 
-## `healthcheck`
+## `health-check`
 
 Polls a URL until it answers, failing the job if it never does. Replaces the
 hand-rolled retry loop every repo grows its own version of.
@@ -415,7 +422,7 @@ hand-rolled retry loop every repo grows its own version of.
 | `timeout` | no | `10` | Seconds before a single request is considered failed. |
 
 ```yaml
-- uses: nicodes/komizo-actions/healthcheck@v0
+- uses: nicodes/komizo-actions/health-check@v0
   with:
     url: https://app.example.com/healthz
     expect: '"status":"ok"'

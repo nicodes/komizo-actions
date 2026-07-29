@@ -1,17 +1,17 @@
-name: Health check
+name: Health check (deprecated)
 description: >
-  Poll a URL until it answers, failing the job if it never does. Replaces the
-  hand-rolled retry loop each repo grew its own version of.
+  Renamed to `health-check`, so every action here is spelled the same way.
+  This forwards to it unchanged and will be removed.
+
+  Change `healthcheck` to `health-check` in your workflow. Nothing else moves:
+  the inputs, the outputs and the behaviour are the same.
 
 inputs:
   url:
     description: URL to poll.
     required: true
   expect:
-    description: >
-      Substring the response body must contain. Empty means any 2xx counts,
-      which is usually what you want — match on content only when the endpoint
-      can return 200 while unhealthy.
+    description: Substring the response body must contain. Empty means any 2xx counts.
     required: false
     default: ""
   attempts:
@@ -21,58 +21,34 @@ inputs:
   delay:
     description: Seconds between attempts.
     required: false
+    # Mirrors health-check's defaults exactly. A shim that restates a default
+    # and gets it wrong changes behaviour for every caller who omitted the
+    # input, silently, which is worse than not having a shim.
     default: "5"
   timeout:
-    description: Seconds before a single request is considered failed.
+    description: Seconds to allow each individual request.
     required: false
     default: "10"
 
 outputs:
   attempts-used:
-    description: >
-      How many attempts it took to answer. Empty if it never did. Named apart
-      from the `attempts` input, which is the ceiling rather than the result.
-    value: ${{ steps.poll.outputs.attempts-used }}
+    description: How many attempts it took to answer. Empty if it never did.
+    value: ${{ steps.fwd.outputs.attempts-used }}
 
 runs:
   using: composite
   steps:
-    - name: Poll
-      id: poll
+    - name: Say it moved
       shell: bash
-      env:
-        URL: ${{ inputs.url }}
-        EXPECT: ${{ inputs.expect }}
-        ATTEMPTS: ${{ inputs.attempts }}
-        DELAY: ${{ inputs.delay }}
-        TIMEOUT: ${{ inputs.timeout }}
       run: |
-        set -uo pipefail
+        echo "::notice::komizo-actions/healthcheck is now komizo-actions/health-check. This forwards for now; update the ref."
 
-        body=""
-        for i in $(seq 1 "$ATTEMPTS"); do
-          # No -f: a 5xx body is worth showing on the final failure, and -f
-          # discards it.
-          if body=$(curl -sS --max-time "$TIMEOUT" --write-out '\n%{http_code}' "$URL" 2>&1); then
-            code="${body##*$'\n'}"
-            payload="${body%$'\n'*}"
-            if [ "${code#2}" != "$code" ] && [ ${#code} -eq 3 ]; then
-              if [ -z "$EXPECT" ] || case "$payload" in *"$EXPECT"*) true ;; *) false ;; esac; then
-                echo "attempts-used=$i" >> "$GITHUB_OUTPUT"
-                echo "Healthy after ${i} attempt(s): $URL -> $code"
-                exit 0
-              fi
-            fi
-          fi
-          if [ "$i" -lt "$ATTEMPTS" ]; then
-            sleep "$DELAY"
-          fi
-        done
-
-        echo "::error::$URL did not become healthy after $ATTEMPTS attempt(s) over ~$((ATTEMPTS * DELAY))s."
-        if [ -n "$EXPECT" ]; then
-          echo "::error::Expected the body to contain: $EXPECT"
-        fi
-        echo "Last response:" >&2
-        printf '%s\n' "$body" >&2
-        exit 1
+    - name: Forward to health-check
+      id: fwd
+      uses: nicodes/komizo-actions/health-check@v0
+      with:
+        url: ${{ inputs.url }}
+        expect: ${{ inputs.expect }}
+        attempts: ${{ inputs.attempts }}
+        delay: ${{ inputs.delay }}
+        timeout: ${{ inputs.timeout }}
