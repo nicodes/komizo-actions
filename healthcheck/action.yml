@@ -45,7 +45,7 @@ runs:
 
     - name: Forward to health-check
       id: fwd
-      uses: nicodes/komizo-actions/health-check@v0
+      uses: nicodes/komizo-actions/health-check@3c672d1d56621d57bf0038e8e3b1b777880eb8d6
       with:
         url: ${{ inputs.url }}
         expect: ${{ inputs.expect }}
