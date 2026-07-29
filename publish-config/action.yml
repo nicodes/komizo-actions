@@ -163,6 +163,20 @@ runs:
             # syntax error.
             name="${line%% *}"
             rest="$(trim "${line#"$name"}")"
+            # An optional trailing keyword says how the name's certificate is
+            # obtained. Taken off the end first so what remains is the arrow, if
+            # any -- the two are independent, and either can appear alone.
+            #
+            # Validated for SHAPE only. Which modes a server can actually serve
+            # is the host's business and it refuses the ones it cannot, with a
+            # message naming the file it came from. Deciding that here would put
+            # the answer in the wrong place and date it to whenever this action
+            # was last released.
+            case "$rest" in
+              *' on-demand'|*' dns'|*' passthrough'|on-demand|dns|passthrough)
+                rest="$(trim "${rest% *}")"
+                case "$rest" in on-demand|dns|passthrough) rest="" ;; esac ;;
+            esac
             case "$rest" in
               '') ;;
               '->'*)
@@ -173,7 +187,7 @@ runs:
                     exit 1 ;;
                 esac ;;
               *)
-                echo "::error::'$line' has something after the hostname that is not '-> <container>'."
+                echo "::error::'$line' has something after the hostname that is not '-> <container>', optionally followed by one of: on-demand dns passthrough."
                 exit 1 ;;
             esac
             n=$((n + 1))
