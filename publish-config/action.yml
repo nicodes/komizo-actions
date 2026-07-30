@@ -19,12 +19,35 @@ description: >
   docker/login-action.
 
 inputs:
+  config:
+    description: >
+      Path to this app's komizo.yml — a single manifest naming the compose file
+      and the hostnames it answers on. When set, it replaces the compose: and
+      hostnames: inputs below (pass one form or the other, not both).
+
+      Shape:
+
+          compose: compose.yml          # relative to this file
+          hostnames:
+            - app.example.com
+            - name: api.example.com
+              container: api            # DISPLAY label only
+            - name: "*.preview.example.com"
+              container: api
+              tls: on-demand
+
+      It is read here in CI and turned into the same /config/compose.yml and
+      /config/hostnames the host has always read, so nothing on the box learns a
+      new format.
+    required: false
+    default: ""
   compose:
     description: >
       Path to this app's compose file. Published as /config/compose.yml, which
       is where the host looks, so the name on disk does not matter — point it at
-      compose.prod.yml if that is what you have.
-    required: true
+      compose.prod.yml if that is what you have. Ignored when config: is given.
+    required: false
+    default: ""
   hostnames:
     description: >
       Path to a file listing the hostnames this app answers on, one per line,
@@ -77,8 +100,9 @@ runs:
       id: push
       shell: bash
       env:
-        COMPOSE: ${{ inputs.compose }}
-        HOSTNAMES: ${{ inputs.hostnames }}
+        CONFIG: ${{ inputs.config }}
+        COMPOSE_INPUT: ${{ inputs.compose }}
+        HOSTNAMES_INPUT: ${{ inputs.hostnames }}
         IMAGE: ${{ inputs.image }}
         TAG: ${{ inputs.tag }}
       run: |
@@ -149,6 +173,41 @@ runs:
           esac
         }
 
+        # Resolve the source: either a komizo.yml manifest, or the explicit
+        # compose:/hostnames: inputs. Exactly one form -- config: is the newer,
+        # structured one; the file inputs still work for apps that use them.
+        if [ -n "$CONFIG" ] && [ -n "$COMPOSE_INPUT" ]; then
+          echo "::error::pass either config: (a komizo.yml) or compose:, not both."
+          exit 1
+        fi
+        HOSTNAMES_DERIVED=0
+        if [ -n "$CONFIG" ]; then
+          confine "config file" "$CONFIG"
+          python3 -c 'import yaml' 2>/dev/null \
+            || pip3 install --quiet pyyaml 2>/dev/null \
+            || sudo apt-get install -y -qq python3-yaml 2>/dev/null \
+            || { echo "::error::need PyYAML to read komizo.yml (pip install pyyaml)."; exit 1; }
+          # Turn komizo.yml into the flat hostnames the host reads, and hand back
+          # the compose path it names. The derived file is ours, so it is not
+          # confined below (it lives in RUNNER_TEMP, not the workspace) -- but it
+          # still goes through the same validation and the host re-checks it.
+          HOSTNAMES="$RUNNER_TEMP/komizo-hostnames"
+          : > "$HOSTNAMES"
+          if ! COMPOSE="$(python3 "$GITHUB_ACTION_PATH/parse-config.py" "$CONFIG" "$HOSTNAMES")"; then
+            exit 1
+          fi
+          HOSTNAMES_DERIVED=1
+          # An app with no hostnames (a worker) publishes none.
+          [ -s "$HOSTNAMES" ] || HOSTNAMES=""
+        else
+          COMPOSE="$COMPOSE_INPUT"
+          HOSTNAMES="$HOSTNAMES_INPUT"
+        fi
+        if [ -z "$COMPOSE" ]; then
+          echo "::error::no compose file. Pass config: (a komizo.yml) or compose:."
+          exit 1
+        fi
+
         confine "compose file" "$COMPOSE"
         if [ ! -f "$COMPOSE" ]; then
           echo "::error::compose file '$COMPOSE' does not exist. It is a path in your repository, relative to the workspace — did the checkout run?"
@@ -158,7 +217,11 @@ runs:
         included="compose.yml <- $COMPOSE"
 
         if [ -n "$HOSTNAMES" ]; then
-          confine "hostnames file" "$HOSTNAMES"
+          # The derived file is ours and lives outside the workspace; only an
+          # app-supplied path needs confining.
+          if [ "$HOSTNAMES_DERIVED" = "0" ]; then
+            confine "hostnames file" "$HOSTNAMES"
+          fi
           if [ ! -f "$HOSTNAMES" ]; then
             echo "::error::hostnames file '$HOSTNAMES' does not exist. It is a path in your repository, relative to the workspace."
             exit 1
