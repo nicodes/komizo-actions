@@ -115,12 +115,21 @@ inputs:
     default: ""
 
   # --- config ---------------------------------------------------------------
+  config:
+    description: >
+      Path to this app's komizo.yml — the compose file and the hostnames it
+      answers on, in one manifest. The modern form of the config-compose /
+      config-hostnames pair below: pass this OR those, not both. Still needs
+      config-image (the registry path the host is pinned to). Empty skips the
+      config publish, leaving whatever compose.yml the host already has.
+    required: false
+    default: ""
   config-compose:
     description: >
       Path to this app's compose file, published for this commit. Empty skips
       the config publish entirely, leaving whatever compose.yml the host
       already has. Named explicitly, so the image holds exactly what you list
-      and nothing neighbouring it.
+      and nothing neighbouring it. Prefer `config:` (a komizo.yml) for new apps.
     required: false
     default: ""
   config-hostnames:
@@ -300,6 +309,7 @@ runs:
       env:
         HOST: ${{ steps.cfg.outputs.host }}
         APP: ${{ steps.cfg.outputs.app }}
+        CONFIG: ${{ inputs.config }}
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
         CONFIG_HOSTNAMES: ${{ inputs.config-hostnames }}
         CONFIG_IMAGE: ${{ inputs.config-image }}
@@ -332,6 +342,17 @@ runs:
             exit 1 ;;
         esac
 
+        # config: (a komizo.yml) and config-compose: are two forms of the same
+        # thing; publish-config takes one. Catch it here with a clearer message
+        # than the one it would raise mid-publish.
+        if [ -n "$CONFIG" ] && [ -n "$CONFIG_COMPOSE" ]; then
+          echo "::error::pass either config: (a komizo.yml) or config-compose:, not both."
+          exit 1
+        fi
+        if [ -n "$CONFIG" ] && [ -z "$CONFIG_IMAGE" ]; then
+          echo "::error::config is set but config-image is empty. Pass the registry path the host was bootstrapped with (its CONFIG_IMAGE)."
+          exit 1
+        fi
         if [ -n "$CONFIG_COMPOSE" ] && [ -z "$CONFIG_IMAGE" ]; then
           echo "::error::config-compose is set but config-image is empty. Pass the registry path the host was bootstrapped with (its CONFIG_IMAGE)."
           exit 1
@@ -363,9 +384,10 @@ runs:
     # 2. Publish this commit's compose.yml, so the host has it before it is
     #    asked to deploy this tag.
     - id: config
-      if: inputs.config-compose != ''
+      if: inputs.config != '' || inputs.config-compose != ''
       uses: nicodes/komizo-actions/publish-config@2f790aeb02a6e2cf44dc39c9175ba3a0c19f1a17
       with:
+        config: ${{ inputs.config }}
         compose: ${{ inputs.config-compose }}
         hostnames: ${{ inputs.config-hostnames }}
         image: ${{ inputs.config-image }}
