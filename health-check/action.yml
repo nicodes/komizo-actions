@@ -1,25 +1,30 @@
 name: Health check
 description: >
-  Poll a URL until it answers, failing the job if it never does. Replaces the
-  hand-rolled retry loop each repo grew its own version of.
+  Poll a list of URLs until every one answers, failing the job if any never
+  does. Replaces the hand-rolled retry loop each repo grew its own version of.
+
+  A list rather than one URL, because "did this deploy work" is a question only
+  the project can answer: an API's health endpoint says nothing about whether the
+  static bundle serves or the database is reachable from outside. Each project
+  lists its own surface -- one line per thing worth proving. komizo enforces no
+  mapping to containers and no minimum: a static site might list one URL, a stack
+  three, and that is the project's call.
 
 inputs:
-  url:
-    description: URL to poll.
-    required: true
-  expect:
+  urls:
     description: >
-      Substring the response body must contain. Empty means any 2xx counts,
-      which is usually what you want — match on content only when the endpoint
-      can return 200 while unhealthy.
-    required: false
-    default: ""
+      One check per line. The first whitespace-delimited token is the URL; the
+      rest of the line, if present, is a substring the response body must contain
+      -- URLs cannot contain spaces, so this parses without any escaping. A line
+      with no substring passes on any 2xx. Blank lines, and lines beginning with
+      '#', are ignored.
+    required: true
   attempts:
-    description: How many times to try before giving up.
+    description: How many rounds to try before giving up.
     required: false
     default: "30"
   delay:
-    description: Seconds between attempts.
+    description: Seconds between rounds.
     required: false
     default: "5"
   timeout:
@@ -28,11 +33,12 @@ inputs:
     default: "10"
 
 outputs:
-  attempts-used:
+  rounds-used:
     description: >
-      How many attempts it took to answer. Empty if it never did. Named apart
-      from the `attempts` input, which is the ceiling rather than the result.
-    value: ${{ steps.poll.outputs.attempts-used }}
+      How many rounds it took until every URL was healthy. Empty if they never
+      all were. Named apart from the `attempts` input, which is the ceiling
+      rather than the result.
+    value: ${{ steps.poll.outputs.rounds-used }}
 
 runs:
   using: composite
@@ -41,8 +47,7 @@ runs:
       id: poll
       shell: bash
       env:
-        URL: ${{ inputs.url }}
-        EXPECT: ${{ inputs.expect }}
+        URLS: ${{ inputs.urls }}
         ATTEMPTS: ${{ inputs.attempts }}
         DELAY: ${{ inputs.delay }}
         TIMEOUT: ${{ inputs.timeout }}
@@ -53,70 +58,104 @@ runs:
         # below. $(( )) re-evaluates the CONTENTS of a variable as an arithmetic
         # expression, so a value like 'x[$(cmd)]' runs `cmd` on the runner --
         # and this step holds the deploy key and every secret. Same restricted
-        # `case` the port input already uses in connect.
-        case "$ATTEMPTS" in
-          ''|*[!0-9]*)
-            echo "::error::attempts must be a number; got '$ATTEMPTS'."
-            exit 1 ;;
-        esac
-        case "$DELAY" in
-          ''|*[!0-9]*)
-            echo "::error::delay must be a number; got '$DELAY'."
-            exit 1 ;;
-        esac
-        case "$TIMEOUT" in
-          ''|*[!0-9]*)
-            echo "::error::timeout must be a number; got '$TIMEOUT'."
-            exit 1 ;;
-        esac
+        # `case` the port input uses in connect.
+        for pair in "attempts:$ATTEMPTS" "delay:$DELAY" "timeout:$TIMEOUT"; do
+          val=${pair#*:}
+          case "$val" in
+            ''|*[!0-9]*)
+              echo "::error::${pair%%:*} must be a number; got '$val'."
+              exit 1 ;;
+          esac
+        done
 
-        # An http(s) URL, and nothing else. curl's -K/--config reads directives
-        # from a file and file:// reads local files -- both echoed back below,
-        # so a value that is not a web URL is an exfiltration primitive rather
-        # than a health check.
-        case "$URL" in
-          http://*|https://*) ;;
-          *)
-            echo "::error::url must be an http:// or https:// URL; got '$URL'."
-            exit 1 ;;
-        esac
+        # Parse the list into parallel arrays: the URL, its expected substring
+        # (empty for "any 2xx"), and whether it has gone healthy yet.
+        urls=(); expects=(); healthy=(); lastbody=()
+        while IFS= read -r line; do
+          # Trim surrounding whitespace, then skip blanks and comments.
+          line="${line#"${line%%[![:space:]]*}"}"
+          line="${line%"${line##*[![:space:]]}"}"
+          [ -z "$line" ] && continue
+          case "$line" in '#'*) continue ;; esac
 
-        body=""
-        for i in $(seq 1 "$ATTEMPTS"); do
-          # No -f: a 5xx body is worth showing on the final failure, and -f
-          # discards it.
-          #
-          # --url, not a bare positional: a value beginning with '-' would
-          # otherwise be parsed as a curl option (the scheme check above already
-          # refuses that, this is belt-and-braces).
-          if body=$(curl -sS --max-time "$TIMEOUT" --write-out '\n%{http_code}' --url "$URL" 2>&1); then
-            code="${body##*$'\n'}"
-            payload="${body%$'\n'*}"
-            if [ "${code#2}" != "$code" ] && [ ${#code} -eq 3 ]; then
-              if [ -z "$EXPECT" ] || case "$payload" in *"$EXPECT"*) true ;; *) false ;; esac; then
-                echo "attempts-used=$i" >> "$GITHUB_OUTPUT"
-                echo "Healthy after ${i} attempt(s): $URL -> $code"
-                exit 0
+          # First token is the URL; the remainder (left-trimmed) is the expect.
+          url=${line%%[[:space:]]*}
+          rest=${line#"$url"}
+          rest="${rest#"${rest%%[![:space:]]*}"}"
+
+          # An http(s) URL, and nothing else. curl's -K/--config reads directives
+          # from a file and file:// reads local files -- so a value that is not a
+          # web URL is an exfiltration primitive rather than a health check.
+          case "$url" in
+            http://*|https://*) ;;
+            *)
+              echo "::error::each health URL must be an http:// or https:// URL; got '$url'."
+              exit 1 ;;
+          esac
+
+          urls+=("$url"); expects+=("$rest"); healthy+=(""); lastbody+=("")
+        done <<< "$URLS"
+
+        n=${#urls[@]}
+        if [ "$n" -eq 0 ]; then
+          echo "::error::no health URLs given."
+          exit 1
+        fi
+        echo "Polling $n URL(s), up to $ATTEMPTS round(s), ${DELAY}s apart."
+
+        # Each round re-checks only the URLs not yet healthy. Total wall-time is
+        # bounded by attempts*delay no matter how many URLs there are -- the list
+        # does not lengthen the wait, only widens each round.
+        for r in $(seq 1 "$ATTEMPTS"); do
+          remaining=0
+          for i in $(seq 0 $((n - 1))); do
+            [ -n "${healthy[$i]}" ] && continue
+            url=${urls[$i]}; expect=${expects[$i]}
+            # No -f: a 5xx body is worth showing on the final failure, and -f
+            # discards it. --url, not a bare positional, so a value beginning
+            # with '-' cannot be read as a curl option (the scheme check already
+            # refuses that; this is belt-and-braces).
+            if body=$(curl -sS --max-time "$TIMEOUT" --write-out '\n%{http_code}' --url "$url" 2>&1); then
+              code="${body##*$'\n'}"
+              payload="${body%$'\n'*}"
+              if [ "${code#2}" != "$code" ] && [ ${#code} -eq 3 ]; then
+                if [ -z "$expect" ] || case "$payload" in *"$expect"*) true ;; *) false ;; esac; then
+                  healthy[i]=1
+                  echo "  ok    $url -> $code"
+                  continue
+                fi
               fi
             fi
+            lastbody[i]="$body"
+            remaining=$((remaining + 1))
+          done
+          if [ "$remaining" -eq 0 ]; then
+            echo "rounds-used=$r" >> "$GITHUB_OUTPUT"
+            echo "All $n URL(s) healthy after $r round(s)."
+            exit 0
           fi
-          if [ "$i" -lt "$ATTEMPTS" ]; then
+          if [ "$r" -lt "$ATTEMPTS" ]; then
             sleep "$DELAY"
           fi
         done
 
-        echo "::error::$URL did not become healthy after $ATTEMPTS attempt(s) over ~$((ATTEMPTS * DELAY))s."
-        if [ -n "$EXPECT" ]; then
-          echo "::error::Expected the body to contain: $EXPECT"
-        fi
-        # The response body comes from the endpoint, which may be attacker
-        # controlled -- a compromised target could embed `::error::` or other
-        # workflow commands in it and forge annotations in this job. Fence it
-        # with an unpredictable stop-commands token so anything inside is echoed
-        # literally rather than interpreted.
+        # The summary line carries only numbers and the project's own URLs, both
+        # trusted. The response BODIES do not: a compromised endpoint could embed
+        # `::error::` or other workflow commands to forge annotations in this job.
+        # Everything after the fence is echoed literally until the stop token,
+        # which is unpredictable so it cannot be closed early.
+        echo "::error::$remaining of $n URL(s) did not become healthy after $ATTEMPTS round(s) over ~$((ATTEMPTS * DELAY))s."
         fence="komizo-$(date +%s%N)-$RANDOM"
-        echo "Last response:" >&2
         echo "::stop-commands::$fence" >&2
-        printf '%s\n' "$body" >&2
+        for i in $(seq 0 $((n - 1))); do
+          [ -n "${healthy[$i]}" ] && continue
+          if [ -n "${expects[$i]}" ]; then
+            echo "FAILED: ${urls[$i]}  (expected body to contain: ${expects[$i]})" >&2
+          else
+            echo "FAILED: ${urls[$i]}" >&2
+          fi
+          echo "  last response:" >&2
+          printf '%s\n' "${lastbody[$i]:-<no response>}" >&2
+        done
         echo "::$fence::" >&2
         exit 1

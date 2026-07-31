@@ -184,16 +184,17 @@ inputs:
     default: ""
 
   # --- health check ---------------------------------------------------------
-  # Setting health-url is what enables the check; the rest are overrides. There
-  # is no boolean toggle because a check without a URL has nothing to poll.
-  health-url:
-    description: URL to poll after deploying. Empty skips the check entirely.
-    required: false
-    default: ""
-  health-expect:
+  # Setting health-urls is what enables the check; the rest are overrides. There
+  # is no boolean toggle because a check with no URLs has nothing to poll.
+  health-urls:
     description: >
-      Substring the response body must contain. Empty means any 2xx counts,
-      which is usually what you want.
+      URLs to poll after deploying, one per line -- the deploy fails unless every
+      one answers. The first token on a line is the URL; anything after it is a
+      substring the body must contain (see the health-check action). Empty skips
+      the check entirely. This is where a project states what "deployed and
+      working" means for it: an API endpoint, a served bundle, a database's
+      status -- as many as are worth proving, and no mapping to containers is
+      enforced.
     required: false
     default: ""
   health-attempts:
@@ -225,11 +226,12 @@ outputs:
       the `config-image` input, which must not carry one. Empty if no config
       was published.
     value: ${{ steps.config.outputs.image-ref }}
-  health-attempts-used:
+  health-rounds-used:
     description: >
-      Attempts the health check actually needed, if it ran. Named apart from
-      the `health-attempts` input, which is the ceiling rather than the result.
-    value: ${{ steps.health.outputs.attempts-used }}
+      Rounds the health check needed until every URL was healthy, if it ran.
+      Named apart from the `health-attempts` input, which is the ceiling rather
+      than the result.
+    value: ${{ steps.health.outputs.rounds-used }}
 
 runs:
   using: composite
@@ -413,11 +415,10 @@ runs:
 
     # 5. Prove it is serving. Skipped entirely when no URL is given.
     - id: health
-      if: inputs.health-url != ''
+      if: inputs.health-urls != ''
       uses: nicodes/komizo-actions/health-check@1a5db9aa5d4fa738115a5e453f85e17d75c2f84d
       with:
-        url: ${{ inputs.health-url }}
-        expect: ${{ inputs.health-expect }}
+        urls: ${{ inputs.health-urls }}
         attempts: ${{ inputs.health-attempts }}
         delay: ${{ inputs.health-delay }}
         timeout: ${{ inputs.health-timeout }}
