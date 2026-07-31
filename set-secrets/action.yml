@@ -134,6 +134,10 @@ runs:
           # host's process list to any other user on the box. The name is
           # single-quoted, which is safe only because the charset above
           # excludes quotes.
+          #
+          # The command expands here, on the client, on purpose: SECRET_CMD is
+          # our fixed command name and name is charset-validated above.
+          # shellcheck disable=SC2029
           printf '%s' "${value[$name]}" | ssh deploy-target "$SECRET_CMD '$name'" >/dev/null
           echo "Set $name"
           pushed=$((pushed + 1))

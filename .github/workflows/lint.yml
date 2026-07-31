@@ -64,11 +64,15 @@ jobs:
                       f.write("#!/usr/bin/env bash\n")
                       f.write(step["run"])
                       name = f.name
-                  # SC2154: these fragments read values from the step's own env:
-                  # block, which the extracted file does not carry, so a
-                  # "referenced but not assigned" report is expected, not a bug.
+                  # SC2154 and SC2153: both are artefacts of the same thing --
+                  # these fragments read values from the step's own env: block,
+                  # which the extracted file does not carry. SC2154 reports them as
+                  # "referenced but not assigned"; SC2153 reports an UPPER_CASE env
+                  # read (URLS, NAMES, SSH_PORT) as a possible misspelling of a
+                  # lower_case local it resembles. Neither is a bug -- the env
+                  # block is the assignment shellcheck cannot see.
                   r = subprocess.run(
-                      ["shellcheck", "--shell=bash", "--exclude=SC2154", name]
+                      ["shellcheck", "--shell=bash", "--exclude=SC2154,SC2153", name]
                   )
                   os.unlink(name)
                   if r.returncode != 0:
