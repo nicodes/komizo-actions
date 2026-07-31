@@ -143,6 +143,10 @@ runs:
         fence="komizo-$(date +%s%N)-$RANDOM"
         echo "::stop-commands::$fence"
         rc=0
+        # The command string IS meant to expand here, on the client: DEPLOY_CMD
+        # is our fixed command name and VERSION is charset-validated above, so
+        # what crosses the wire is built deliberately rather than on the host.
+        # shellcheck disable=SC2029
         printf '%s' "$REGISTRY_TOKEN" \
           | ssh deploy-target "$DEPLOY_CMD '$VERSION'$creds" 2>&1 | tee "$log" || rc=$?
         echo "::$fence::"

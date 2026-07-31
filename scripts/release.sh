@@ -61,6 +61,10 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 cd "$(dirname "$0")/.."
 [ -f deploy/action.yml ] || die "run this from the komizo-actions checkout (deploy/action.yml not found)"
+# The glob never expands to a name starting with '-' (action directories are
+# words like deploy/, connect/), and a ./ prefix would leak into the filenames
+# in COMPOSED and break the self-reference regex below -- so the glob stays bare.
+# shellcheck disable=SC2035
 COMPOSED="$(grep -lE "$REPO/[a-z-]+@" */action.yml 2>/dev/null || true)"
 [ -n "$COMPOSED" ] || die "no action composes a sibling -- has the repo layout changed?"
 
@@ -107,14 +111,19 @@ for f in $COMPOSED; do
 "
 done
 if [ -n "$unpinned" ]; then
+	# COMPOSED is a newline-separated list of files; splitting it into separate
+	# arguments is the intent, and this is POSIX sh with no array to hold them.
+	# shellcheck disable=SC2086
 	git checkout -- $COMPOSED
 	printf '\n%s\n\n' "$unpinned" >&2
 	die "the refs above were not pinned -- add them to SUBACTIONS and re-run (reverted)"
 fi
 
+# shellcheck disable=SC2086  # word-split COMPOSED into its filenames, as above
 if git diff --quiet -- $COMPOSED; then
 	printf '\nAlready pinned to %s; nothing to commit.\n' "$(git rev-parse --short "$base")"
 else
+	# shellcheck disable=SC2086
 	git add $COMPOSED
 	git commit -q -m "release $TAG: pin composed actions to ${base}"
 	printf '\n  committed %s\n' "$(git rev-parse --short HEAD)"
