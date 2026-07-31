@@ -17,7 +17,8 @@ GitHub Actions that deploy to your own server. Merge, and it's live.
     config-image: ghcr.io/you/myapp-config
     registry-user: ${{ github.actor }}
     registry-token: ${{ secrets.GITHUB_TOKEN }}
-    health-url: https://myapp.example.com/health
+    health-urls: |
+      https://myapp.example.com/health
 ```
 
 The first four are the names komizo tells you to store, and the ones these

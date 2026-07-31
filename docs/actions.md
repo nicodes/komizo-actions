@@ -97,7 +97,7 @@ tag — in the one order that is correct.
 | `key` | no | `""` | Private half of the deploy key. Required when `host` is set. |
 | `known-hosts` | no | `""` | Pinned host keys. Required when `host` is set. |
 | `port` | no | `22` | SSH port. |
-| `health-url` | no | `""` | URL to poll after the deploy. Empty skips the check. |
+| `health-urls` | no | `""` | URLs to poll after the deploy, one per line — all must answer or the deploy fails. First token per line is the URL, the rest an optional body substring. Empty skips the check. |
 
 ```yaml
 - uses: nicodes/komizo-actions/deploy@v0
@@ -125,7 +125,7 @@ tag — in the one order that is correct.
 | `previous-version` | The version that was live before this ran. Empty on a first deploy. |
 | `version` | The version deployed. Echoes the input, for chaining. |
 | `config-image-ref` | Full reference of the config image published, *including* the tag. |
-| `health-attempts-used` | Attempts the health check needed, if it ran. |
+| `health-rounds-used` | Rounds the health check needed until every URL was healthy, if it ran. |
 
 `previous-version` is the one that buys you something new: capture it, and a
 failing health check can redeploy it. Because it is read off the host *before*
@@ -135,7 +135,11 @@ when you want it.
 ```yaml
 - id: deploy
   uses: nicodes/komizo-actions/deploy@v0
-  with: { app: myapp, version: "${{ github.sha }}", health-url: "https://myapp.example.com/health" }
+  with:
+    app: myapp
+    version: ${{ github.sha }}
+    health-urls: |
+      https://myapp.example.com/health
 
 - name: Roll back
   if: failure() && steps.deploy.outputs.previous-version != ''
@@ -432,32 +436,39 @@ changing anything, so it stays correct even when a later stage fails.
 
 ## `health-check`
 
-Polls a URL until it answers, failing the job if it never does. Replaces the
-hand-rolled retry loop every repo grows its own version of.
+Polls a list of URLs until every one answers, failing the job if any never
+does. Replaces the hand-rolled retry loop every repo grows its own version of.
+
+A list because "did this deploy work" is the project's question to answer: an
+API's health endpoint says nothing about whether the bundle serves or the
+database is reachable from outside. Each project lists its own surface — no
+mapping to containers, no minimum, its call.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `url` | yes | — | URL to poll. |
-| `expect` | no | `""` | Substring the body must contain. Empty means any 2xx counts. |
-| `attempts` | no | `30` | Tries before giving up. |
-| `delay` | no | `5` | Seconds between attempts. |
+| `urls` | yes | — | One check per line. First token is the URL; the rest of the line, if any, a substring the body must contain. Blank lines and `#` comments are ignored. |
+| `attempts` | no | `30` | Rounds before giving up. |
+| `delay` | no | `5` | Seconds between rounds. |
 | `timeout` | no | `10` | Seconds before a single request is considered failed. |
 
 ```yaml
 - uses: nicodes/komizo-actions/health-check@v0
   with:
-    url: https://app.example.com/healthz
-    expect: '"status":"ok"'
+    urls: |
+      https://app.example.com/healthz  "status":"ok"
+      https://app.example.com/
     attempts: "60"
 ```
 
-Defaults give up after about 150 seconds. On failure it prints the last
-response body — which is why it doesn't use `curl -f`, since that would discard
-it.
+Defaults give up after about 150 seconds — for the whole list, not per URL: each
+round re-checks only what is not yet healthy, so the wait does not grow with the
+number of URLs. On failure it prints each failing URL's last response body —
+which is why it doesn't use `curl -f`, since that would discard it.
 
-Match on `expect` only when the endpoint can return 200 while unhealthy.
+Add a substring after a URL only when the endpoint can return 200 while
+unhealthy; most lines are just a URL.
 
-**Outputs:** `attempts-used` — how many attempts it took to answer, empty if
-it never did. Distinct from the `attempts` input, which is the ceiling.
+**Outputs:** `rounds-used` — how many rounds it took until every URL was healthy,
+empty if they never all were. Distinct from the `attempts` input, the ceiling.
 
 ---
