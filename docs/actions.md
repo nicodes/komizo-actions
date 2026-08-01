@@ -11,18 +11,30 @@ Referenced directly — no checkout of this repo needed, and nothing to configur
 because this repository is public:
 
 ```yaml
-- uses: nicodes/komizo-actions/connect@v0
+- uses: nicodes/komizo-actions/connect@v0.0.1
 ```
 
 ## Pinning
 
-**`v0` is deliberate: there is no compatibility promise yet.** Inputs may be
+**Every release is its own immutable tag: `v0.0.1`, `v0.0.2`, and so on.** No
+tag ever moves, so `@v0.0.1` names one commit for ever — upgrading is a visible
+edit in a pull request, and rolling back is naming the version before it.
+
+Releases used to force-move a single `v0`, which made `@v0` a mutable ref. That
+is the same class of problem the SHA rewriting below exists to close: you could
+not tell which six files you were running, and a bad release reached every
+repository the moment the tag moved, with no way to stay on the previous one
+short of finding its SHA by hand. That tag is gone.
+
+**`0.x` is deliberate: there is no compatibility promise yet.** Inputs may be
 renamed or removed between releases — `app` became required and `config-env` was
 removed inside the last month, and pretending otherwise by calling it `v1` would
-be a promise that cannot currently be kept. A `v1` tag will appear when the input
-surface has held still and the CLI half is public.
+be a promise that cannot currently be kept. A `v1` will appear when the input
+surface has held still and the CLI half is public. Read the release notes before
+bumping.
 
-So pin by commit if a change under you would hurt:
+A commit is stronger still, because a tag can in principle be deleted and
+recreated where a commit cannot:
 
 ```yaml
 - uses: nicodes/komizo-actions/deploy@<sha>
@@ -101,7 +113,7 @@ tag — in the one order that is correct.
 | `health-urls` | no | `""` | URLs to poll after the deploy, one per line — all must answer or the deploy fails. First token per line is the URL, the rest an optional body substring. Empty skips the check. |
 
 ```yaml
-- uses: nicodes/komizo-actions/deploy@v0
+- uses: nicodes/komizo-actions/deploy@v0.0.1
   env:
     KOMIZO_APP_NAME: ${{ vars.KOMIZO_APP_NAME }}
     KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
@@ -178,7 +190,7 @@ when you want it.
 
 ```yaml
 - id: deploy
-  uses: nicodes/komizo-actions/deploy@v0
+  uses: nicodes/komizo-actions/deploy@v0.0.1
   with:
     app: myapp
     version: ${{ github.sha }}
@@ -187,7 +199,7 @@ when you want it.
 
 - name: Roll back
   if: failure() && steps.deploy.outputs.previous-version != ''
-  uses: nicodes/komizo-actions/activate@v0
+  uses: nicodes/komizo-actions/activate@v0.0.1
   with:
     version: ${{ steps.deploy.outputs.previous-version }}
     command: doas /usr/local/bin/deploy-myapp
@@ -223,13 +235,13 @@ migration, a one-off diagnostic. It works whether you use `deploy` or the
 granular actions:
 
 ```yaml
-- uses: nicodes/komizo-actions/connect@v0
+- uses: nicodes/komizo-actions/connect@v0.0.1
   with: { host: ..., user: komizo-blog, key: ..., known-hosts: ... }
 
 - name: Back up the database first
   run: ssh deploy-target 'docker compose -f /srv/<app>/compose.yml exec -T db pg_dump -U app app' > dump.sql
 
-- uses: nicodes/komizo-actions/deploy@v0
+- uses: nicodes/komizo-actions/deploy@v0.0.1
   with: { app: blog, version: "${{ github.sha }}" }
 ```
 
@@ -250,7 +262,7 @@ message instead of midway through a deploy.
 | `allow-unpinned-host` | no | `false` | Discover the host key at deploy time instead of pinning it. |
 
 ```yaml
-- uses: nicodes/komizo-actions/connect@v0
+- uses: nicodes/komizo-actions/connect@v0.0.1
   env:
     KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
     KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
@@ -348,7 +360,7 @@ canonical names and generates `FROM scratch` + `COPY . /config`.
 | `tag` | yes | — | Tag to publish, normally the commit SHA. |
 
 ```yaml
-- uses: nicodes/komizo-actions/publish-config@v0
+- uses: nicodes/komizo-actions/publish-config@v0.0.1
   with:
     compose: deploy/compose.yml
     hostnames: deploy/hostnames
@@ -382,7 +394,7 @@ Pushes secret values into the host's write-only store. Requires `connect`.
 | `command` | yes | — | Privileged secret command on the host, e.g. `doas /usr/local/bin/set-secret-blog`. |
 
 ```yaml
-- uses: nicodes/komizo-actions/set-secrets@v0
+- uses: nicodes/komizo-actions/set-secrets@v0.0.1
   env:
     KOMIZO_SECRET_DATABASE_URL: ${{ secrets.DATABASE_URL }}
     KOMIZO_SECRET_STRIPE_KEY: ${{ secrets.STRIPE_KEY }}
@@ -448,7 +460,7 @@ your own steps in between.
 | `command` | yes | — | Privileged deploy command on the host, e.g. `doas /usr/local/bin/deploy-blog`. |
 
 ```yaml
-- uses: nicodes/komizo-actions/activate@v0
+- uses: nicodes/komizo-actions/activate@v0.0.1
   with:
     command: doas /usr/local/bin/deploy-myapp
     version: ${{ github.sha }}
@@ -496,7 +508,7 @@ mapping to containers, no minimum, its call.
 | `timeout` | no | `10` | Seconds before a single request is considered failed. |
 
 ```yaml
-- uses: nicodes/komizo-actions/health-check@v0
+- uses: nicodes/komizo-actions/health-check@v0.0.1
   with:
     urls: |
       https://app.example.com/healthz  "status":"ok"

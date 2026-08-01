@@ -3,7 +3,7 @@
 GitHub Actions that deploy to your own server. Merge, and it's live.
 
 ```yaml
-- uses: nicodes/komizo-actions/deploy@v0
+- uses: nicodes/komizo-actions/deploy@v0.0.1
   env:
     KOMIZO_APP_NAME: ${{ vars.KOMIZO_APP_NAME }}
     KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
@@ -110,11 +110,21 @@ defaults that changes every omitted input the moment the two disagree.
 
 ## Pinning
 
-**`v0` means there is no compatibility promise yet.** The tag moves, and inputs
-may still be renamed or removed between releases. A `v1` will appear once the
-input surface has held still and the CLI half is public.
+**Every release is its own tag, and no tag ever moves.** `@v0.0.1` names one
+commit for ever, so upgrading is a visible edit in a pull request and rolling
+back is naming the version before it.
 
-To pin a release so nothing changes under you, use a commit SHA:
+There used to be a single `v0` that each release force-moved. That made `@v0` a
+mutable ref: you could not tell which six files you were running, and a bad
+release reached every repository the moment the tag moved. It is gone.
+
+**`0.x` means there is no compatibility promise yet** — inputs may still be
+renamed or removed between releases. A `v1` will appear once the input surface
+has held still and the CLI half is public. Read the release notes before
+bumping.
+
+A commit SHA is stronger still, because a tag can in principle be deleted and
+recreated where a commit cannot:
 
 ```yaml
 - uses: nicodes/komizo-actions/deploy@<sha>
