@@ -254,58 +254,17 @@ runs:
         HOST: ${{ inputs.host }}
         APP: ${{ inputs.app }}
         SECRET_NAMES: ${{ inputs.secrets }}
-      run: |
-        set -euo pipefail
-        : "${HOST:=${KOMIZO_SERVER_URL:-}}"
-        # A hostname, not a URL. See connect: a scheme is stripped rather than
-        # rejected, because it is the obvious thing to paste into a variable
-        # with that name and ssh cannot use it.
-        HOST="${HOST#*://}"
-        HOST="${HOST%%/*}"
-        # A newline here would forge a SECOND line in $GITHUB_OUTPUT -- the file
-        # is `name=value` per line -- so a host carrying "\nhas-secrets=false"
-        # would silently skip set-secrets and deploy against stale values. The
-        # full charset checks stay with connect and the validate step below; this
-        # only guards the write. Rejected before, not after, `echo host=`.
-        case "$HOST" in
-          *[$'\n\r']*)
-            echo "::error::host must not contain a newline."
-            exit 1 ;;
-        esac
-        echo "host=$HOST" >> "$GITHUB_OUTPUT"
-
-        # Same treatment for the app name, and for the same reason: it decides
-        # the ssh user and the two privileged command names, and those are read
-        # by composed steps that cannot re-derive a shell default.
-        : "${APP:=${KOMIZO_APP_NAME:-}}"
-        case "$APP" in
-          *[$'\n\r']*)
-            echo "::error::app must not contain a newline."
-            exit 1 ;;
-        esac
-        echo "app=$APP" >> "$GITHUB_OUTPUT"
-
-        # Whether there are secrets to push, for the same reason as the host:
-        # the set-secrets step below is guarded by an `if:`, and an expression
-        # cannot see environment variables that only exist at run time. With
-        # the KOMIZO_SECRET_ prefix the env block is the list, so there is no
-        # input for that `if:` to test.
-        if [ -n "${SECRET_NAMES//[[:space:]]/}" ] || compgen -v | grep -q '^KOMIZO_SECRET_'; then
-          echo "has-secrets=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "has-secrets=false" >> "$GITHUB_OUTPUT"
-        fi
+      run: bash "$GITHUB_ACTION_PATH/resolve.sh"
 
     # Everything this action alone can check, checked before anything is
     # published or restarted -- so a misconfiguration costs a failed step rather
     # than a half-applied deploy.
     #
-    # Deliberately NOT re-checking what the composed actions check for
-    # themselves. The deploy key, the host keys and every secret's value used to
-    # be validated here as well, in forty lines that had already drifted from
-    # the originals in their wording. connect runs first and set-secrets runs
-    # before activate, so those failures still land before anything on the host
-    # changes -- which is the property that matters, and it is theirs to keep.
+    # Both this and the step above live in files rather than inline, so a test
+    # can drive them over the whole input matrix. They are the only logic in
+    # this repository that nothing else exercises: every other action is a thin
+    # wrapper around ssh or docker, and these two decide whether those run at
+    # all. See tests/deploy-inputs.test.sh.
     - name: Validate inputs
       shell: bash
       env:
@@ -315,61 +274,7 @@ runs:
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
         CONFIG_HOSTNAMES: ${{ inputs.config-hostnames }}
         CONFIG_IMAGE: ${{ inputs.config-image }}
-      run: |
-        set -euo pipefail
-
-        if [ -z "${HOST:-}" ]; then
-          # No host given, so an earlier step must have run connect. Check the
-          # file connect writes rather than asking ssh: OpenSSH resolves
-          # ~/.ssh/config from the passwd database, not $HOME, which makes
-          # `ssh -G` answer for the wrong home in some environments.
-          if ! grep -qE '^[[:space:]]*Host[[:space:]]+deploy-target[[:space:]]*$' "$HOME/.ssh/config" 2>/dev/null; then
-            echo "::error::No 'host' input and no deploy-target entry in ~/.ssh/config. Either pass host/key/known-hosts to this action, or run the connect action in an earlier step."
-            exit 1
-          fi
-          echo "Using the deploy-target configured by an earlier step."
-        fi
-
-        # Interpolated into a command path below, so constrain it. Required:
-        # without it the deploy would target `deploy-` and `komizo-`, which is
-        # not a smaller mistake than a wrong name, only a stranger one.
-        if [ -z "${APP:-}" ]; then
-          D='$'
-          echo "::error::No app name. Set the repository variable KOMIZO_APP_NAME and pass 'KOMIZO_APP_NAME: ${D}{{ vars.KOMIZO_APP_NAME }}' under env:, or pass 'app:' directly. It is the name you gave the app in komizo."
-          exit 1
-        fi
-        case "$APP" in
-          *[!A-Za-z0-9_-]*)
-            echo "::error::app must be letters, digits, underscore or hyphen; got '$APP'."
-            exit 1 ;;
-        esac
-
-        # config: (a komizo.yml) and config-compose: are two forms of the same
-        # thing; publish-config takes one. Catch it here with a clearer message
-        # than the one it would raise mid-publish.
-        if [ -n "$CONFIG" ] && [ -n "$CONFIG_COMPOSE" ]; then
-          echo "::error::pass either config: (a komizo.yml) or config-compose:, not both."
-          exit 1
-        fi
-        if [ -n "$CONFIG" ] && [ -z "$CONFIG_IMAGE" ]; then
-          echo "::error::config is set but config-image is empty. Pass the registry path the host was bootstrapped with (its CONFIG_IMAGE)."
-          exit 1
-        fi
-        if [ -n "$CONFIG_COMPOSE" ] && [ -z "$CONFIG_IMAGE" ]; then
-          echo "::error::config-compose is set but config-image is empty. Pass the registry path the host was bootstrapped with (its CONFIG_IMAGE)."
-          exit 1
-        fi
-        if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_IMAGE" ]; then
-          echo "::error::config-image is set but config-compose is empty. Point config-compose at this app's compose file."
-          exit 1
-        fi
-        # The hostnames ride along with the compose file in one image, so naming
-        # them without it publishes nothing and silently does nothing -- which
-        # would look exactly like a working deploy.
-        if [ -z "$CONFIG_COMPOSE" ] && [ -n "$CONFIG_HOSTNAMES" ]; then
-          echo "::error::config-hostnames is set but config-compose is empty. They are published together in one image, so nothing would be shipped."
-          exit 1
-        fi
+      run: bash "$GITHUB_ACTION_PATH/validate.sh"
 
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before anything has been published.

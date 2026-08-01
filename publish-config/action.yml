@@ -183,10 +183,13 @@ runs:
         HOSTNAMES_DERIVED=0
         if [ -n "$CONFIG" ]; then
           confine "config file" "$CONFIG"
-          python3 -c 'import yaml' 2>/dev/null \
-            || pip3 install --quiet pyyaml 2>/dev/null \
-            || sudo apt-get install -y -qq python3-yaml 2>/dev/null \
-            || { echo "::error::need PyYAML to read komizo.yml (pip install pyyaml)."; exit 1; }
+          # No install fallback here. This step holds the deploy key and the
+          # registry token, and it used to reach out to PyPI for an unpinned
+          # package -- escalating to `sudo apt-get` if that failed -- which made
+          # the least verified thing in the pipeline something that ran on every
+          # deploy. GitHub-hosted runners ship PyYAML; parse-config.py says what
+          # to do when it is genuinely missing.
+          #
           # Turn komizo.yml into the flat hostnames the host reads, and hand back
           # the compose path it names. The derived file is ours, so it is not
           # confined below (it lives in RUNNER_TEMP, not the workspace) -- but it

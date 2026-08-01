@@ -88,6 +88,24 @@ runs:
         REGISTRY_TOKEN: ${{ inputs.registry-token }}
       run: |
         set -euo pipefail
+
+        # Constrained for the same reason every other value here is: it is
+        # interpolated into the remote command string below, so the remote shell
+        # parses it before the host's own validation runs. It was the one input
+        # that went unchecked while version, registry and registry-user were all
+        # guarded. See set-secrets, which had the same gap.
+        case "$DEPLOY_CMD" in
+          "doas /usr/local/bin/deploy-"*) ;;
+          *)
+            echo "::error::command must be the privileged deploy command komizo installed, e.g. 'doas /usr/local/bin/deploy-blog'; got '$DEPLOY_CMD'."
+            exit 1 ;;
+        esac
+        case "${DEPLOY_CMD#doas /usr/local/bin/deploy-}" in
+          ''|*[!A-Za-z0-9_-]*)
+            echo "::error::command names an app that is not letters, digits, underscore or hyphen; got '$DEPLOY_CMD'."
+            exit 1 ;;
+        esac
+
         echo "Deploying $VERSION"
 
         # Registry credentials go to the DEPLOY COMMAND, which runs as root, and

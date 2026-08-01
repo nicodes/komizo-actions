@@ -1,8 +1,10 @@
 name: Lint
 
-# Static analysis for the composite actions and the release script. There is no
-# build to run here -- these are shell embedded in YAML -- so the two things that
-# can go wrong are workflow/action syntax and the bash inside `run:` blocks.
+# Static analysis for the composite actions and the release script, plus the
+# tests for the two things in this repository that are pure functions of their
+# inputs. There is no build to run -- these are shell embedded in YAML -- so
+# what can go wrong is workflow/action syntax, the bash inside `run:` blocks,
+# and the input handling that decides whether any of it executes.
 
 on:
   push:
@@ -12,36 +14,44 @@ on:
 permissions:
   contents: read
 
+# Third-party actions are pinned by SHA, with the tag in a trailing comment so
+# the version is still readable. This repository tells its users to pin
+# `uses:` by SHA -- scripts/release.sh exists entirely to make that pin mean
+# what it says -- and preaching it while running floating tags was the sort of
+# inconsistency that undercuts the advice.
+
 jobs:
   actionlint:
     name: actionlint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Lints the workflow files under .github/workflows (this one included) for
-      # schema and expression errors. Pinned to a tag, as the repo's own docs
-      # preach for anything in a key-holding job.
-      - uses: raven-actions/actionlint@v2
+      # schema and expression errors.
+      - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
 
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # shellcheck ships on the ubuntu-latest image, but install it explicitly so
       # a base-image change cannot silently turn this job into a no-op.
       # python3-yaml is Debian's PyYAML -- used to pull the `run:` blocks out of
-      # the composite actions below.
+      # the composite actions below, and by parse-config.py itself.
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y shellcheck python3-yaml
 
-      # The one standalone script. The "at minimum" of shell coverage.
-      - name: Lint scripts/release.sh
-        run: shellcheck scripts/release.sh
+      # Every standalone script: the release tool, the two extracted from
+      # deploy/action.yml, and the tests. Globbed rather than listed so a script
+      # added later cannot quietly escape the check -- which is exactly how the
+      # embedded shell in the sibling repo went unlinted.
+      - name: Lint the standalone scripts
+        run: shellcheck scripts/release.sh deploy/*.sh tests/*.sh
 
       # actionlint validates workflow files, not action-metadata (action.yml)
-      # files, so the bash embedded in the six composite actions is checked here
+      # files, so the bash embedded in the composite actions is checked here
       # instead: each `run:` block is extracted to a file and shellchecked, which
       # is the same analysis actionlint would apply to a workflow's run steps.
       - name: Lint the bash embedded in each action.yml
@@ -81,3 +91,23 @@ jobs:
                       rc = 1
           sys.exit(rc)
           PY
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    # Everything else here is a thin wrapper around ssh or docker, which cannot
+    # be tested without a server and a registry -- and is not where the bugs
+    # were. These two are pure functions of their inputs, they gate everything
+    # that follows, and they had no coverage at all: the `config:` form was
+    # rejected by deploy's own precondition and shipped unable to run.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install PyYAML
+        run: sudo apt-get update && sudo apt-get install -y python3-yaml
+
+      - name: deploy input handling
+        run: bash tests/deploy-inputs.test.sh
+
+      - name: komizo.yml parsing
+        run: bash tests/parse-config.test.sh
