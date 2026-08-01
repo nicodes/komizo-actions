@@ -57,6 +57,25 @@ runs:
       run: |
         set -euo pipefail
 
+        # The one value crossing this boundary that used to go unchecked, while
+        # name, version, registry, registry-user, host, port and user were all
+        # constrained. It is interpolated into the remote command string below,
+        # so the remote shell parses it before the host's own validation ever
+        # runs. Caller-supplied -- the caller already holds the key, so this is
+        # not a privilege boundary -- but an unchecked value means a typo
+        # surfaces as an opaque remote shell error instead of a named one.
+        case "$SECRET_CMD" in
+          "doas /usr/local/bin/set-secret-"*) ;;
+          *)
+            echo "::error::command must be the privileged secret command komizo installed, e.g. 'doas /usr/local/bin/set-secret-blog'; got '$SECRET_CMD'."
+            exit 1 ;;
+        esac
+        case "${SECRET_CMD#doas /usr/local/bin/set-secret-}" in
+          ''|*[!A-Za-z0-9_-]*)
+            echo "::error::command names an app that is not letters, digits, underscore or hyphen; got '$SECRET_CMD'."
+            exit 1 ;;
+        esac
+
         names=()
 
         while IFS= read -r name; do

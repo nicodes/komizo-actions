@@ -85,9 +85,10 @@ tag — in the one order that is correct.
 | --- | --- | --- | --- |
 | `version` | yes | — | Tag to deploy, normally the commit SHA. |
 | `app` | no | `KOMIZO_APP_NAME` | Which app — selects the account `komizo-<app>` and the commands `deploy-<app>` and `set-secret-<app>`. Matches the name you gave it in `komizo`. Required in one form or the other. |
-| `config-compose` | no | `""` | Path to the compose file to publish for this commit. Empty skips the config publish. |
-| `config-hostnames` | no | `""` | File listing the hostnames this app answers on, one per line. The host generates the reverse-proxy config from it. |
-| `config-image` | no | `""` | Config image reference **without** a tag. Required with `config-compose`. |
+| `config` | no | `""` | Path to a `komizo.yml` — the compose file and the hostnames in one manifest. The preferred form; see below. |
+| `config-compose` | no | `""` | Path to the compose file to publish for this commit. The older form: use it **or** `config`, not both. |
+| `config-hostnames` | no | `""` | File listing the hostnames this app answers on, one per line. Goes with `config-compose`; a `komizo.yml` carries its own. |
+| `config-image` | no | `""` | Config image reference **without** a tag. Required with `config` or `config-compose`. |
 | `secrets` | no | `""` | Rarely needed — names for values passed as plain env vars. Normally the `KOMIZO_SECRET_*` env vars are the list. |
 | `registry` | no | `ghcr.io` | Registry the host authenticates against. Empty to skip. |
 | `registry-user` | no | `""` | Registry username. |
@@ -111,12 +112,55 @@ tag — in the one order that is correct.
     KOMIZO_SECRET_APP_ADMIN_PASSWORD: ${{ secrets.PB_ADMIN_PASSWORD }}
   with:
     version: ${{ github.sha }}
-    config-compose: deploy/compose.yml
-    config-hostnames: deploy/hostnames
+    config: deploy/komizo.yml
     config-image: ghcr.io/you/myapp-config
     registry-user: ${{ github.actor }}
     registry-token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+### Naming the config: two forms
+
+`config:` points at a **komizo.yml** — one manifest naming the compose file and
+the hostnames together:
+
+```yaml
+compose: compose.yml          # relative to this file
+hostnames:
+  - app.example.com
+  - name: api.example.com
+    container: api            # display label only; routing uses the name
+  - name: "*.preview.example.com"
+    container: api
+    tls: on-demand            # only a wildcard needs this
+```
+
+It is read in CI and turned into the same `/config/compose.yml` and
+`/config/hostnames` the host has always read, so nothing on the box learns a new
+format. Values are validated here — a `tls: yes` that YAML parses as a boolean,
+or a newline that would forge a second hostname line, is refused with a message
+naming the entry rather than surfacing as a confusing rejection on the host.
+
+The older form names the two files directly:
+
+```yaml
+    config-compose: deploy/compose.yml
+    config-hostnames: deploy/hostnames
+    config-image: ghcr.io/you/myapp-config
+```
+
+Both publish the same image. The rules:
+
+- Pass `config:` **or** `config-compose:`, never both.
+- Either one needs `config-image:`, and `config-image:` is meaningless without
+  one of them.
+- `config-hostnames:` belongs with `config-compose:`. A `komizo.yml` carries its
+  hostnames, so passing both would silently ship the manifest's names and ignore
+  the file.
+- Naming no config at all is valid: the deploy runs against whatever
+  `compose.yml` the host already has.
+
+These are enforced before anything is published — see
+`tests/deploy-inputs.test.sh`, which drives every combination above.
 
 **Outputs**
 
