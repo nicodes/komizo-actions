@@ -1,10 +1,13 @@
 #!/bin/sh
-# scripts/release.sh - cut a komizo release with the composed actions pinned.
+# scripts/release.sh - cut a komizo-actions release with the composed actions pinned.
 #
-#   sh scripts/release.sh [<tag>]        # tag defaults to v0
+#   sh scripts/release.sh              # bump the patch: v0.0.3 -> v0.0.4
+#   sh scripts/release.sh minor        # v0.0.4 -> v0.1.0
+#   sh scripts/release.sh major        # v0.1.0 -> v1.0.0
+#   sh scripts/release.sh v0.2.0       # or name it outright
 #
 # Run it on a clean tree, on the branch you want to release. It makes ONE
-# commit, moves the tag, and prints the push command -- it never pushes.
+# commit, creates the tag, and prints the push commands -- it never pushes.
 #
 # --- why this exists ------------------------------------------------------
 #
@@ -24,13 +27,28 @@
 # cannot be forwarded. Rewriting the refs at release time is the only thing
 # that makes a SHA pin mean what it says.
 #
+# --- why the version, and not a moving v0 ---------------------------------
+#
+# Releases used to move a single `v0` tag, which meant `@v0` was a mutable ref
+# pointing at whatever shipped last. That is the same class of thing this
+# script exists to close: a consumer reading `@v0` in their workflow cannot
+# tell which six files they are running, and a bad release reaches every
+# repository the moment the tag moves, with no way to stay on the previous one
+# short of finding its SHA by hand.
+#
+# So each release is its own immutable tag. `@v0.0.4` names one commit for
+# ever, upgrading is a visible edit in a pull request, and rolling back is
+# naming the version before it. A SHA pin still works and is still stronger --
+# a tag can in principle be deleted and recreated, a SHA cannot -- but a
+# version is the one people will actually use, so it should mean something.
+#
 # --- what it does ---------------------------------------------------------
 #
 # The five inner refs are rewritten to the CURRENT commit, then the result is
 # committed. So the sub-actions come from the commit before the release, and
 # deploy/action.yml comes from the release commit itself. Both are immutable,
-# which is the whole point: `deploy@<release sha>` now resolves to exactly one
-# set of six files, forever.
+# which is the whole point: `deploy@v0.0.4` now resolves to exactly one set of
+# six files, forever.
 #
 # The pins stay in the file between releases. That is deliberate -- reading
 # deploy/action.yml tells you which sub-actions the last release shipped
@@ -46,7 +64,7 @@
 
 set -eu
 
-TAG="${1:-v0}"
+BUMP="${1:-patch}"
 REPO="nicodes/komizo-actions"
 # Every action.yml that composes a sibling -- deploy/ today. Discovered rather
 # than listed: one added and forgotten here would ship a floating ref, which is
@@ -74,6 +92,60 @@ base="$(git rev-parse HEAD)"
 branch="$(git rev-parse --abbrev-ref HEAD)"
 [ "$branch" != "HEAD" ] || die "detached HEAD -- check out the branch you are releasing from"
 
+# --- which version --------------------------------------------------------
+#
+# The tags are the source of truth, not a version file: there is nothing here
+# to stamp a version INTO -- the artefact is the repository at a commit -- so a
+# file recording one could only ever disagree with the tags.
+#
+# The old moving `v0` is deliberately not in this list. It matches 'v[0-9]*' but
+# not the three-part pattern, so it is filtered out rather than parsed as a
+# version and bumped into something meaningless.
+git fetch --tags --force >/dev/null 2>&1 || true
+latest="$(git tag --list 'v[0-9]*' | sed -E 's/^v//' \
+	| grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+
+case "$BUMP" in
+	v[0-9]*)
+		# Named outright. Checked for shape, because a typo here becomes a tag
+		# that sorts wrongly for every release after it.
+		version="${BUMP#v}"
+		case "$version" in
+			*[!0-9.]*|*..*) die "'$BUMP' is not a version like v0.1.0" ;;
+		esac
+		printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
+			|| die "'$BUMP' is not a version like v0.1.0"
+		;;
+	major|minor|patch)
+		if [ -z "$latest" ]; then
+			# Nothing released under this scheme yet. Start at v0.0.1 rather
+			# than at v0.0.0, which names a release nobody made.
+			version="0.0.1"
+		else
+			major="${latest%%.*}"
+			rest="${latest#*.}"
+			minor="${rest%%.*}"
+			patch="${rest#*.}"
+			case "$BUMP" in
+				major) major=$((major + 1)); minor=0; patch=0 ;;
+				minor) minor=$((minor + 1)); patch=0 ;;
+				patch) patch=$((patch + 1)) ;;
+			esac
+			version="${major}.${minor}.${patch}"
+		fi
+		;;
+	*)
+		die "usage: release.sh [patch|minor|major|vX.Y.Z]"
+		;;
+esac
+
+TAG="v$version"
+# Never move an existing tag. That is the property the version is for: a
+# consumer who pinned it must keep getting the same six files.
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+	die "$TAG already exists -- releases are immutable, pick the next version"
+fi
+
 # Every composed action must actually exist at the commit we are about to pin
 # to, or the release ships a reference that resolves to nothing.
 for a in $SUBACTIONS; do
@@ -81,7 +153,13 @@ for a in $SUBACTIONS; do
 		|| die "$a/action.yml does not exist at $base"
 done
 
-printf 'Releasing %s from %s (%s)\n\n' "$TAG" "$branch" "$(git rev-parse --short "$base")"
+if [ -n "$latest" ]; then
+	previous="v$latest"
+else
+	previous="none"
+fi
+printf 'Releasing %s from %s (%s)\n' "$TAG" "$branch" "$(git rev-parse --short "$base")"
+printf '  previous: %s\n\n' "$previous"
 
 # Rewrite each ref to the base commit, whatever it currently points at -- a
 # tag, a branch, or an older release's SHA.
@@ -121,7 +199,7 @@ fi
 
 # shellcheck disable=SC2086  # word-split COMPOSED into its filenames, as above
 if git diff --quiet -- $COMPOSED; then
-	printf '\nAlready pinned to %s; nothing to commit.\n' "$(git rev-parse --short "$base")"
+	printf '\n  already pinned to %s; tagging the commit as it stands\n' "$(git rev-parse --short "$base")"
 else
 	# shellcheck disable=SC2086
 	git add $COMPOSED
@@ -129,17 +207,24 @@ else
 	printf '\n  committed %s\n' "$(git rev-parse --short HEAD)"
 fi
 
-git tag -f "$TAG" >/dev/null
-printf '  moved tag %s -> %s\n' "$TAG" "$(git rev-parse --short HEAD)"
+# Annotated, so `git describe` and the GitHub UI have a date and a message
+# rather than a bare pointer. Never -f: see the existence check above.
+git tag -a "$TAG" -m "komizo-actions $TAG" >/dev/null
+printf '  tagged %s -> %s\n' "$TAG" "$(git rev-parse --short HEAD)"
 
 cat <<EOF
 
 Not pushed. To publish:
 
     git push origin $branch
-    git push origin --force $TAG
+    git push origin $TAG
 
-Consumers can then pin the whole thing, and mean it:
+Consumers then pin a version:
+
+    uses: $REPO/deploy@$TAG
+
+or the commit, which is stronger still -- a tag can in principle be deleted
+and recreated, a commit cannot:
 
     uses: $REPO/deploy@$(git rev-parse HEAD)
 EOF
