@@ -1,0 +1,148 @@
+name: Release
+
+# Cut a release: verify the tree, rewrite the composed pins to this commit, tag
+# it, publish it.
+#
+# This existed only as scripts/release.sh, run by hand, which meant a release
+# was four commands in the right order on a clean checkout with the tags
+# fetched -- and the one that mattered most, the push of the tag, was the one
+# step nothing checked.
+#
+# The script is still the thing that does the work, and is still runnable by
+# hand. It is not reimplemented here: the pin rewriting and the version
+# arithmetic are the parts with the sharp edges, they are already written down
+# once, and a YAML copy of them would be a second answer to "which version is
+# next". This workflow is the CI half -- verify first, push afterwards -- and
+# nothing else.
+#
+# --- what a release actually is here --------------------------------------
+#
+# There is no build. The artefact is this repository at a commit, so the tag IS
+# the release and there is nothing to attach or attest -- unlike the CLI, where
+# the archive is a separate thing that has to be tied back to the source.
+#
+# What a release DOES do is rewrite the five `uses:` refs inside
+# deploy/action.yml to the commit before it, so `deploy@vX.Y.Z` resolves to one
+# fixed set of six files. See the header of scripts/release.sh for why that
+# cannot be inherited from the caller's ref.
+#
+# --- immutability ---------------------------------------------------------
+#
+# Every version is its own tag and no tag ever moves. The script refuses to
+# overwrite one, so a re-run cannot quietly republish a version somebody has
+# already pinned. There used to be a single moving `v0`; it is gone.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+# Nothing by default; the job asks for exactly what it needs.
+permissions: {}
+
+concurrency: release-${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      # Push the pin commit and the tag, and create the release. There is no
+      # id-token or attestations here, unlike the CLI's release: nothing is
+      # built, so there is no artefact to attest.
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # release.sh reads the tag history to work out the next version, and
+          # rewrites refs against the current commit. A shallow clone has
+          # neither.
+          fetch-depth: 0
+
+      - name: Releases come from main
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::run releases from the main branch, not $GITHUB_REF"
+            exit 1
+          fi
+
+      # The same checks Lint runs, from the same definition. Running them again
+      # against this exact commit is not redundant: Lint passing on this SHA
+      # earlier is a claim about that run, and a release is what other
+      # repositories actually execute in a job holding their deploy key.
+      - name: Check
+        uses: ./.github/actions/check
+
+      - name: Identify the committer
+        run: |
+          set -euo pipefail
+          # The pin rewrite is a real commit and the tag is annotated, so both
+          # need an author. Attributed to the workflow rather than to a person:
+          # nobody typed this, and a release commit claiming otherwise would be
+          # the one commit in the history that misreports where it came from.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Cut the release
+        id: cut
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          sh scripts/release.sh "$BUMP"
+          # The script prints the tag but does not emit it; read it back off the
+          # commit instead of parsing stdout, so a change to its wording cannot
+          # silently make this push nothing.
+          tag="$(git tag --points-at HEAD | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)"
+          if [ -z "$tag" ]; then
+            echo "::error::release.sh left no version tag on HEAD"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # Pushed only once the checks above have passed and the script has
+      # produced a tag. The branch first, then the tag: a tag whose commit is
+      # not on main is a release nobody can find by browsing the history.
+      - name: Push
+        env:
+          TAG: ${{ steps.cut.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git push origin HEAD:main
+          git push origin "$TAG"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.cut.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # --generate-notes writes the commit list since the previous tag,
+          # which is the honest default for a repository with no build to
+          # describe. Anything worth saying beyond that belongs in the commits.
+          #
+          # The upgrade line is appended because it is the one thing a consumer
+          # has to do and it is the same every time.
+          cat > notes.md <<NOTES
+          ## Upgrading
+
+          \`\`\`yaml
+          - uses: ${GITHUB_REPOSITORY}/deploy@${TAG}
+          \`\`\`
+
+          Every version is its own immutable tag, and the five actions
+          \`deploy\` composes are rewritten to a commit SHA at release time — so
+          this tag resolves to exactly one set of six files.
+          NOTES
+          gh release create "$TAG" \
+            --target "$(git rev-parse HEAD)" \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --generate-notes
