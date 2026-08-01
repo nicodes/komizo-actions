@@ -1,4 +1,4 @@
-name: release
+name: Release
 
 # Cut a release: verify the tree, rewrite the composed pins to this commit, tag
 # it, publish it.
