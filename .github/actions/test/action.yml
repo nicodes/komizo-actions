@@ -1,25 +1,34 @@
-name: Check
+name: Test
 description: >
-  Is this commit good: shellcheck over every script, and the tests for the two
-  things in this repository that are pure functions of their inputs.
+  Is this commit good: actionlint over the workflows, shellcheck over every
+  script, and the tests for the two things in this repository that are pure
+  functions of their inputs.
 
   A composite action rather than a reusable workflow so it runs in the caller's
-  job, under the caller's name — Lint / check, Release / check — rather than as
-  a nested "caller / callee" check.
+  job, under the caller's name — ci / Test, release / Test — rather than as a
+  nested "caller / callee" check.
 
-  ONE definition, called by Lint and by Release both. Two would drift in a
-  single direction: the copy guarding the release gets trimmed to make releases
-  faster, until it no longer matches the one people trust on a pull request.
-  That is the same reasoning the CLI repo's .github/actions/{test,build} exist
-  for.
+  ONE definition, called by CI and by Release both. Two would drift in a single
+  direction: the copy guarding the release gets trimmed to make releases faster,
+  until it no longer matches the one people trust on a pull request. That is the
+  same reasoning the CLI repo's .github/actions/{test,build} exist for.
 
-  Not actionlint. That validates workflow files, which is a property of this
-  repository rather than of a release, and it is a marketplace action with its
-  own pinning story — so it stays a job in Lint.
+  actionlint is IN here now. It used to be a job of its own in the lint
+  workflow, on two grounds: it validates workflow files, which is a property of
+  this repository rather than of a release, and it is a marketplace action with
+  its own pinning story. The second stopped holding once everything here was
+  pinned by SHA. The first still stands, and folding it in is a deliberate
+  trade: a release is now gated on workflow-file syntax it does not strictly
+  depend on, and in exchange every workflow in the organisation is one job.
 
 runs:
   using: composite
   steps:
+    # Lints the workflow files under .github/workflows for schema and expression
+    # errors. First because it needs nothing installed and it is the fastest way
+    # to find out the workflow that invoked this is itself malformed.
+    - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
+
     # shellcheck ships on the ubuntu-latest image, but install it explicitly so
     # a base-image change cannot silently turn this into a no-op.
     # python3-yaml is Debian's PyYAML -- used to pull the `run:` blocks out of

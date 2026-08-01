@@ -1,4 +1,4 @@
-name: Release
+name: release
 
 # Cut a release: verify the tree, rewrite the composed pins to this commit, tag
 # it, publish it.
@@ -52,6 +52,9 @@ concurrency: release-${{ github.repository }}
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Bounded, so a step that hangs fails here rather than sitting until the
+    # runner's own timeout hours later.
+    timeout-minutes: 15
     permissions:
       # Push the pin commit and the tag, and create the release. There is no
       # id-token or attestations here, unlike the CLI's release: nothing is
@@ -73,12 +76,12 @@ jobs:
             exit 1
           fi
 
-      # The same checks Lint runs, from the same definition. Running them again
-      # against this exact commit is not redundant: Lint passing on this SHA
+      # The same checks CI runs, from the same definition. Running them again
+      # against this exact commit is not redundant: CI passing on this SHA
       # earlier is a claim about that run, and a release is what other
       # repositories actually execute in a job holding their deploy key.
-      - name: Check
-        uses: ./.github/actions/check
+      - name: Test
+        uses: ./.github/actions/test
 
       - name: Identify the committer
         run: |
