@@ -11,7 +11,7 @@
 # Run: bash tests/parse-config.test.sh
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 if ! python3 -c 'import yaml' 2>/dev/null; then
 	echo "SKIP: PyYAML is not installed"

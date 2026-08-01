@@ -17,7 +17,7 @@
 # Run: bash tests/deploy-inputs.test.sh
 
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 
 pass=0
 fail=0
@@ -28,13 +28,16 @@ fail=0
 # value left over from an earlier row cannot make a later one pass. GITHUB_OUTPUT
 # and SSH_CONFIG point at temp files: the scripts write step outputs and look for
 # a deploy-target block, and neither should touch the real ones.
+#
+# SSH_CONFIG_BODY, if set by the caller, is written into that config first --
+# the seam for the one case that needs connect to have already run.
 run() {
 	local script="$1" want="$2" label="$3"
 	shift 3
 	local tmp out rc
 	tmp="$(mktemp -d)"
 	: > "$tmp/output"
-	: > "$tmp/ssh_config"
+	printf '%s' "${SSH_CONFIG_BODY:-}" > "$tmp/ssh_config"
 
 	out="$(
 		env -i \
@@ -130,18 +133,9 @@ run $V 1 "no host and no deploy-target entry is refused" APP=blog
 
 # With a deploy-target block in the ssh config, an empty host is the documented
 # "connect already ran in an earlier step" case.
-tmp="$(mktemp -d)"
-printf 'Host deploy-target\n    HostName box.example.com\n' > "$tmp/ssh_config"
-out="$(env -i PATH="$PATH" HOME="$tmp" \
-	GITHUB_OUTPUT="$tmp/output" SSH_CONFIG="$tmp/ssh_config" \
-	HOST= APP=blog CONFIG= CONFIG_COMPOSE= CONFIG_HOSTNAMES= CONFIG_IMAGE= \
-	bash $V 2>&1)"
-if [ $? -eq 0 ]; then
-	pass=$((pass + 1))
-else
-	fail=$((fail + 1))
-	printf 'FAIL  no host but a deploy-target entry should be accepted\n      %s\n' "$out"
-fi
+SSH_CONFIG_BODY=$'Host deploy-target\n    HostName box.example.com\n' \
+	run $V 0 "no host but a deploy-target entry is accepted" APP=blog
+unset SSH_CONFIG_BODY
 
 echo "== resolve.sh =="
 
