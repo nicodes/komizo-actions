@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 # Static analysis for the composite actions and the release script, plus the
 # tests for the two things in this repository that are pure functions of their
