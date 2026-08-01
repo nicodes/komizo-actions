@@ -5,6 +5,10 @@ name: Lint
 # inputs. There is no build to run -- these are shell embedded in YAML -- so
 # what can go wrong is workflow/action syntax, the bash inside `run:` blocks,
 # and the input handling that decides whether any of it executes.
+#
+# The shellcheck and test steps live in .github/actions/check, because Release
+# runs them too and one definition is what stops the release-side copy being
+# trimmed until it no longer matches what people trust on a pull request.
 
 on:
   push:
@@ -16,8 +20,8 @@ permissions:
 
 # Third-party actions are pinned by SHA, with the tag in a trailing comment so
 # the version is still readable. This repository tells its users to pin
-# `uses:` by SHA -- scripts/release.sh exists entirely to make that pin mean
-# what it says -- and preaching it while running floating tags was the sort of
+# `uses:` by SHA -- scripts/release.sh exists to make that pin mean what it
+# says -- and preaching it while running floating tags was the sort of
 # inconsistency that undercuts the advice.
 
 jobs:
@@ -27,87 +31,14 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Lints the workflow files under .github/workflows (this one included) for
-      # schema and expression errors.
+      # schema and expression errors. Not in the shared check action: it is a
+      # property of this repository rather than of a release, and it is a
+      # marketplace action with its own pinning story.
       - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
 
-  shellcheck:
-    name: shellcheck
+  check:
+    name: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      # shellcheck ships on the ubuntu-latest image, but install it explicitly so
-      # a base-image change cannot silently turn this job into a no-op.
-      # python3-yaml is Debian's PyYAML -- used to pull the `run:` blocks out of
-      # the composite actions below, and by parse-config.py itself.
-      - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-yaml
-
-      # Every standalone script: the release tool, the two extracted from
-      # deploy/action.yml, and the tests. Globbed rather than listed so a script
-      # added later cannot quietly escape the check -- which is exactly how the
-      # embedded shell in the sibling repo went unlinted.
-      - name: Lint the standalone scripts
-        run: shellcheck scripts/release.sh deploy/*.sh tests/*.sh
-
-      # actionlint validates workflow files, not action-metadata (action.yml)
-      # files, so the bash embedded in the composite actions is checked here
-      # instead: each `run:` block is extracted to a file and shellchecked, which
-      # is the same analysis actionlint would apply to a workflow's run steps.
-      - name: Lint the bash embedded in each action.yml
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import glob, os, subprocess, sys, tempfile
-          import yaml
-
-          rc = 0
-          for path in sorted(glob.glob("*/action.yml")):
-              doc = yaml.safe_load(open(path)) or {}
-              steps = (doc.get("runs") or {}).get("steps") or []
-              for i, step in enumerate(steps):
-                  if step.get("shell") != "bash" or "run" not in step:
-                      continue
-                  with tempfile.NamedTemporaryFile(
-                      "w", suffix=".sh", delete=False
-                  ) as f:
-                      f.write("#!/usr/bin/env bash\n")
-                      f.write(step["run"])
-                      name = f.name
-                  # SC2154 and SC2153: both are artefacts of the same thing --
-                  # these fragments read values from the step's own env: block,
-                  # which the extracted file does not carry. SC2154 reports them as
-                  # "referenced but not assigned"; SC2153 reports an UPPER_CASE env
-                  # read (URLS, NAMES, SSH_PORT) as a possible misspelling of a
-                  # lower_case local it resembles. Neither is a bug -- the env
-                  # block is the assignment shellcheck cannot see.
-                  r = subprocess.run(
-                      ["shellcheck", "--shell=bash", "--exclude=SC2154,SC2153", name]
-                  )
-                  os.unlink(name)
-                  if r.returncode != 0:
-                      label = step.get("name", "unnamed")
-                      print(f"::error::shellcheck failed: {path} step #{i + 1} ({label})")
-                      rc = 1
-          sys.exit(rc)
-          PY
-
-  test:
-    name: test
-    runs-on: ubuntu-latest
-    # Everything else here is a thin wrapper around ssh or docker, which cannot
-    # be tested without a server and a registry -- and is not where the bugs
-    # were. These two are pure functions of their inputs, they gate everything
-    # that follows, and they had no coverage at all: the `config:` form was
-    # rejected by deploy's own precondition and shipped unable to run.
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Install PyYAML
-        run: sudo apt-get update && sudo apt-get install -y python3-yaml
-
-      - name: deploy input handling
-        run: bash tests/deploy-inputs.test.sh
-
-      - name: komizo.yml parsing
-        run: bash tests/parse-config.test.sh
+      - uses: ./.github/actions/check
