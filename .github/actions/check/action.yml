@@ -1,0 +1,111 @@
+name: Check
+description: >
+  Is this commit good: shellcheck over every script, and the tests for the two
+  things in this repository that are pure functions of their inputs.
+
+  A composite action rather than a reusable workflow so it runs in the caller's
+  job, under the caller's name — Lint / check, Release / check — rather than as
+  a nested "caller / callee" check.
+
+  ONE definition, called by Lint and by Release both. Two would drift in a
+  single direction: the copy guarding the release gets trimmed to make releases
+  faster, until it no longer matches the one people trust on a pull request.
+  That is the same reasoning the CLI repo's .github/actions/{test,build} exist
+  for.
+
+  Not actionlint. That validates workflow files, which is a property of this
+  repository rather than of a release, and it is a marketplace action with its
+  own pinning story — so it stays a job in Lint.
+
+runs:
+  using: composite
+  steps:
+    # shellcheck ships on the ubuntu-latest image, but install it explicitly so
+    # a base-image change cannot silently turn this into a no-op.
+    # python3-yaml is Debian's PyYAML -- used to pull the `run:` blocks out of
+    # the composite actions below, and by parse-config.py itself.
+    - name: Install tools
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y shellcheck python3-yaml
+        shellcheck --version | head -2
+
+    # Every standalone script: the release tool, the two extracted from
+    # deploy/action.yml, and the tests. Globbed rather than listed so a script
+    # added later cannot quietly escape the check.
+    - name: Lint the standalone scripts
+      shell: bash
+      run: shellcheck scripts/release.sh deploy/*.sh tests/*.sh
+
+    # actionlint validates workflow files, not action-metadata (action.yml)
+    # files, so the bash embedded in the composite actions is checked here
+    # instead: each `run:` block is extracted to a file and shellchecked, which
+    # is the same analysis actionlint would apply to a workflow's run steps.
+    - name: Lint the bash embedded in each action.yml
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import glob, os, subprocess, sys, tempfile
+        import yaml
+
+        rc = 0
+        # Both the actions people call and this repository's own composite
+        # steps: .github/actions/*/action.yml is shell too, and it is the half
+        # that guards the release.
+        paths = sorted(glob.glob("*/action.yml") + glob.glob(".github/actions/*/action.yml"))
+        for path in paths:
+            doc = yaml.safe_load(open(path)) or {}
+            steps = (doc.get("runs") or {}).get("steps") or []
+            for i, step in enumerate(steps):
+                if step.get("shell") != "bash" or "run" not in step:
+                    continue
+                with tempfile.NamedTemporaryFile(
+                    "w", suffix=".sh", delete=False
+                ) as f:
+                    f.write("#!/usr/bin/env bash\n")
+                    f.write(step["run"])
+                    name = f.name
+                # SC2154 and SC2153: both are artefacts of the same thing --
+                # these fragments read values from the step's own env: block,
+                # which the extracted file does not carry. SC2154 reports them as
+                # "referenced but not assigned"; SC2153 reports an UPPER_CASE env
+                # read (URLS, NAMES, SSH_PORT) as a possible misspelling of a
+                # lower_case local it resembles. Neither is a bug -- the env
+                # block is the assignment shellcheck cannot see.
+                r = subprocess.run(
+                    ["shellcheck", "--shell=bash", "--exclude=SC2154,SC2153", name]
+                )
+                os.unlink(name)
+                if r.returncode != 0:
+                    label = step.get("name", "unnamed")
+                    print(f"::error::shellcheck failed: {path} step #{i + 1} ({label})")
+                    rc = 1
+        sys.exit(rc)
+        PY
+
+    # Everything else here is a thin wrapper around ssh or docker, which cannot
+    # be tested without a server and a registry -- and is not where the bugs
+    # were. These two are pure functions of their inputs, they gate everything
+    # that follows, and they had no coverage at all: the `config:` form was
+    # rejected by deploy's own precondition and shipped unable to run.
+    - name: deploy input handling
+      shell: bash
+      run: bash tests/deploy-inputs.test.sh
+
+    - name: komizo.yml parsing
+      shell: bash
+      run: bash tests/parse-config.test.sh
+
+    # A skipped test is a green tick. parse-config.test.sh skips itself when
+    # PyYAML is missing, so assert it actually ran -- otherwise the tool
+    # vanishing from the image would read as "everything passes".
+    - name: The parser tests were not skipped
+      shell: bash
+      run: |
+        set -euo pipefail
+        if bash tests/parse-config.test.sh | grep -q '^SKIP'; then
+          echo "::error::the komizo.yml parser tests skipped themselves -- PyYAML is missing"
+          exit 1
+        fi
