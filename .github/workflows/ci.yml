@@ -1,0 +1,50 @@
+name: ci
+
+# Static analysis for the composite actions and the release script, plus the
+# tests for the two things in this repository that are pure functions of their
+# inputs. There is no build to run -- these are shell embedded in YAML -- so
+# what can go wrong is workflow/action syntax, the bash inside `run:` blocks,
+# and the input handling that decides whether any of it executes.
+#
+# All of it lives in .github/actions/test, because Release runs the same checks
+# and one definition is what stops the release-side copy being trimmed until it
+# no longer matches what people trust on a pull request.
+#
+# One job. actionlint used to be a second one, on two grounds: it validates
+# workflow files, which is a property of this repository rather than of a
+# release, and it is a marketplace action with its own pinning story. The second
+# argument stopped holding once everything here was pinned by SHA, and the first
+# was not worth being the only two-job workflow in the organisation. It is a
+# step in the shared action now -- which does mean a release is gated on
+# workflow-file syntax it does not strictly depend on.
+#
+# The push trigger is filtered to main. It used to be a bare `on: push`, which
+# ran on every branch -- so a pull request branch triggered both `push` and
+# `pull_request` for the same commit and did all of this twice.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: this workflow only inspects the tree.
+permissions:
+  contents: read
+
+# Third-party actions are pinned by SHA, with the tag in a trailing comment so
+# the version is still readable. This repository tells its users to pin
+# `uses:` by SHA -- scripts/release.sh exists to make that pin mean what it
+# says -- and preaching it while running floating tags was the sort of
+# inconsistency that undercuts the advice.
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    # Bounded, so a step that hangs fails here rather than sitting until the
+    # runner's own timeout hours later. Nothing here is slow; this is the
+    # general form of "it should not run for an hour".
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/test
