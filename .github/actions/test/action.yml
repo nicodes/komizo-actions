@@ -107,6 +107,10 @@ runs:
       shell: bash
       run: bash tests/parse-config.test.sh
 
+    - name: allowlisted task input handling
+      shell: bash
+      run: bash tests/run-task.test.sh
+
     # A skipped test is a green tick. parse-config.test.sh skips itself when
     # PyYAML is missing, so assert it actually ran -- otherwise the tool
     # vanishing from the image would read as "everything passes".

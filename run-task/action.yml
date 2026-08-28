@@ -1,0 +1,28 @@
+name: Run an allowlisted production task
+description: >
+  Invoke a fixed Komizo host task after connect. This action intentionally has
+  no generic command, path, service, image, executable, environment, or secret
+  input. The host wrapper remains the authoritative privilege boundary.
+
+inputs:
+  app:
+    description: App whose root-owned Komizo task wrapper is invoked.
+    required: false
+    default: ""
+  task:
+    description: App-defined task name. Currently release-identity-backfill.
+    required: true
+  mode:
+    description: Bounded task mode. Currently dry-run, apply, or constrain.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate and invoke the named task
+      shell: bash
+      env:
+        APP: ${{ inputs.app }}
+        TASK: ${{ inputs.task }}
+        MODE: ${{ inputs.mode }}
+      run: bash "$GITHUB_ACTION_PATH/run.sh"
