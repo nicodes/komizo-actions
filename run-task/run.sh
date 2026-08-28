@@ -11,14 +11,11 @@ if [ "$APP" != "termcade" ]; then
   echo "::error::app must be termcade for this allowlisted task capability."
   exit 64
 fi
-if [ "$TASK" != "release-identity-backfill" ]; then
-  echo "::error::task must be release-identity-backfill."
-  exit 64
-fi
-case "$MODE" in
-  dry-run|apply|constrain) ;;
+case "$TASK:$MODE" in
+  release-identity-backfill:dry-run|release-identity-backfill:apply|release-identity-backfill:constrain) ;;
+  production-data:inspect|production-data:backup|production-data:drill|production-data:seal|production-data:reset|production-data:rollback) ;;
   *)
-    echo "::error::mode must be dry-run, apply, or constrain."
+    echo "::error::task and mode must name one reviewed Termcade operation."
     exit 64
     ;;
 esac
@@ -35,7 +32,7 @@ if [ ! -f "$ssh_config" ] || ! awk '
   exit 1
 fi
 
-echo "Running allowlisted task: app=termcade task=release-identity-backfill mode=$MODE"
+echo "Running allowlisted task: app=termcade task=$TASK mode=$MODE"
 
 # Remote output is untrusted workflow text. Fence it so a compromised host
 # cannot emit ::error::, ::set-output::, masking, or another workflow command.
@@ -45,8 +42,8 @@ rc=0
 # The wrapper path, app and task are fixed literals. MODE has passed an exact
 # three-value allowlist and therefore cannot alter remote-shell tokenization.
 # No secret is in with:, argv, output, or this log line.
-# shellcheck disable=SC2029 # the exact local mode literal is intentionally sent.
+# shellcheck disable=SC2029 # both values passed exact literal-pair allowlists.
 ssh deploy-target \
-  "doas /usr/local/bin/task-termcade release-identity-backfill $MODE" 2>&1 || rc=$?
+  "doas /usr/local/bin/task-termcade $TASK $MODE" 2>&1 || rc=$?
 echo "::$fence::"
 exit "$rc"
