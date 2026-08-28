@@ -54,6 +54,16 @@ for mode in dry-run apply constrain; do
     printf 'FAIL  fixed argv for %s, got: %s\n' "$mode" "$(cat "$LAST_TMP/calls")"
   fi
 done
+for mode in inspect backup drill seal reset rollback; do
+  run_case 0 "production-data $mode accepted" APP=termcade TASK=production-data MODE="$mode"
+  expected="deploy-target doas /usr/local/bin/task-termcade production-data $mode"
+  if grep -qxF "$expected" "$LAST_TMP/calls"; then
+    pass=$((pass + 1))
+  else
+    fail=$((fail + 1))
+    printf 'FAIL  fixed production-data argv for %s, got: %s\n' "$mode" "$(cat "$LAST_TMP/calls")"
+  fi
+done
 
 echo "== malformed input denied before ssh =="
 while IFS='|' read -r label app task mode; do
@@ -69,6 +79,8 @@ image|termcade|release-identity-backfill|ghcr.io/evil/image
 service|termcade|release-identity-backfill|db
 environment|termcade|release-identity-backfill|X=1
 shell|termcade|release-identity-backfill|dry-run;id
+cross-task mode|termcade|production-data|apply
+unknown data mode|termcade|production-data|destroy
 CASES
 run_case 64 "control character" APP=termcade TASK=release-identity-backfill MODE=$'dry-run\napply'
 assert_no_call
