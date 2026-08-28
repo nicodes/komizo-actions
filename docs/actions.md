@@ -490,6 +490,29 @@ The host reports `previous-version` because the deploy user cannot read
 `/srv/<app>/.env` itself — it is `600` root. The deploy script prints it before
 changing anything, so it stays correct even when a later stage fails.
 
+## `run-task`
+
+Invokes a named task through the root-owned wrapper installed by Komizo. It has
+no generic command, path, image, service, executable, environment, secret, or
+output input. The current release accepts exactly Termcade task
+`release-identity-backfill` and modes `dry-run`, `apply`, or `constrain`.
+
+Run [`connect`](#connect) first, with connection credentials supplied through
+environment variables rather than `with:`. The task action itself receives only
+non-sensitive allowlist selectors:
+
+```yaml
+- uses: nicodes/komizo-actions/run-task@v0.0.2
+  with:
+    app: termcade
+    task: release-identity-backfill
+    mode: dry-run
+```
+
+The host wrapper remains authoritative and fixes the app directory, Compose
+service, executable, timeout, cleanup, and audit destination. Calling this
+action executes the task; merely installing or releasing it does not.
+
 ## `health-check`
 
 Polls a list of URLs until every one answers, failing the job if any never
