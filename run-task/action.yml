@@ -10,10 +10,10 @@ inputs:
     required: false
     default: ""
   task:
-    description: App-defined task name. Currently release-identity-backfill.
+    description: Fixed task name; release-identity-backfill or production-data.
     required: true
   mode:
-    description: Bounded task mode. Currently dry-run, apply, or constrain.
+    description: Bounded mode paired with the selected fixed task.
     required: true
 
 runs:
