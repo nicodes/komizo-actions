@@ -45,6 +45,7 @@ run() {
 			GITHUB_OUTPUT="$tmp/output" SSH_CONFIG="$tmp/ssh_config" \
 			HOST= APP= SECRET_NAMES= \
 			CONFIG= CONFIG_COMPOSE= CONFIG_HOSTNAMES= CONFIG_IMAGE= \
+			ROLLOUT_MODEL= \
 			"$@" \
 			bash "$script" 2>&1
 	)"
@@ -119,6 +120,12 @@ run $V 1 "config-image without any config is refused" \
 
 run $V 1 "config-hostnames without any config is refused" \
 	HOST=box.example.com APP=blog CONFIG_HOSTNAMES=deploy/hostnames
+
+run $V 1 "rollout model without config is refused" \
+	HOST=box.example.com APP=blog ROLLOUT_MODEL=deploy/model.json
+run $V 0 "rollout model travels with config" \
+	HOST=box.example.com APP=blog CONFIG_COMPOSE=deploy/compose.yml \
+	CONFIG_IMAGE=ghcr.io/you/blog-config ROLLOUT_MODEL=deploy/model.json
 
 echo "== validate.sh: app name =="
 
