@@ -1,7 +1,8 @@
 name: Deploy
 description: >
-  The whole deploy, in one step: connect, publish this commit's config, set
-  secrets, make the tag live, and check the result is serving.
+  The whole deploy, in one step: connect, publish this commit's config (and
+  optional canonical rollout model), set secrets, activate the immutable config
+  digest, and check the result is serving.
 
   Everything except `version` and `app` is optional. Supply what your app needs
   and the rest is skipped — no config, no secrets, no health check.
@@ -153,6 +154,12 @@ inputs:
       Required when config-compose is set.
     required: false
     default: ""
+  rollout-model:
+    description: >
+      Canonical immutable model for seamless deployment. Supplying it selects
+      the host's journaled per-app broker; empty retains legacy activation.
+    required: false
+    default: ""
 
   # --- secrets --------------------------------------------------------------
   secrets:
@@ -226,6 +233,9 @@ outputs:
       the `config-image` input, which must not carry one. Empty if no config
       was published.
     value: ${{ steps.config.outputs.image-ref }}
+  config-image-digest:
+    description: Registry digest of the published config artifact.
+    value: ${{ steps.config.outputs.image-digest }}
   health-rounds-used:
     description: >
       Rounds the health check needed until every URL was healthy, if it ran.
@@ -274,6 +284,7 @@ runs:
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
         CONFIG_HOSTNAMES: ${{ inputs.config-hostnames }}
         CONFIG_IMAGE: ${{ inputs.config-image }}
+        ROLLOUT_MODEL: ${{ inputs.rollout-model }}
       run: bash "$GITHUB_ACTION_PATH/validate.sh"
 
     # 1. Connect, unless an earlier step already did. This verifies the
@@ -288,6 +299,26 @@ runs:
         port: ${{ inputs.port }}
         allow-unpinned-host: ${{ inputs.allow-unpinned-host }}
 
+    # A rollout artifact must never be handed to an older deploy script: it
+    # would not understand model.json and could fall through to in-place
+    # Compose. Probe the dedicated broker before publishing config or changing
+    # host secret material. Older hosts do not have this command and fail safe.
+    - name: Require journaled host broker
+      if: inputs.rollout-model != ''
+      shell: bash
+      env:
+        APP: ${{ steps.cfg.outputs.app }}
+      run: |
+        set -euo pipefail
+        # APP is validated before this step and client-side expansion is
+        # intentional: the remote receives only the fixed per-app broker name.
+        # shellcheck disable=SC2029
+        got="$(ssh deploy-target "doas /usr/local/bin/rollout-$APP --check")"
+        if [ "$got" != "komizo-rollout-broker-v1 $APP" ]; then
+          echo "::error::Host did not confirm this app's journaled rollout broker. Update/provision it before using rollout-model."
+          exit 1
+        fi
+
     # 2. Publish this commit's compose.yml, so the host has it before it is
     #    asked to deploy this tag.
     - id: config
@@ -297,6 +328,7 @@ runs:
         config: ${{ inputs.config }}
         compose: ${{ inputs.config-compose }}
         hostnames: ${{ inputs.config-hostnames }}
+        rollout-model: ${{ inputs.rollout-model }}
         image: ${{ inputs.config-image }}
         tag: ${{ inputs.version }}
 
@@ -316,7 +348,8 @@ runs:
         registry: ${{ inputs.registry }}
         registry-user: ${{ inputs.registry-user }}
         registry-token: ${{ inputs.registry-token }}
-        command: doas /usr/local/bin/deploy-${{ steps.cfg.outputs.app }}
+        command: ${{ inputs.rollout-model != '' && format('doas /usr/local/bin/rollout-{0}', steps.cfg.outputs.app) || format('doas /usr/local/bin/deploy-{0}', steps.cfg.outputs.app) }}
+        config-digest: ${{ steps.config.outputs.image-digest }}
 
     # 5. Prove it is serving. Skipped entirely when no URL is given.
     - id: health

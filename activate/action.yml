@@ -1,13 +1,14 @@
 name: Activate a version
 description: >
-  Run the deploy on the host: pull the config image for this tag, unpack it,
-  write APP_VERSION, and bring the stack up. This is the step that changes what
-  is running — everything before it publishes and prepares.
+  Run the deploy on the host. Legacy artifacts update APP_VERSION and Compose;
+  journaled artifacts are selected by registry digest and use the host's fixed
+  per-app rollout profile. This is the step that changes what is running.
 
   Compose recreates only what the new config actually changed, so services whose
   resolved config is unaffected keep running untouched.
 
-  It reports the version it replaced, so a later step can roll back to it.
+  Legacy activation reports the version it replaced. Journaled deployment may
+  leave this empty: unsafe application/data rollback is never inferred.
 
   Requires the connect action to have run first. Most workflows should use the
   deploy action, which runs this after publishing config and setting secrets;
@@ -39,6 +40,12 @@ inputs:
       Privileged deploy command on the host, as installed by `komizo`. Named
       after the app, e.g. `doas /usr/local/bin/deploy-blog`.
     required: true
+  config-digest:
+    description: >
+      Registry sha256 digest returned by publish-config. The journaled broker
+      requires it so the config tag cannot change between publication and use.
+    required: false
+    default: ""
 
 outputs:
   version:
@@ -86,6 +93,7 @@ runs:
         REGISTRY: ${{ inputs.registry }}
         REGISTRY_USER: ${{ inputs.registry-user }}
         REGISTRY_TOKEN: ${{ inputs.registry-token }}
+        CONFIG_DIGEST: ${{ inputs.config-digest }}
       run: |
         set -euo pipefail
 
@@ -95,16 +103,28 @@ runs:
         # that went unchecked while version, registry and registry-user were all
         # guarded. See set-secrets, which had the same gap.
         case "$DEPLOY_CMD" in
-          "doas /usr/local/bin/deploy-"*) ;;
+          "doas /usr/local/bin/deploy-"*|"doas /usr/local/bin/rollout-"*) ;;
           *)
             echo "::error::command must be the privileged deploy command komizo installed, e.g. 'doas /usr/local/bin/deploy-blog'; got '$DEPLOY_CMD'."
             exit 1 ;;
         esac
-        case "${DEPLOY_CMD#doas /usr/local/bin/deploy-}" in
+        command_app="${DEPLOY_CMD#doas /usr/local/bin/deploy-}"
+        command_app="${command_app#doas /usr/local/bin/rollout-}"
+        case "$command_app" in
           ''|*[!A-Za-z0-9_-]*)
             echo "::error::command names an app that is not letters, digits, underscore or hyphen; got '$DEPLOY_CMD'."
             exit 1 ;;
         esac
+
+        if [ -n "$CONFIG_DIGEST" ]; then
+          case "$CONFIG_DIGEST" in
+            sha256:????????????????????????????????????????????????????????????????) ;;
+            *) echo "::error::config-digest must be sha256 followed by 64 lowercase hex characters."; exit 1 ;;
+          esac
+          case "${CONFIG_DIGEST#sha256:}" in
+            *[!0-9a-f]*) echo "::error::config-digest must use lowercase hexadecimal."; exit 1 ;;
+          esac
+        fi
 
         echo "Deploying $VERSION"
 
@@ -166,7 +186,7 @@ runs:
         # what crosses the wire is built deliberately rather than on the host.
         # shellcheck disable=SC2029
         printf '%s' "$REGISTRY_TOKEN" \
-          | ssh deploy-target "$DEPLOY_CMD '$VERSION'$creds" 2>&1 | tee "$log" || rc=$?
+          | ssh deploy-target "$DEPLOY_CMD '$VERSION'$creds '$CONFIG_DIGEST'" 2>&1 | tee "$log" || rc=$?
         echo "::$fence::"
         if [ "$rc" -ne 0 ]; then
           exit "$rc"
