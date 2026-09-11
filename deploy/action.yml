@@ -310,6 +310,9 @@ runs:
         APP: ${{ steps.cfg.outputs.app }}
       run: |
         set -euo pipefail
+        # APP is validated before this step and client-side expansion is
+        # intentional: the remote receives only the fixed per-app broker name.
+        # shellcheck disable=SC2029
         got="$(ssh deploy-target "doas /usr/local/bin/rollout-$APP --check")"
         if [ "$got" != "komizo-rollout-broker-v1 $APP" ]; then
           echo "::error::Host did not confirm this app's journaled rollout broker. Update/provision it before using rollout-model."
