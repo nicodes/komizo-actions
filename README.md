@@ -109,6 +109,15 @@ the pushed registry digest and `activate` passes it to the existing fixed
 per-app host command. The host refuses journaled activation without that digest;
 CI cannot select root paths, tools, keys, sockets, limits or another app.
 
+The capability probe is full readiness, not merely the presence of a filename.
+An operator first installs a current Komizo release and runs `komizo rollout
+provision --host root@HOST --app APP` to refresh only that app's broker. Omitting
+`--profile` deliberately stops there. After target measurements and separate
+owner approval, rerun with the private profile, then supervise the app-private
+gateway. Until profile, configured capacity, Compose/network identity and the
+gateway socket all pass, `deploy` refuses before publishing config or changing
+secrets. Provisioning does not authorize application cutover.
+
 Secret values still travel only to the write-only per-app materializer. Their
 opaque host-generated versions, not their bytes or artifact claims, participate
 in release identity. Persistent changes and unsafe/unknown retirement outcomes

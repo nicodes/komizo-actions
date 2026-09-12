@@ -127,6 +127,15 @@ run $V 0 "rollout model travels with config" \
 	HOST=box.example.com APP=blog CONFIG_COMPOSE=deploy/compose.yml \
 	CONFIG_IMAGE=ghcr.io/you/blog-config ROLLOUT_MODEL=deploy/model.json
 
+echo "== deploy action: rollout authority remains operator-owned =="
+if grep -Fq "komizo rollout provision --host root@HOST --app \$APP" deploy/action.yml &&
+	grep -Fq "before publishing config or changing" deploy/action.yml; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  rollout readiness error does not hand off to scoped operator provisioning before mutation\n'
+fi
+
 echo "== validate.sh: app name =="
 
 run $V 1 "a missing app name is refused" HOST=box.example.com
