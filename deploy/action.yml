@@ -315,7 +315,7 @@ runs:
         # shellcheck disable=SC2029
         got="$(ssh deploy-target "doas /usr/local/bin/rollout-$APP --check")"
         if [ "$got" != "komizo-rollout-broker-v1 $APP" ]; then
-          echo "::error::Host did not confirm this app's journaled rollout broker. Update/provision it before using rollout-model."
+          echo "::error::Host did not confirm complete journaled rollout readiness for this app. An operator must install a current Komizo release, run 'komizo rollout provision --host root@HOST --app $APP' for broker-only authority, then install an owner-authorized profile and supervise its gateway before using rollout-model."
           exit 1
         fi
 
