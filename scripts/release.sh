@@ -36,9 +36,11 @@
 # repository the moment the tag moves, with no way to stay on the previous one
 # short of finding its SHA by hand.
 #
-# So each release is its own immutable tag. `@v0.0.4` names one commit for
-# ever, upgrading is a visible edit in a pull request, and rolling back is
-# naming the version before it. A SHA pin still works and is still stronger --
+# So each release is its own fixed tag. `@v0.0.4` names one commit unless an
+# administrator later changes that Git ref; this workflow never does so. GitHub
+# release records remain editable and are not a platform-enforced immutability
+# boundary. Upgrading is a visible edit in a pull request, and rolling back is
+# naming the version before it. A SHA pin still works and is stronger --
 # a tag can in principle be deleted and recreated, a SHA cannot -- but a
 # version is the one people will actually use, so it should mean something.
 #
@@ -46,9 +48,9 @@
 #
 # The five inner refs are rewritten to the CURRENT commit, then the result is
 # committed. So the sub-actions come from the commit before the release, and
-# deploy/action.yml comes from the release commit itself. Both are immutable,
-# which is the whole point: `deploy@v0.0.4` now resolves to exactly one set of
-# six files, forever.
+# deploy/action.yml comes from the release commit itself. The workflow refuses
+# to move the tag, so `deploy@v0.0.4` resolves to the intended fixed set of six
+# files. A commit SHA remains the stronger identity boundary.
 #
 # The pins stay in the file between releases. That is deliberate -- reading
 # deploy/action.yml tells you which sub-actions the last release shipped
@@ -143,7 +145,7 @@ TAG="v$version"
 # Never move an existing tag. That is the property the version is for: a
 # consumer who pinned it must keep getting the same six files.
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-	die "$TAG already exists -- releases are immutable, pick the next version"
+		die "$TAG already exists -- this workflow never moves release tags; pick the next version"
 fi
 
 # Every composed action must actually exist at the commit we are about to pin
