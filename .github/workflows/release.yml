@@ -26,11 +26,13 @@ name: Release
 # fixed set of six files. See the header of scripts/release.sh for why that
 # cannot be inherited from the caller's ref.
 #
-# --- immutability ---------------------------------------------------------
+# --- fixed tags -----------------------------------------------------------
 #
-# Every version is its own tag and no tag ever moves. The script refuses to
+# Every version is its own fixed tag and no tag is moved by this workflow. The script refuses to
 # overwrite one, so a re-run cannot quietly republish a version somebody has
-# already pinned. There used to be a single moving `v0`; it is gone.
+# already pinned. GitHub release records remain editable and are not described
+# as platform-enforced immutable releases. There used to be a single moving
+# `v0`; it is gone.
 
 on:
   workflow_dispatch:
@@ -140,7 +142,7 @@ jobs:
           - uses: ${GITHUB_REPOSITORY}/deploy@${TAG}
           \`\`\`
 
-          Every version is its own immutable tag, and the five actions
+          Every version is its own fixed, non-moving tag, and the five actions
           \`deploy\` composes are rewritten to a commit SHA at release time — so
           this tag resolves to exactly one set of six files.
           NOTES
