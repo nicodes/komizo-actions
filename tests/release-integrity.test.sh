@@ -10,4 +10,4 @@ for claim in 'own immutable tag' 'releases are immutable' 'Both are immutable'; 
 done
 
 grep -Fq 'this workflow never moves release tags' scripts/release.sh
-grep -Fq 'GitHub release records remain editable' scripts/release.sh
+grep -Fq 'GitHub release records remain editable' scripts/release.sh .github/workflows/release.yml
