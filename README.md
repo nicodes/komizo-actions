@@ -2,6 +2,11 @@
 
 GitHub Actions that deploy to your own server. Merge, and it's live.
 
+The supported action invokes the established app-scoped `deploy-APP` Compose
+operation. The optional journaled rollout model published in v0.0.4 and v0.0.5
+was abandoned and is superseded by v0.0.6 and later; those tags remain as
+historical artifacts.
+
 ```yaml
 - uses: nicodes/komizo-actions/deploy@v0.0.1
   env:
