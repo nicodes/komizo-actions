@@ -45,7 +45,6 @@ run() {
 			GITHUB_OUTPUT="$tmp/output" SSH_CONFIG="$tmp/ssh_config" \
 			HOST= APP= SECRET_NAMES= \
 			CONFIG= CONFIG_COMPOSE= CONFIG_HOSTNAMES= CONFIG_IMAGE= \
-			ROLLOUT_MODEL= \
 			"$@" \
 			bash "$script" 2>&1
 	)"
@@ -121,21 +120,6 @@ run $V 1 "config-image without any config is refused" \
 run $V 1 "config-hostnames without any config is refused" \
 	HOST=box.example.com APP=blog CONFIG_HOSTNAMES=deploy/hostnames
 
-run $V 1 "rollout model without config is refused" \
-	HOST=box.example.com APP=blog ROLLOUT_MODEL=deploy/model.json
-run $V 0 "rollout model travels with config" \
-	HOST=box.example.com APP=blog CONFIG_COMPOSE=deploy/compose.yml \
-	CONFIG_IMAGE=ghcr.io/you/blog-config ROLLOUT_MODEL=deploy/model.json
-
-echo "== deploy action: rollout authority remains operator-owned =="
-if grep -Fq "komizo rollout provision --host root@HOST --app \$APP" deploy/action.yml &&
-	grep -Fq "before publishing config or changing" deploy/action.yml; then
-	pass=$((pass + 1))
-else
-	fail=$((fail + 1))
-	printf 'FAIL  rollout readiness error does not hand off to scoped operator provisioning before mutation\n'
-fi
-
 echo "== validate.sh: app name =="
 
 run $V 1 "a missing app name is refused" HOST=box.example.com
@@ -198,6 +182,18 @@ outputs_contain "has-secrets=true"
 run $R 0 "a whitespace-only names list is not a list" \
 	HOST=box.example.com SECRET_NAMES=$'   \n  \n'
 outputs_contain "has-secrets=false"
+
+echo "== restored deployment authority =="
+
+if grep -q 'rollout-' deploy/action.yml || grep -q 'rollout-model' deploy/action.yml; then
+	printf 'FAIL  abandoned rollout authority remains in deploy/action.yml\n'
+	fail=$((fail + 1))
+elif grep -q 'command: doas /usr/local/bin/deploy-' deploy/action.yml; then
+	pass=$((pass + 1))
+else
+	printf 'FAIL  established deploy-APP authority is not reachable\n'
+	fail=$((fail + 1))
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

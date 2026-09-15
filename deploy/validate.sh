@@ -99,7 +99,3 @@ if [ "$publishing" = 0 ] && [ -n "$CONFIG_HOSTNAMES" ]; then
 	echo "::error::config-hostnames is set but no config was named. They are published together in one image, so nothing would be shipped."
 	exit 1
 fi
-if [ "$publishing" = 0 ] && [ -n "${ROLLOUT_MODEL:-}" ]; then
-	echo "::error::rollout-model is part of a config artifact; pass config: or config-compose: too."
-	exit 1
-fi
