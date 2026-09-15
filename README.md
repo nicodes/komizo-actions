@@ -7,6 +7,10 @@ operation. The optional journaled rollout model published in v0.0.4 and v0.0.5
 was abandoned and is superseded by v0.0.6 and later; those tags remain as
 historical artifacts.
 
+Release tags are fixed by the release workflow and composed actions are pinned
+to a commit SHA. GitHub release records themselves remain editable; this project
+does not claim platform-enforced release immutability.
+
 ```yaml
 - uses: nicodes/komizo-actions/deploy@v0.0.1
   env:
