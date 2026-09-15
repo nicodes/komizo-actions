@@ -4,8 +4,11 @@ GitHub Actions that deploy to your own server. Merge, and it's live.
 
 The supported action invokes the established app-scoped `deploy-APP` Compose
 operation. The optional journaled rollout model published in v0.0.4 and v0.0.5
-was abandoned and is superseded by v0.0.6 and later; those tags remain as
+was abandoned and is superseded by v0.0.7 and later; those tags remain as
 historical artifacts.
+
+There is no published v0.0.6: its automated release candidate was refused by
+protected-main checks before any remote tag or release was created.
 
 Release tags are fixed by the release workflow and composed actions are pinned
 to a commit SHA. GitHub release records themselves remain editable; this project

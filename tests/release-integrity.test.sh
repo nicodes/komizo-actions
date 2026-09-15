@@ -11,3 +11,8 @@ done
 
 grep -Fq 'this workflow never moves release tags' scripts/release.sh
 grep -Fq 'GitHub release records remain editable' scripts/release.sh .github/workflows/release.yml
+grep -Fq 'superseded by v0.0.7 and later' README.md
+if grep -Fq 'superseded by v0.0.6' README.md; then
+  printf 'README names the unshipped release candidate as published\n' >&2
+  exit 1
+fi
