@@ -111,6 +111,10 @@ runs:
       shell: bash
       run: bash tests/run-task.test.sh
 
+    - name: release integrity terminology
+      shell: bash
+      run: bash tests/release-integrity.test.sh
+
     # A skipped test is a green tick. parse-config.test.sh skips itself when
     # PyYAML is missing, so assert it actually ran -- otherwise the tool
     # vanishing from the image would read as "everything passes".
