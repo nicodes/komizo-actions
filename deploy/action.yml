@@ -1,8 +1,7 @@
 name: Deploy
 description: >
-  The whole deploy, in one step: connect, publish this commit's config (and
-  optional canonical rollout model), set secrets, activate the immutable config
-  digest, and check the result is serving.
+  The whole deploy, in one step: connect, publish this commit's config, set
+  secrets, make the tag live, and check the result is serving.
 
   Everything except `version` and `app` is optional. Supply what your app needs
   and the rest is skipped — no config, no secrets, no health check.
@@ -154,12 +153,6 @@ inputs:
       Required when config-compose is set.
     required: false
     default: ""
-  rollout-model:
-    description: >
-      Canonical immutable model for seamless deployment. Supplying it selects
-      the host's journaled per-app broker; empty retains legacy activation.
-    required: false
-    default: ""
 
   # --- secrets --------------------------------------------------------------
   secrets:
@@ -233,9 +226,6 @@ outputs:
       the `config-image` input, which must not carry one. Empty if no config
       was published.
     value: ${{ steps.config.outputs.image-ref }}
-  config-image-digest:
-    description: Registry digest of the published config artifact.
-    value: ${{ steps.config.outputs.image-digest }}
   health-rounds-used:
     description: >
       Rounds the health check needed until every URL was healthy, if it ran.
@@ -284,13 +274,12 @@ runs:
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
         CONFIG_HOSTNAMES: ${{ inputs.config-hostnames }}
         CONFIG_IMAGE: ${{ inputs.config-image }}
-        ROLLOUT_MODEL: ${{ inputs.rollout-model }}
       run: bash "$GITHUB_ACTION_PATH/validate.sh"
 
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before anything has been published.
     - if: steps.cfg.outputs.host != ''
-      uses: nicodes/komizo-actions/connect@3275c1b817e30b22e8b4f89a4ee5e7baf03a0df2
+      uses: nicodes/komizo-actions/connect@2fb9ad3dcd010d7db0bd6b4b9d63c5890cc653b9
       with:
         host: ${{ steps.cfg.outputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', steps.cfg.outputs.app) }}
@@ -299,62 +288,40 @@ runs:
         port: ${{ inputs.port }}
         allow-unpinned-host: ${{ inputs.allow-unpinned-host }}
 
-    # A rollout artifact must never be handed to an older deploy script: it
-    # would not understand model.json and could fall through to in-place
-    # Compose. Probe the dedicated broker before publishing config or changing
-    # host secret material. Older hosts do not have this command and fail safe.
-    - name: Require journaled host broker
-      if: inputs.rollout-model != ''
-      shell: bash
-      env:
-        APP: ${{ steps.cfg.outputs.app }}
-      run: |
-        set -euo pipefail
-        # APP is validated before this step and client-side expansion is
-        # intentional: the remote receives only the fixed per-app broker name.
-        # shellcheck disable=SC2029
-        got="$(ssh deploy-target "doas /usr/local/bin/rollout-$APP --check")"
-        if [ "$got" != "komizo-rollout-broker-v1 $APP" ]; then
-          echo "::error::Host did not confirm complete journaled rollout readiness for this app. An operator must install a current Komizo release, run 'komizo rollout provision --host root@HOST --app $APP' for broker-only authority, then install an owner-authorized profile and supervise its gateway before using rollout-model."
-          exit 1
-        fi
-
     # 2. Publish this commit's compose.yml, so the host has it before it is
     #    asked to deploy this tag.
     - id: config
       if: inputs.config != '' || inputs.config-compose != ''
-      uses: nicodes/komizo-actions/publish-config@3275c1b817e30b22e8b4f89a4ee5e7baf03a0df2
+      uses: nicodes/komizo-actions/publish-config@2fb9ad3dcd010d7db0bd6b4b9d63c5890cc653b9
       with:
         config: ${{ inputs.config }}
         compose: ${{ inputs.config-compose }}
         hostnames: ${{ inputs.config-hostnames }}
-        rollout-model: ${{ inputs.rollout-model }}
         image: ${{ inputs.config-image }}
         tag: ${{ inputs.version }}
 
     # 3. Secrets BEFORE the deploy, so the containers it recreates start with
     #    the current values.
     - if: steps.cfg.outputs.has-secrets == 'true'
-      uses: nicodes/komizo-actions/set-secrets@3275c1b817e30b22e8b4f89a4ee5e7baf03a0df2
+      uses: nicodes/komizo-actions/set-secrets@2fb9ad3dcd010d7db0bd6b4b9d63c5890cc653b9
       with:
         names: ${{ inputs.secrets }}
         command: doas /usr/local/bin/set-secret-${{ steps.cfg.outputs.app }}
 
     # 4. Make the tag live.
     - id: version
-      uses: nicodes/komizo-actions/activate@3275c1b817e30b22e8b4f89a4ee5e7baf03a0df2
+      uses: nicodes/komizo-actions/activate@2fb9ad3dcd010d7db0bd6b4b9d63c5890cc653b9
       with:
         version: ${{ inputs.version }}
         registry: ${{ inputs.registry }}
         registry-user: ${{ inputs.registry-user }}
         registry-token: ${{ inputs.registry-token }}
-        command: ${{ inputs.rollout-model != '' && format('doas /usr/local/bin/rollout-{0}', steps.cfg.outputs.app) || format('doas /usr/local/bin/deploy-{0}', steps.cfg.outputs.app) }}
-        config-digest: ${{ steps.config.outputs.image-digest }}
+        command: doas /usr/local/bin/deploy-${{ steps.cfg.outputs.app }}
 
     # 5. Prove it is serving. Skipped entirely when no URL is given.
     - id: health
       if: inputs.health-urls != ''
-      uses: nicodes/komizo-actions/health-check@3275c1b817e30b22e8b4f89a4ee5e7baf03a0df2
+      uses: nicodes/komizo-actions/health-check@2fb9ad3dcd010d7db0bd6b4b9d63c5890cc653b9
       with:
         urls: ${{ inputs.health-urls }}
         attempts: ${{ inputs.health-attempts }}

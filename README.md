@@ -94,38 +94,11 @@ Most workflows need only `deploy`, which composes the rest in the right order.
 | --- | --- |
 | [`deploy`](./deploy) | Everything below, correctly sequenced |
 | [`connect`](./connect) | Installs the key and the pinned host key |
-| [`publish-config`](./publish-config) | Ships config/model and reports its immutable registry digest |
+| [`publish-config`](./publish-config) | Ships `compose.yml` and the hostname list as an image |
 | [`set-secrets`](./set-secrets) | Writes secrets the host cannot read back |
 | [`activate`](./activate) | Runs the deploy on the host — the step that changes what is running |
 | [`health-check`](./health-check) | Polls a URL until it answers |
 | [`run-task`](./run-task) | Invokes one app-defined, host-allowlisted production task after `connect` |
-
-### Journaled rollout model
-
-Pass `rollout-model` to `deploy` to package canonical Compose JSON with
-immutable component digests and portable `request`, `static`, `worker`,
-`persistent`, or `one-shot` lifecycle declarations. `publish-config` returns
-the pushed registry digest and `activate` passes it to the existing fixed
-per-app host command. The host refuses journaled activation without that digest;
-CI cannot select root paths, tools, keys, sockets, limits or another app.
-
-The capability probe is full readiness, not merely the presence of a filename.
-An operator first installs a current Komizo release and runs `komizo rollout
-provision --host root@HOST --app APP` to refresh only that app's broker. Omitting
-`--profile` deliberately stops there. After target measurements and separate
-owner approval, rerun with the private profile, then supervise the app-private
-gateway. Until profile, configured capacity, Compose/network identity and the
-gateway socket all pass, `deploy` refuses before publishing config or changing
-secrets. Provisioning does not authorize application cutover.
-
-Secret values still travel only to the write-only per-app materializer. Their
-opaque host-generated versions, not their bytes or artifact claims, participate
-in release identity. Persistent changes and unsafe/unknown retirement outcomes
-refuse rather than falling back to in-place Compose or forced cleanup.
-
-No release or host update is automatic: immutable action releases are cut by
-manual workflow dispatch, consumer pins change in consumer commits, and Komizo
-host installation remains an explicit operator action.
 
 Reach for the primitives when you need your own steps interleaved — a database
 backup before the deploy, or a migration between the config publish and the
