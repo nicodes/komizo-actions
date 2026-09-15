@@ -77,13 +77,6 @@ inputs:
       consumer, a cron job.
     required: false
     default: ""
-  rollout-model:
-    description: >
-      Canonical Compose JSON with x-komizo lifecycle metadata and immutable
-      image digests. Published as /config/model.json for the journaled per-app
-      broker. Empty retains legacy activation.
-    required: false
-    default: ""
   image:
     description: >
       Image reference WITHOUT a tag, e.g. ghcr.io/you/myapp-config. Must
@@ -99,12 +92,6 @@ outputs:
       Full reference of the pushed image, INCLUDING the tag — unlike the
       `image` input, which must not carry one.
     value: ${{ steps.push.outputs.image-ref }}
-  image-digest:
-    description: Registry manifest digest of the config artifact.
-    value: ${{ steps.push.outputs.image-digest }}
-  immutable-image-ref:
-    description: Full config artifact reference pinned by registry digest.
-    value: ${{ steps.push.outputs.immutable-image-ref }}
 
 runs:
   using: composite
@@ -116,7 +103,6 @@ runs:
         CONFIG: ${{ inputs.config }}
         COMPOSE_INPUT: ${{ inputs.compose }}
         HOSTNAMES_INPUT: ${{ inputs.hostnames }}
-        ROLLOUT_MODEL: ${{ inputs.rollout-model }}
         IMAGE: ${{ inputs.image }}
         TAG: ${{ inputs.tag }}
       run: |
@@ -233,16 +219,6 @@ runs:
         cp "$COMPOSE" "$stage/compose.yml"
         included="compose.yml <- $COMPOSE"
 
-        if [ -n "$ROLLOUT_MODEL" ]; then
-          confine "rollout model" "$ROLLOUT_MODEL"
-          if [ ! -f "$ROLLOUT_MODEL" ]; then
-            echo "::error::rollout model '$ROLLOUT_MODEL' is not a regular file."
-            exit 1
-          fi
-          cp "$ROLLOUT_MODEL" "$stage/model.json"
-          included="$included"$'\n'"model.json <- $ROLLOUT_MODEL"
-        fi
-
         if [ -n "$HOSTNAMES" ]; then
           # The derived file is ours and lives outside the workspace; only an
           # app-supplied path needs confining.
@@ -348,19 +324,8 @@ runs:
         docker build -f "$df" -t "$IMAGE:$TAG" "$stage"
         # No :latest. This image is only ever addressed by exact tag; a floating
         # tag would be a way to change the stack without a deploy.
-        push_log="$RUNNER_TEMP/komizo-config-push.log"
-        docker push "$IMAGE:$TAG" | tee "$push_log"
-        digest="$(sed -n 's/^.*digest: \(sha256:[0-9a-f]\{64\}\).*$/\1/p' "$push_log" | tail -n 1)"
-        case "$digest" in
-          sha256:????????????????????????????????????????????????????????????????) ;;
-          *) echo "::error::registry did not report a valid manifest digest for $IMAGE:$TAG"; exit 1 ;;
-        esac
-        case "${digest#sha256:}" in *[!0-9a-f]*) echo "::error::registry digest was not lowercase hexadecimal"; exit 1 ;; esac
+        docker push "$IMAGE:$TAG"
 
-        {
-          echo "image-ref=$IMAGE:$TAG"
-          echo "image-digest=$digest"
-          echo "immutable-image-ref=$IMAGE@$digest"
-        } >> "$GITHUB_OUTPUT"
+        echo "image-ref=$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
         echo "Published $IMAGE:$TAG containing:"
         printf '%s\n' "$included" | sed 's/^/  /'
