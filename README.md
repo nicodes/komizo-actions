@@ -123,9 +123,10 @@ defaults that changes every omitted input the moment the two disagree.
 
 ## Pinning
 
-**Every release is its own tag, and no tag ever moves.** `@v0.0.1` names one
-commit for ever, so upgrading is a visible edit in a pull request and rolling
-back is naming the version before it.
+**Every release is its own fixed tag; this automation never moves it.**
+Administrators can still change Git refs, and GitHub release records remain
+editable. Upgrading is a visible edit in a pull request and rolling back is
+naming the version before it.
 
 There used to be a single `v0` that each release force-moved. That made `@v0` a
 mutable ref: you could not tell which six files you were running, and a bad
@@ -147,3 +148,5 @@ That pin is complete: the five actions `deploy` composes are rewritten to a SHA
 at release time, so they cannot float out from under it. The reasoning — and the
 one thing to know if you work on this repo — is in
 [the reference](./docs/actions.md#pinning).
+
+Maintainers: [manual prepare and publish procedure](./docs/releases.md).
