@@ -115,6 +115,10 @@ runs:
       shell: bash
       run: bash tests/release-integrity.test.sh
 
+    - name: host admission prerequisite contracts
+      shell: bash
+      run: python3 -m unittest discover -s tests -p 'test_host_admission.py' -v
+
     # A skipped test is a green tick. parse-config.test.sh skips itself when
     # PyYAML is missing, so assert it actually ran -- otherwise the tool
     # vanishing from the image would read as "everything passes".
