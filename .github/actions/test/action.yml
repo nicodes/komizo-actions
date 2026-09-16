@@ -111,6 +111,10 @@ runs:
       shell: bash
       run: bash tests/run-task.test.sh
 
+    - name: release behavior contracts
+      shell: bash
+      run: python3 -m unittest discover -s tests -p 'test_release.py' -v
+
     - name: release integrity terminology
       shell: bash
       run: bash tests/release-integrity.test.sh
