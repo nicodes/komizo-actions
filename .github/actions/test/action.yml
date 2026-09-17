@@ -123,6 +123,10 @@ runs:
       shell: bash
       run: python3 -m unittest discover -s tests -p 'test_host_*.py' -v
 
+    - name: warning-only storage notice
+      shell: bash
+      run: python3 -m unittest discover -s tests -p 'test_storage_notice.py' -v
+
     # A skipped test is a green tick. parse-config.test.sh skips itself when
     # PyYAML is missing, so assert it actually ran -- otherwise the tool
     # vanishing from the image would read as "everything passes".
