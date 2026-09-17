@@ -70,9 +70,12 @@ passing an arbitrary tuple to the library proves nothing.
 
 Proposed fixed root-owned, non-deploy-user-writable per-app entrypoint:
 `doas /usr/local/bin/admit-deploy-<app> v1 <operation>`, with literal operations
-`capabilities`, `deploy`, `status`. Application identity and allowed images,
-filesystem roots, health endpoints and policy come from root-owned registration,
-not caller paths. No arbitrary commands, URLs, hooks, paths, environment, Docker
+`capabilities`, `submit`, `status <request_id>`. The formerly reserved `deploy`
+operation is renamed to `submit`; there is **no alias**. The future fixed artifact
+is `/usr/local/libexec/komizo-host-admission v1 worker`. None of these executables
+is implemented or installed by this prerequisite. Application identity, allowed
+images, filesystem roots, health endpoints and policy come from root-owned
+registration, not caller paths. No arbitrary commands, URLs, hooks, paths, environment, Docker
 arguments or general root shell. doas authority must be scoped to that app.
 
 `capabilities` is read-only and follows the exact version/capability/timing shape
@@ -81,13 +84,23 @@ or a nonparticipating writer deny. A capability reply alone is not admission.
 The future adapter must prove its installation and participation, not self-assert
 unsupported capabilities. No fallback to the old deploy command is permitted.
 
-The bounded deploy envelope will identify an immutable candidate manifest and
-request ID; any registry credential and explicit secret values travel on stdin,
-never argv/logs, with bounded size and strict duplicate/unknown-field rejection.
-Final envelope serialization/limits and privilege implementation require the host
-adapter ownership decision; this document does not pretend they already exist.
-Caller measurements cannot override trusted records. Receiving bytes in memory
-does not permit staging/altering live credentials before admission.
+The frozen initial submit descriptor is nonsecret JSON on stdin with exactly
+`protocol`, `request_id`, `candidate_manifest`, `current_credential_revision`.
+`host_admission.request` enforces UTF-8, a 1 MiB byte ceiling, strict identities,
+and duplicate/unknown-field rejection. No caller app, paths, measurements, secret
+values, secret changes, or registry token are accepted. The app is bound by the
+root-owned wrapper. See [the request and record contract](host-admission-records-v1.md).
+
+The initial profile permits normal use of existing credentials only. **No extra
+durable secret copies, snapshots, spool, or revisions are authorized.** Secret-
+changing deployments or deployments lacking proof of post-candidate database
+compatibility must deny.
+Resolved/interpolated Compose secrets must never be persisted into descriptors,
+journals or records. Any future sensitive handoff requires a separately bounded
+memory-only protocol; this descriptor does not implement one. Caller measurements
+cannot override trusted records. `host_admission.records` only reads root-imported
+nonsecret records; it does not authenticate their source, collect live inventory,
+or provide an executor, queue, capability success, or permission to deploy.
 
 Required authoritative transaction order:
 
@@ -98,8 +111,9 @@ Required authoritative transaction order:
    validate trusted measurement records and offline recovery completeness, and
    apply policy. Missing policy, inventory or compatibility denies before pulls,
    config/secret writes or activation.
-3. Stage secrets/config transactionally only after admission, preserving the
-   previous compatible credential/config revision without disclosing contents.
+3. Stage nonsecret config transactionally only after admission. Under the initial
+   unchanged-credential profile, reference the existing compatible credential
+   revision without copying secret values or changing credentials.
    Pull only the admitted candidate; keep the lock through re-inventory and
    headroom recheck immediately before activation. Failure must restore staged
    state without partial activation.
@@ -125,10 +139,13 @@ cleanup, installation or service changes are authorized by read-only inventory.
 ## Verification and rollout gates
 
 Run pure controls with:
-`python3 -m unittest discover -s tests -p 'test_host_admission.py' -v`.
+`python3 -m unittest discover -s tests -p 'test_host_*.py' -v`.
 They cover threshold failures/restoration, exact candidate evidence, union
 retention across applications, missing local images/config, incompatible schema
 and credentials, missing lock/writer capabilities and unknown protocol/timing.
+Request/record controls additionally cover the frozen nonsecret descriptor,
+safe root-file loading, strict schema and directional evidence bindings. These
+are prerequisite tests, not a working host-admission implementation.
 
 **Still mandatory before a deployable feature/release or #167 closure:**
 
@@ -140,8 +157,9 @@ and credentials, missing lock/writer capabilities and unknown protocol/timing.
 * Disposable non-production real filesystem/daemon full and near-full byte/inode
   controls, then restored successful deployment; real two-app lock contention and
   fresh inventory after waiting, missing-lock/capability and SSH-loss controls.
-* Actual staging/secret restoration tests without contents in logs; complete and
-  partial offline rollback, schema/credential incompatibility, protected/shared
+* Actual nonsecret staging/restoration tests without contents in logs or extra
+  secret copies; unchanged-credential enforcement, complete and partial offline
+  rollback, schema/credential incompatibility, protected/shared
   images, measured timing controls, and successful restored health. A mocked
   policy result cannot substitute for these tests. No production disk-full tests.
 * Exact-head full CI, approved feature release/version, separately owned consumer
