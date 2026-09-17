@@ -121,7 +121,7 @@ runs:
 
     - name: host admission prerequisite contracts
       shell: bash
-      run: python3 -m unittest discover -s tests -p 'test_host_admission.py' -v
+      run: python3 -m unittest discover -s tests -p 'test_host_*.py' -v
 
     # A skipped test is a green tick. parse-config.test.sh skips itself when
     # PyYAML is missing, so assert it actually ran -- otherwise the tool
