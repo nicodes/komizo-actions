@@ -288,6 +288,16 @@ runs:
         port: ${{ inputs.port }}
         allow-unpinned-host: ${{ inputs.allow-unpinned-host }}
 
+    # Best-effort visibility only, using the already configured deploy account.
+    # This does not authorize deployment or weaken any core step's failures.
+    - name: Storage notice (warning only)
+      continue-on-error: true
+      shell: bash
+      run: |
+        if ! python3 "$GITHUB_ACTION_PATH/storage-notice.py"; then
+          echo "::warning::Storage notice unavailable (local execution failure); warning only."
+        fi
+
     # 2. Publish this commit's compose.yml, so the host has it before it is
     #    asked to deploy this tag.
     - id: config
