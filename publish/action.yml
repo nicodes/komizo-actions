@@ -1,0 +1,142 @@
+name: Publish release images
+description: >
+  The whole publish, in one step: log in to ghcr.io and push exactly the images
+  the Build gate recorded — through the project's own vendored release helper.
+
+  The job this replaces was hand-rolled in every product repository: a
+  docker/login-action step pinned at whatever SHA that repo last copy-pasted,
+  then a run of the vendored release helper. Both halves drift on their own —
+  the login pin skews across the fleet (one repository on one commit of
+  login-action, another on a different one, with nothing saying so, and none of
+  them watched), and each hand-rolled invocation is its own small deploy script
+  to keep correct. Moving the step here internalizes the pin: one ref, bumped
+  once for the whole fleet, covered by this repository's Dependabot, inherited
+  by every product the moment it bumps its `uses:`.
+
+  The helper is the CALLER'S vendored copy, never one shipped here. The helper
+  is the product's own gate code — it re-validates the manifest against the
+  loaded archive and refuses a HEAD that is not the revision being published —
+  and it is versioned with the product, so vendoring a second copy inside this
+  action would just be drift of a different shape. This action runs in the
+  caller's workspace, so the fleet's conventional path,
+  scripts/engineering/helpers/release.py, is the default and needs no
+  configuration. Requirements that stay the caller's: actions/checkout at the
+  exact revision being published, and the release artifact under
+  .artifacts/release/ — fetched here when artifact-name names it, already on
+  disk when artifact-name is empty.
+
+  Registry credentials mirror deploy@: username and the run-scoped
+  GITHUB_TOKEN. The token is never echoed and never interpolated into shell
+  source; it travels as an input to the login step, and the one place that
+  inspects it — the non-empty check in validate.sh, because GitHub substitutes
+  an empty string for a secret that does not exist — reads it without printing
+  it.
+
+inputs:
+  # --- what to publish -------------------------------------------------------
+  project:
+    description: >
+      Project slug, e.g. cazper — the <project> in
+      ghcr.io/<owner>/<project>-<component>. Lowercase letters, digits and
+      hyphens, starting with a letter. The helper enforces the same shape;
+      failing it here costs one failed step rather than a registry login that
+      happened on the way to finding out.
+    required: true
+  revision:
+    description: >
+      Full 40-hex commit SHA being released. A short SHA will not do: it is the
+      image tag, so anything shorter publishes images nothing can address
+      deterministically. Must match the checked-out HEAD — the helper refuses
+      the mismatch, which is its check to make.
+    required: true
+  components:
+    description: >
+      Space-separated image components, from the set the release helper
+      enforces: api db pb service gate config maintenance. Distinct. Validated
+      here as well so a typo fails before the registry login — with the caveat
+      that the helper stays authoritative: this copy can lag a newly added
+      component until this action's next release, and the helper's refusal is
+      the one that cannot be stale.
+    required: true
+
+  # --- registry --------------------------------------------------------------
+  registry-user:
+    description: Registry username, normally the repository owner.
+    required: false
+    default: ""
+  registry-token:
+    description: >
+      Registry password. Prefer the run-scoped GITHUB_TOKEN so nothing
+      long-lived is left behind. Checked non-empty without being echoed.
+    required: false
+    default: ""
+
+  # --- inputs with defaults --------------------------------------------------
+  artifact-name:
+    description: >
+      Name of the Build job's artifact, e.g. release-<sha>. When set, it is
+      downloaded to .artifacts/release/ before anything else runs. Leave empty
+      when the artifact is already on disk there — the helper's default
+      directory is that path, so both forms reach it unchanged.
+    required: false
+    default: ""
+  release-helper-path:
+    description: >
+      Path to the vendored release helper, relative to the workspace — the
+      fleet's conventional scripts/engineering/helpers/release.py by default.
+      The helper is the caller's own file; this action ships none.
+    required: false
+    default: "scripts/engineering/helpers/release.py"
+
+runs:
+  using: composite
+  steps:
+    # Everything this action alone can check, checked before anything is
+    # downloaded or the registry is logged into — so a misconfiguration costs a
+    # failed step rather than a publish that half-happened. A file rather than
+    # an inline block so a test can drive it over the whole input matrix; see
+    # tests/publish-inputs.test.sh.
+    - name: Validate inputs
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        REVISION: ${{ inputs.revision }}
+        COMPONENTS: ${{ inputs.components }}
+        REGISTRY_USER: ${{ inputs.registry-user }}
+        REGISTRY_TOKEN: ${{ inputs.registry-token }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        HELPER: ${{ inputs.release-helper-path }}
+      run: bash "$GITHUB_ACTION_PATH/validate.sh"
+
+    # The Build gate's evidence, fetched only when it is not already on disk.
+    # The path is the helper's default directory, so the download and the
+    # invocation agree without a second knob.
+    - name: Fetch the release artifact
+      if: inputs.artifact-name != ''
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: .artifacts/release/
+
+    # The internalized pin. Every product used to carry this step — each at
+    # whatever SHA it had last pasted, none of them watched. Here it is one
+    # ref, named for its version, covered by this repository's Dependabot.
+    - name: Log in to ghcr.io
+      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+      with:
+        registry: ghcr.io
+        username: ${{ inputs.registry-user }}
+        password: ${{ inputs.registry-token }}
+
+    # The invocation every product hand-rolled, once, in one place. A file
+    # rather than an inline block so a test can pin the exact argv it builds —
+    # that argv is the contract the fleet has been keeping by copy-paste until
+    # now.
+    - name: Publish the validated images
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        REVISION: ${{ inputs.revision }}
+        COMPONENTS: ${{ inputs.components }}
+        HELPER: ${{ inputs.release-helper-path }}
+      run: bash "$GITHUB_ACTION_PATH/run.sh"
