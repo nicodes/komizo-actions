@@ -41,11 +41,11 @@ runs:
         shellcheck --version | head -2
 
     # Every standalone script: the release tool, the two extracted from
-    # deploy/action.yml, and the tests. Globbed rather than listed so a script
-    # added later cannot quietly escape the check.
+    # deploy/action.yml, the two from publish/, and the tests. Globbed rather
+    # than listed so a script added later cannot quietly escape the check.
     - name: Lint the standalone scripts
       shell: bash
-      run: shellcheck scripts/release.sh deploy/*.sh tests/*.sh
+      run: shellcheck scripts/release.sh deploy/*.sh publish/*.sh tests/*.sh
 
     # actionlint validates workflow files, not action-metadata (action.yml)
     # files, so the bash embedded in the composite actions is checked here
@@ -102,6 +102,9 @@ runs:
     - name: deploy input handling
       shell: bash
       run: bash tests/deploy-inputs.test.sh
+    - name: publish input handling
+      shell: bash
+      run: bash tests/publish-inputs.test.sh
 
     - name: komizo.yml parsing
       shell: bash
