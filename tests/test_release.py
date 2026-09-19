@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -220,6 +221,28 @@ class ReleaseTests(unittest.TestCase):
         r.git("commit", "-m", "missing sibling")
         with self.assertRaisesRegex(RuntimeError, "missing sibling"):
             r.canonical_tree(r.git("rev-parse", "HEAD"))
+
+
+    def test_sibling_free_action_directories_are_pin_rewrite_transparent(self):
+        # publish/ wraps third-party actions and the caller's vendored helper;
+        # it composes no nicodes/komizo-actions siblings. canonical_tree
+        # requires found == SUBACTIONS, so a sibling-free top-level action must
+        # stay out of SUBACTIONS (nothing references it) and must not change
+        # which files a release rewrites: the only allowed pin diff remains
+        # deploy/action.yml alone.
+        Path("publish").mkdir()
+        Path("publish/action.yml").write_text(
+            "- uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0\n"
+            "- uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n"
+        )
+        r.git("add", ".")
+        r.git("commit", "-m", "add publish action")
+        source = r.git("rev-parse", "HEAD")
+        tree = r.canonical_tree(source)
+        self.assertEqual(
+            r.git("diff", "--name-only", source, tree), "deploy/action.yml"
+        )
+
 
     def test_all_merge_strategies_use_tree_not_parent_shape(self):
         for mode in ["merge", "squash", "rebase"]:
@@ -498,6 +521,20 @@ class ReleaseTests(unittest.TestCase):
 
 
 class WorkflowContracts(unittest.TestCase):
+    def test_subactions_stays_exactly_what_deploy_composes(self):
+        # publish is a top-level action like run-task, not a composed sibling.
+        # Adding it to SUBACTIONS would break canonical_tree's
+        # found == SUBACTIONS check -- no action references
+        # nicodes/komizo-actions/publish -- and with it every future release.
+        # Pinned from both sides: deploy composes exactly SUBACTIONS, and
+        # publish composes no siblings at all.
+        root = Path(__file__).resolve().parents[1]
+        refs = re.findall(
+            rf"uses:\s*{r.REPO}/([^\s@]+)@", (root / "deploy/action.yml").read_text()
+        )
+        self.assertEqual(set(refs), r.SUBACTIONS)
+        self.assertNotIn(f"{r.REPO}/", (root / "publish/action.yml").read_text())
+
     def test_manual_stages_permissions_and_exact_sha_test_order(self):
         import yaml
 

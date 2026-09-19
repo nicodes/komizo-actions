@@ -111,6 +111,7 @@ Most workflows need only `deploy`, which composes the rest in the right order.
 | [`activate`](./activate) | Runs the deploy on the host — the step that changes what is running |
 | [`health-check`](./health-check) | Polls a URL until it answers |
 | [`run-task`](./run-task) | Invokes one app-defined, host-allowlisted production task after `connect` |
+| [`publish`](./publish) | Publishes the Build gate's recorded images to ghcr.io, registry login internalized |
 
 Reach for the primitives when you need your own steps interleaved — a database
 backup before the deploy, or a migration between the config publish and the

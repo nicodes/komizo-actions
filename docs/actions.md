@@ -82,11 +82,17 @@ The two layers mix: run `connect` yourself, do whatever you need over
 `ssh deploy-target`, then call `deploy` **without** `host` and it will use the
 connection you already made.
 
+The release half is wrapped too: [`publish`](#publish) logs in to ghcr.io and
+pushes exactly the images the product's Build gate recorded, through the
+project's own vendored release helper — so the publish job stops being
+hand-rolled, per repository, with its own drifting copy of the registry login.
+
 ## Contents
 
 - [`deploy`](#deploy) — the whole sequence in one step
 - [The `deploy-target` seam](#the-deploy-target-seam) — running your own commands on the host
 - [`connect`](#connect) · [`publish-config`](#publish-config) · [`set-secrets`](#set-secrets) · [`activate`](#activate) · [`health-check`](#health-check) — the primitives, in execution order
+- [`publish`](#publish) — the release half: the Build gate's images, pushed with the registry login internalized
 
 ## `deploy`
 
@@ -549,5 +555,99 @@ unhealthy; most lines are just a URL.
 
 **Outputs:** `rounds-used` — how many rounds it took until every URL was healthy,
 empty if they never all were. Distinct from the `attempts` input, the ceiling.
+
+## `publish`
+
+The release half of the CI pair: pushes the exact images the Build gate
+recorded — registry login included, in one step — through the project's own
+vendored release helper. Runs in the product's publish job, before [`deploy`](#deploy)
+makes the images live.
+
+Every product repository used to hand-roll this job: a `docker/login-action`
+step pinned at whatever SHA had last been pasted in, then an invocation of the
+vendored `scripts/engineering/helpers/release.py`. The halves drift separately.
+The login pin skews across the fleet — each repository on a different commit of
+login-action, nothing watching any of them, all of them one supply-chain review
+behind. And each hand-rolled invocation is its own small deploy script to keep
+correct. `publish` internalizes the pin: one ref, bumped here once, watched by
+this repository's Dependabot, inherited by every product the moment it bumps
+its `uses:`.
+
+**The helper is the caller's own file.** This action does not vendor a copy —
+that would be the same drift in a different directory. The helper validates the
+release manifest against the loaded archive and refuses a `HEAD` that is not
+the revision being published; it runs in the caller's workspace, so the fleet's
+conventional path is the default and needs no configuration. Two requirements
+stay the caller's:
+
+- `actions/checkout` at the exact revision being published (the helper refuses
+  the mismatch; `persist-credentials: false` is what the products use)
+- the release artifact under `.artifacts/release/` — fetched by this action
+  when `artifact-name` names it, already on disk when it is empty
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `project` | yes | — | Project slug, e.g. `cazper` — the `<project>` in `ghcr.io/<owner>/<project>-<component>`. |
+| `revision` | yes | — | Full 40-hex commit SHA being released. It is the image tag; must match the checked-out `HEAD`. |
+| `components` | yes | — | Space-separated components from the helper's set: `api db pb service gate config maintenance`. Distinct. Validated here before the login, so a typo is cheap. |
+| `registry-user` | no | `""` | Registry username, normally `${{ github.repository_owner }}`. |
+| `registry-token` | no | `""` | Registry password. Prefer the run-scoped `GITHUB_TOKEN`. Checked non-empty, never echoed. |
+| `artifact-name` | no | `""` | Build artifact name, e.g. `release-<sha>`; downloaded to `.artifacts/release/`. Empty means it is already on disk there. |
+| `release-helper-path` | no | `scripts/engineering/helpers/release.py` | Path to the caller's vendored helper, relative to the workspace. |
+
+**Before** — cazper's publish job, hand-rolled (abridged to the steps that
+matter):
+
+```yaml
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  with: { persist-credentials: false }
+- uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+  with:
+    name: "release-${{ github.sha }}"
+    path: .artifacts/release/
+- uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+  with:
+    registry: ghcr.io
+    username: "${{ github.repository_owner }}"
+    password: "${{ github.token }}"
+- name: Publish the validated images
+  env:
+    RELEASE_COMMIT: "${{ github.sha }}"
+  run: python3 scripts/engineering/helpers/release.py publish --project cazper --revision "$RELEASE_COMMIT" --components api db gate config
+```
+
+**After** — the checkout stays (the helper is a checked-out file); everything
+else is one step:
+
+```yaml
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  with: { persist-credentials: false }
+- uses: nicodes/komizo-actions/publish@v0.0.11
+  with:
+    project: cazper
+    revision: ${{ github.sha }}
+    components: api db gate config
+    artifact-name: release-${{ github.sha }}
+    registry-user: ${{ github.repository_owner }}
+    registry-token: ${{ github.token }}
+```
+
+The job keeps `packages: write`, as before — the permissions do not change,
+only who holds the login pin.
+
+Credentials mirror `deploy@`: username plus the run-scoped `GITHUB_TOKEN`. The
+token is never logged and never reaches a shell — it travels as an input to the
+login step, and the one check that inspects it (non-empty, because GitHub
+substitutes an empty string for a secret that does not exist) reads it without
+printing it.
+
+Components are validated against the helper's allowed set *before* the login,
+so a typo fails a cheap step instead of a finished login — with the trade-off
+stated: this copy can lag a component the helper has newly learned until this
+action's next release. The helper's refusal is the one that cannot be stale.
+
+Input handling is driven over its whole matrix in `tests/publish-inputs.test.sh`,
+including the exact helper invocation the step builds — that argv is the
+contract the fleet kept by copy-paste until now.
 
 ---

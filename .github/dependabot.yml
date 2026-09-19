@@ -22,3 +22,20 @@ updates:
         update-types:
           - minor
           - patch
+  # publish/action.yml pins two third-party actions by SHA, and the github-
+  # actions manager does not descend into subdirectory action metadata from
+  # `directory: /` -- the sweep there covers the workflows. The directory is
+  # named explicitly because the docker/login-action pin is the exact skew this
+  # repository internalized when it took over the publish step; nothing else
+  # would say when that pin goes stale.
+  - package-ecosystem: github-actions
+    directory: /publish
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
