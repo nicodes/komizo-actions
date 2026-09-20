@@ -86,6 +86,9 @@ The release half is wrapped too: [`publish`](#publish) logs in to ghcr.io and
 pushes exactly the images the product's Build gate recorded, through the
 project's own vendored release helper — so the publish job stops being
 hand-rolled, per repository, with its own drifting copy of the registry login.
+For the Godot game repositories, [`setup-godot`](#setup-godot) holds the
+download cache and its `actions/cache` pin while the product's own vendored
+script keeps the verifying and installing.
 
 ## Contents
 
@@ -93,6 +96,7 @@ hand-rolled, per repository, with its own drifting copy of the registry login.
 - [The `deploy-target` seam](#the-deploy-target-seam) — running your own commands on the host
 - [`connect`](#connect) · [`publish-config`](#publish-config) · [`set-secrets`](#set-secrets) · [`activate`](#activate) · [`health-check`](#health-check) — the primitives, in execution order
 - [`publish`](#publish) — the release half: the Build gate's images, pushed with the registry login internalized
+- [`setup-godot`](#setup-godot) — Godot from the caller's checksum-verified archives, the cache pin internalized
 
 ## `deploy`
 
@@ -649,5 +653,79 @@ action's next release. The helper's refusal is the one that cannot be stale.
 Input handling is driven over its whole matrix in `tests/publish-inputs.test.sh`,
 including the exact helper invocation the step builds — that argv is the
 contract the fleet kept by copy-paste until now.
+
+---
+
+## `setup-godot`
+
+Installs Godot from checksum-verified release archives, for the Godot game
+repositories. Two steps: a download cache, then the **caller's own** vendored
+install script — `tools/setup_godot.sh` — which downloads only what the
+product's reviewed `tools/godot-release.json` names and checks every archive
+against the recorded checksums, on a cold cache and a warm one alike.
+
+The step this replaces was a local composite copy-pasted per repository:
+castledrop, prizm and fieldsofrevik each carried a byte-identical
+`.github/actions/setup-godot` modulo one path segment. Three copies meant the
+`actions/cache` pin sat in three places at whatever SHA each copy was born
+with, none of them watched, and every fix to the step was a pull request per
+repo. `setup-godot` internalizes the cache pin the way [`publish`](#publish)
+internalized the registry login: one ref, bumped here once, covered by this
+repository's Dependabot, inherited by every product the moment it bumps its
+`uses:`.
+
+**The script is the caller's own file.** This action ships no copy — that
+would be the same drift in a different directory. The script and the release
+manifest are the product's reviewed pin, and the script also runs outside CI
+(the product's `.mise.toml` postinstall), so it stays versioned with the
+product. Two requirements stay the caller's:
+
+- `actions/checkout` before this step (the script is a checked-out file)
+- `tools/setup_godot.sh` and `tools/godot-release.json` at their conventional
+  paths — the cache key hashes exactly them
+
+The cache path is deliberately neutral: `${{ runner.temp }}/godot-downloads`,
+where each local copy had carried its own repository's name. Caches are
+already scoped to the calling repository, so the shared path cannot
+cross-contaminate — and the step sets `GODOT_ARCHIVE_DIR` to the same
+directory, the override every product's script reads, falling back to its own
+per-repository path when run outside this action. One script serves CI here
+and the local postinstall unchanged.
+
+The key hashes the caller's script and manifest: `hashFiles()` in a composite
+action evaluates against the **caller's** workspace — expressions resolve in
+the calling workflow's context, where `GITHUB_WORKSPACE` is the caller's
+checkout (per GitHub's [expression reference](https://docs.github.com/actions/reference/evaluate-expressions-in-workflows-and-actions),
+"the `path` is relative to the `GITHUB_WORKSPACE` directory and can only
+include files inside of the `GITHUB_WORKSPACE` directory"). A reviewed Godot
+bump is therefore its own cache generation; nothing here has to know the
+version.
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `install-templates` | no | `'false'` | Install the export templates as well as the editor binary. Threaded to the script as `INSTALL_TEMPLATES`. |
+
+**Before** — each game repository's own copy, drifting independently:
+
+```yaml
+- uses: ./.github/actions/setup-godot
+  with:
+    install-templates: 'true'
+```
+
+**After** — the checkout stays (the script is a checked-out file); the cache
+and its pin move here:
+
+```yaml
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+- uses: nicodes/komizo-actions/setup-godot@v0.0.12
+  with:
+    install-templates: 'true'
+```
+
+Pin by the tag's peeled commit SHA for the stronger identity, as with every
+action here — see [Pinning](#pinning). The exact shape of the cache step, the
+env threading and the caller-script invocation is pinned by
+`tests/setup-godot-inputs.test.sh`.
 
 ---

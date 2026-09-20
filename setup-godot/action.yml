@@ -1,0 +1,76 @@
+name: Setup Godot
+description: >
+  Install Godot from checksum-verified release archives — the caller's own
+  vendored script doing the verifying and installing, the download cache and
+  its actions/cache pin held here, once, for the fleet.
+
+  The step this replaces was a local composite copy-pasted into every game
+  repository: castledrop, prizm and fieldsofrevik each carried a
+  byte-identical .github/actions/setup-godot modulo one path segment. A copy
+  cannot break because another repository changed — that was the argument for
+  three copies — but each copy also pinned actions/cache at whatever SHA it
+  was born with, none of them watched, and every fix to the step was a pull
+  request per repo. Moving the step here internalizes the cache pin the same
+  way publish/ internalized the registry login: one ref, bumped once for the
+  whole fleet, covered by this repository's Dependabot, inherited by every
+  product the moment it bumps its `uses:`.
+
+  The install script is the CALLER'S vendored copy, never one shipped here.
+  tools/setup_godot.sh is the product's own gate: it downloads only what
+  tools/godot-release.json — the product's reviewed pin — names, and checks
+  every archive against the recorded checksums, on a cold cache and a warm
+  one alike. It is versioned with the product and also runs outside CI (the
+  product's .mise.toml postinstall), so vendoring a second copy inside this
+  action would be drift of a different shape. Two requirements therefore stay
+  the caller's: actions/checkout before this step, and both files at their
+  conventional paths — the cache key hashes exactly them.
+
+  The cache path is deliberately neutral — ${{ runner.temp
+  }}/godot-downloads, with no repository name in it, where each local copy
+  had carried its own. GitHub caches are already scoped to the calling
+  repository, so a shared path cannot cross-contaminate, and every product's
+  script reads the GODOT_ARCHIVE_DIR override this step sets, landing the
+  archives exactly where the cache restores them. hashFiles() in the key
+  evaluates against the CALLER'S workspace: expressions in a composite action
+  resolve in the calling workflow's context, where GITHUB_WORKSPACE is the
+  caller's checkout (GitHub's "Evaluate expressions in workflows and actions"
+  reference: hashFiles paths are relative to GITHUB_WORKSPACE and can only
+  name files inside it). So the key tracks the product's script and manifest
+  revisions, and a reviewed Godot bump is its own cache generation.
+
+inputs:
+  install-templates:
+    description: >
+      Install the export templates as well as the editor binary, 'true' or
+      'false'. Threaded to the caller's script as the INSTALL_TEMPLATES
+      environment variable rather than interpolated into the shell source —
+      the same reason connect/ threads its inputs: a value arriving as data
+      can never become source.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # The internalized pin. Every product used to carry this step at whatever
+    # SHA its copy was born with; here it is one ref, named for its version,
+    # covered by this repository's Dependabot. The path is neutral because
+    # caches are repo-scoped; the key hashes the caller's script and release
+    # manifest, so the cache invalidates exactly when the product's reviewed
+    # Godot pin changes.
+    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ runner.temp }}/godot-downloads
+        key: godot-verified-${{ runner.os }}-${{ hashFiles('tools/setup_godot.sh', 'tools/godot-release.json') }}
+
+    # The caller's own script — this action vendors none. GODOT_ARCHIVE_DIR
+    # points the script at the cache directory above: every product script
+    # reads the override and falls back to its own per-repository path when
+    # run outside this action, so one file serves CI here and the local mise
+    # postinstall unchanged.
+    - name: Verify archives and install
+      shell: bash
+      env:
+        INSTALL_TEMPLATES: ${{ inputs.install-templates }}
+        GODOT_ARCHIVE_DIR: ${{ runner.temp }}/godot-downloads
+      run: bash tools/setup_godot.sh

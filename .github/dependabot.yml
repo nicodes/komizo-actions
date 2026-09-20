@@ -39,3 +39,19 @@ updates:
         update-types:
           - minor
           - patch
+  # setup-godot/action.yml pins third-party actions/cache by SHA, for the same
+  # reason /publish is named explicitly: the github-actions manager does not
+  # descend into subdirectory action metadata from `directory: /`, and the
+  # cache pin is the skew this repository internalized when it took the step
+  # over from the game repositories' local copies.
+  - package-ecosystem: github-actions
+    directory: /setup-godot
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

@@ -235,6 +235,12 @@ class ReleaseTests(unittest.TestCase):
             "- uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0\n"
             "- uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1\n"
         )
+        # setup-godot/ is the same shape: it wraps third-party actions/cache
+        # and the caller's vendored install script, and composes no siblings.
+        Path("setup-godot").mkdir()
+        Path("setup-godot/action.yml").write_text(
+            "- uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4\n"
+        )
         r.git("add", ".")
         r.git("commit", "-m", "add publish action")
         source = r.git("rev-parse", "HEAD")
@@ -534,6 +540,10 @@ class WorkflowContracts(unittest.TestCase):
         )
         self.assertEqual(set(refs), r.SUBACTIONS)
         self.assertNotIn(f"{r.REPO}/", (root / "publish/action.yml").read_text())
+        # setup-godot is the same kind of top-level action: it composes only
+        # third-party actions/cache and the caller's vendored script, so it
+        # must compose no siblings either.
+        self.assertNotIn(f"{r.REPO}/", (root / "setup-godot/action.yml").read_text())
 
     def test_manual_stages_permissions_and_exact_sha_test_order(self):
         import yaml
