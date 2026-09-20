@@ -25,10 +25,10 @@ description: >
   the caller's: actions/checkout before this step, and both files at their
   conventional paths — the cache key hashes exactly them.
 
-  The cache path is deliberately neutral — ${{ runner.temp
-  }}/godot-downloads, with no repository name in it, where each local copy
-  had carried its own. GitHub caches are already scoped to the calling
-  repository, so a shared path cannot cross-contaminate, and every product's
+  The cache path is deliberately neutral — runner.temp/godot-downloads, with
+  no repository name in it, where each local copy had carried its own. GitHub
+  caches are already scoped to the calling repository, so a shared path
+  cannot cross-contaminate, and every product's
   script reads the GODOT_ARCHIVE_DIR override this step sets, landing the
   archives exactly where the cache restores them. hashFiles() in the key
   evaluates against the CALLER'S workspace: expressions in a composite action
@@ -55,13 +55,17 @@ runs:
     # The internalized pin. Every product used to carry this step at whatever
     # SHA its copy was born with; here it is one ref, named for its version,
     # covered by this repository's Dependabot. The path is neutral because
-    # caches are repo-scoped; the key hashes the caller's script and release
-    # manifest, so the cache invalidates exactly when the product's reviewed
-    # Godot pin changes.
+    # caches are repo-scoped. The key hashes the caller's script and release
+    # manifest, so it invalidates exactly when the product's reviewed Godot
+    # pin changes -- and the -v2 generation suffix is because the neutral
+    # path changed the key space when this action took the step over: an
+    # exact-key miss forces one clean re-download (still checksum-verified)
+    # rather than restoring an entry saved under a product's old local
+    # composite, whose key also hashed the same two caller files.
     - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${{ runner.temp }}/godot-downloads
-        key: godot-verified-${{ runner.os }}-${{ hashFiles('tools/setup_godot.sh', 'tools/godot-release.json') }}
+        key: godot-verified-v2-${{ runner.os }}-${{ hashFiles('tools/setup_godot.sh', 'tools/godot-release.json') }}
 
     # The caller's own script — this action vendors none. GODOT_ARCHIVE_DIR
     # points the script at the cache directory above: every product script
