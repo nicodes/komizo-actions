@@ -105,6 +105,12 @@ runs:
     - name: publish input handling
       shell: bash
       run: bash tests/publish-inputs.test.sh
+    # setup-godot ships no scripts of its own, so its contract is the exact
+    # shape of the action.yml: the cache path/key, the env threading, and the
+    # caller-script invocation.
+    - name: setup-godot contract
+      shell: bash
+      run: bash tests/setup-godot-inputs.test.sh
 
     - name: komizo.yml parsing
       shell: bash
