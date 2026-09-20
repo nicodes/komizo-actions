@@ -64,8 +64,12 @@ pins "the cache path is the neutral runner.temp directory" \
 # The key hashes the caller's script and the caller's reviewed release
 # manifest -- hashFiles evaluates against the caller's workspace in a
 # composite action, so a product's Godot bump is its own cache generation.
-pins "the cache key hashes the caller's script and manifest" \
-	"key: godot-verified-\${{ runner.os }}-\${{ hashFiles('tools/setup_godot.sh', 'tools/godot-release.json') }}"
+# The -v2 generation suffix is because the neutral path changed the key
+# space this action took the step over: an exact-key miss forces one clean
+# re-download (still checksum-verified) rather than restoring an entry saved
+# under a product's old local composite, which hashed the same caller files.
+pins "the cache key carries the v2 generation and the caller's hashes" \
+	"key: godot-verified-v2-\${{ runner.os }}-\${{ hashFiles('tools/setup_godot.sh', 'tools/godot-release.json') }}"
 
 echo "== the install step =="
 
@@ -114,6 +118,20 @@ fi
 # composing only third-party actions/cache -- so it stays out of
 # scripts/release.py's SUBACTIONS and no release rewrites anything in it.
 refuses "no komizo-actions sibling is composed" "nicodes/komizo-actions/"
+
+# Metadata is expression-free. GitHub template-validates everything above
+# `runs:` at action-load time, where contexts such as runner do not exist:
+# a literal ${{ }} in a description makes the action UNLOADABLE by any
+# caller ("Unrecognized named-value: 'runner'"), which is what v0.0.12
+# shipped before this check existed. Step-level expressions are evaluated
+# per caller run and are fine -- this covers the metadata alone.
+metadata_exprs="$(awk '/^runs:/{exit} /\$\{\{/ {print FNR": "$0}' setup-godot/action.yml)"
+if [ -z "$metadata_exprs" ]; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  metadata contains ${{ }} expressions GitHub refuses to load:\n%s\n' "$metadata_exprs"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
