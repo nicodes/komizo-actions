@@ -183,6 +183,55 @@ run $R 0 "a whitespace-only names list is not a list" \
 	HOST=box.example.com SECRET_NAMES=$'   \n  \n'
 outputs_contain "has-secrets=false"
 
+echo "== activate/action.yml: the registry-user guard =="
+
+# Deploy composes activate, whose Deploy step carries the second copy of the
+# registry-user charset inline -- a composite action has no standalone script
+# to drive, so the pattern is lifted out of the shipped YAML and run over the
+# matrix here. Bot logins must pass: a post-merge dispatch runs as
+# github-actions[bot], and repos pass registry-user: ${{ github.actor }}.
+# Injection shapes must not.
+guard="$(awk '/case "\$REGISTRY_USER" in/{getline; sub(/[[:space:]]*\)$/, ""); gsub(/^[[:space:]]+/, ""); print; exit}' activate/action.yml)"
+
+activate_admits() { # <value> -- 0 when the inline guard would NOT reject it
+	# shellcheck disable=SC2254 # a glob is exactly what is wanted here
+	case "$1" in
+		$guard) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+guard_row() { # <value> <want: 0 admitted | 1 refused> <label>
+	local got
+	if activate_admits "$1"; then got=0; else got=1; fi
+	if [ "$got" -eq "$2" ]; then
+		pass=$((pass + 1))
+	else
+		fail=$((fail + 1))
+		printf 'FAIL  %s\n      expected guard rc=%s, got rc=%s for %s\n' "$3" "$2" "$got" "$1"
+	fi
+}
+
+guard_row 'github-actions[bot]' 0 "github-actions[bot] passes the activate guard"
+guard_row 'dependabot[bot]' 0 "dependabot[bot] passes the activate guard"
+guard_row 'nicodes' 0 "a plain login still passes the activate guard"
+guard_row 'nico des' 1 "a space is still refused by the activate guard"
+# shellcheck disable=SC2016 # the backticks are a LITERAL test input
+guard_row 'nico`des`' 1 "a backtick is still refused by the activate guard"
+# shellcheck disable=SC2016 # the $( ) is a LITERAL test input
+guard_row '$(id)' 1 "a command substitution is still refused by the activate guard"
+guard_row 'nicodes;oops' 1 "a semicolon is still refused by the activate guard"
+
+# The two copies of this guard (deploy composes activate; publish has its own
+# in publish/validate.sh) must stay the same charset, or deploy@ and publish@
+# disagree on bot logins.
+if grep -qF "$guard" publish/validate.sh; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  publish/validate.sh registry-user charset drifted from activate/action.yml\n'
+fi
+
 echo "== restored deployment authority =="
 
 if grep -q 'rollout-' deploy/action.yml || grep -q 'rollout-model' deploy/action.yml; then
