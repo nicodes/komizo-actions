@@ -136,9 +136,15 @@ runs:
               echo "::error::registry contains characters that are not valid in a registry host: '$REGISTRY'."
               exit 1 ;;
           esac
+          # Brackets are admitted for bot logins: a post-merge dispatch runs
+          # as github-actions[bot], and callers pass registry-user straight
+          # from github.actor. Bot logins are valid GitHub usernames, and the
+          # username is display/routing for a ghcr login with GITHUB_TOKEN --
+          # the token is what authorizes. Brackets cannot close the single
+          # quoting below, so the injection guard is unchanged.
           case "$REGISTRY_USER" in
-            *[!A-Za-z0-9._@-]*)
-              echo "::error::registry-user must be letters, digits, dot, underscore, at-sign or hyphen; got '$REGISTRY_USER'."
+            *[!]A-Za-z0-9._@[-]*)
+              echo "::error::registry-user must be letters, digits, dot, underscore, at-sign, brackets or hyphen; got '$REGISTRY_USER'."
               exit 1 ;;
           esac
           creds=" '$REGISTRY' '$REGISTRY_USER'"
