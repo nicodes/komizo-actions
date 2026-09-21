@@ -91,9 +91,15 @@ if [ -z "${REGISTRY_USER:-}" ]; then
 	echo "::error::registry-user is empty. The ghcr.io login needs a username; pass ${D}{{ github.repository_owner }}."
 	exit 1
 fi
+# Brackets are admitted for bot logins: a post-merge dispatch runs as
+# github-actions[bot], and callers pass registry-user straight from
+# github.actor. Bot logins are valid GitHub usernames, and the username is
+# display/routing for a ghcr login with GITHUB_TOKEN -- the token is what
+# authorizes. Brackets cannot close a single quote, so the injection guard is
+# unchanged. Keep in step with the sibling guard in activate/action.yml.
 case "$REGISTRY_USER" in
-	*[!A-Za-z0-9._@-]*)
-		echo "::error::registry-user must be letters, digits, dot, underscore, at-sign or hyphen; got '$REGISTRY_USER'."
+	*[!]A-Za-z0-9._@[-]*)
+		echo "::error::registry-user must be letters, digits, dot, underscore, at-sign, brackets or hyphen; got '$REGISTRY_USER'."
 		exit 1 ;;
 esac
 # Read WITHOUT being echoed, in every branch: GitHub substitutes an empty

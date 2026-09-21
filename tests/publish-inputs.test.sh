@@ -135,6 +135,22 @@ run $V 1 "an empty registry-user is refused" \
 	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER=
 run $V 1 "a malformed registry-user is refused" \
 	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='nicodes;oops'
+# Bot logins are valid GitHub usernames: a post-merge dispatch runs as
+# github-actions[bot], so a caller passing registry-user: ${{ github.actor }}
+# hands the guard brackets. They must be admitted.
+run $V 0 "a github-actions[bot] registry-user is accepted" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='github-actions[bot]'
+run $V 0 "a dependabot[bot] registry-user is accepted" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='dependabot[bot]'
+# Brackets are the only widening: injection shapes stay refused.
+run $V 1 "a registry-user with a space is refused" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='nico des'
+# shellcheck disable=SC2016 # the backticks are a LITERAL test input
+run $V 1 "a registry-user with a backtick is refused" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='nico`des`'
+# shellcheck disable=SC2016 # the $( ) is a LITERAL test input
+run $V 1 "a registry-user with a command substitution is refused" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='$(id)'
 run $V 1 "an empty registry-token is refused" \
 	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_TOKEN=
 
