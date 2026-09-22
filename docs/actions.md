@@ -578,9 +578,9 @@ Run it once when the pull request's images are published, and again with
 
 | Output | Description |
 | --- | --- |
-| `preview-url` | The preview's public URL as the host reported it, e.g. `https://pr-42.preview.example.com`. Set by `up`. |
-| `api-url` | The preview's API URL as the host reported it. Set by `up`. |
-| `gate-status` | The loopback-published gate's status as the host reported it. Set by `up`; reported by `down` when the primitive prints it. |
+| `preview-url` | The preview's public URL, `https://pr-<N>.<domain>` — the PR number cross-checked against the host's record, the domain read from the host's own preview knob (`/etc/komizo/preview`, or the box's compiled default when the knob is absent). Set by `up`. |
+| `api-url` | The preview's API URL, `https://pr-<N>-api.<domain>`, derived the same way. Set by `up`. |
+| `gate-status` | The composite's own verification of the preview's state: `up` when the host's record parsed and named this preview, `down` when the teardown was verified against the host's state. Set by both. |
 
 **The env threading is the deploy path's, unchanged.** The connection falls
 back to `KOMIZO_SERVER_URL` / `KOMIZO_DEPLOY_KEY` / `KOMIZO_KNOWN_HOSTS`
@@ -597,23 +597,51 @@ against `up|down` — and then single-quoted into the argv, so a quote or a
 dollar sign in any value stops the run rather than reaching a shell on the
 host. The host's output is fenced while it streams (it is untrusted text and
 could otherwise forge workflow commands in this job), and the outputs are
-*parsed* out of it: `preview-url=`, `api-url=` and `gate-status=` lines, each
-value revalidated — an https URL, a plain token — before it is written to the
-step output. A missing, duplicated, or malformed contract line fails the step;
-nothing is guessed from the inputs instead.
+*parsed* out of it as the box binary's JSON contract — never trusted
+unparsed, and output that does not follow the contract fails the step rather
+than being passed on half-parsed.
 
-The primitive invocation shipped is the stated Phase-2 interface:
+The primitive's invocation shape and output contract are the box binary's
+(komizo `main`, `cmd/komizo-box/preview.go` over `box/preview.go`):
 
 ```
-komizo-box preview up   <app> <pr-number> <image...>
-komizo-box preview down <app> <pr-number>
+komizo-box preview up --app <app> --pr <N> <image...>
+komizo-box preview down --app <app> --pr <N>
+komizo-box preview ls
 ```
 
-The komizo repo's `main` does not yet carry the preview primitive's docs, so
-this shape is the interface as specified rather than as documented there; if
-the primitive's argv or its output keys change, this action's
-`preview/run.sh` and `tests/preview.test.sh` are the two places that must move
-together.
+`up` prints the preview's `PreviewRecord` as **one JSON object** — fields
+`v`, `app`, `pr`, `project`, `db_name`, `gate_port`, `images`, `created_at`,
+`last_used`, `route_file` (`db_password` is `json:"-"`: a credential is never
+marshalled, and a record carrying one fails the step). The action parses it
+with `jq`, requires exactly one JSON object in the capture, cross-checks that
+it names the app and PR this run asked for (`project` must be
+`<app>-pr-<N>`), and revalidates every value it consumes before anything is
+written to the step output. A `key=value` line, prose, two objects, a record
+for another preview, or a field of the wrong shape all fail closed.
+
+The record carries no URL: the preview's hostname is `pr-<N>.<domain>` (and
+`pr-<N>-api.<domain>`) where the domain is the host's own knob,
+`/etc/komizo/preview` — key=value, `DOMAIN` the key, compiled default
+`preview.gdam.dev` (`box/preview.go` `PreviewKnobPath` /
+`PreviewDomainDefault` / `PreviewHost` / `previewRoute`). The action reads
+the knob over the same fenced SSH path, as the same account the box's own
+`ReadPreviewKnob` runs as — so the read sees exactly what the box saw, and an
+absent or unreadable knob means the compiled default, exactly as the box's
+own fallback means it. The value is validated as a plain domain before it
+becomes a URL, and the derived URLs are revalidated as https URLs.
+
+`down` prints an informational sentence (`preview <project> is down: project,
+database <db> and route removed.`). It is logged, **never parsed** — teardown
+is verified against the host's own state instead: `preview ls` prints the
+surviving records as a JSON array, and the preview this run named must no
+longer be in it. A missing, malformed, or still-recording state fails the
+step. `gate-status` is the composite's own verdict on that verification:
+`up` or `down`.
+
+If the primitive's argv or its JSON fields change, this action's
+`preview/run.sh` and `tests/preview.test.sh` are the two places that must
+move together.
 
 ## `health-check`
 
