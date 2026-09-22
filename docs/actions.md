@@ -602,12 +602,16 @@ unparsed, and output that does not follow the contract fails the step rather
 than being passed on half-parsed.
 
 The primitive's invocation shape and output contract are the box binary's
-(komizo `main`, `cmd/komizo-box/preview.go` over `box/preview.go`):
+(komizo `main`, `cmd/komizo-box/preview.go` over `box/preview.go`). It runs
+privileged — the state root `/var/lib/komizo` is `0750 root:root`, the floors
+file is root-readable only, and docker is root's — so the invocation goes
+through doas with the full path the app-locked doas rule matches, and `-n`
+so a rule that would prompt fails closed instead of hanging the job:
 
 ```
-komizo-box preview up --app <app> --pr <N> <image...>
-komizo-box preview down --app <app> --pr <N>
-komizo-box preview ls
+doas -n /usr/local/bin/komizo-box preview up --app <app> --pr <N> <image...>
+doas -n /usr/local/bin/komizo-box preview down --app <app> --pr <N>
+doas -n /usr/local/bin/komizo-box preview ls
 ```
 
 `up` prints the preview's `PreviewRecord` as **one JSON object** — fields
@@ -625,11 +629,15 @@ The record carries no URL: the preview's hostname is `pr-<N>.<domain>` (and
 `/etc/komizo/preview` — key=value, `DOMAIN` the key, compiled default
 `preview.gdam.dev` (`box/preview.go` `PreviewKnobPath` /
 `PreviewDomainDefault` / `PreviewHost` / `previewRoute`). The action reads
-the knob over the same fenced SSH path, as the same account the box's own
-`ReadPreviewKnob` runs as — so the read sees exactly what the box saw, and an
-absent or unreadable knob means the compiled default, exactly as the box's
-own fallback means it. The value is validated as a plain domain before it
-becomes a URL, and the derived URLs are revalidated as https URLs.
+the knob over the same fenced SSH path, and an absent or unreadable knob is
+read as the compiled default. The value is validated as a plain domain
+before it becomes a URL, and the derived URLs are revalidated as https URLs.
+One divergence: the primitive runs as root through doas, so its own knob
+read sees a file this unprivileged read cannot (`/etc/komizo` is
+`0750 root:komizo_monitor`); an operator who sets `DOMAIN` in a root-only
+knob routes a different domain than this action reports. Hosts with no knob
+file — the stock layout — are unaffected, and the clean fix is the box
+reporting its effective domain in the `up` record.
 
 `down` prints an informational sentence (`preview <project> is down: project,
 database <db> and route removed.`). It is logged, **never parsed** — teardown
