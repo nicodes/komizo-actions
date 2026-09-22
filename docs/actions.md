@@ -103,6 +103,16 @@ script keeps the verifying and installing.
 The everyday deploy. Publishes this commit's config, sets secrets, deploys the
 tag — in the one order that is correct.
 
+It ends by pruning the host: superseded tags of this app's own image family —
+`ghcr.io/<owner>/<project>-*`, derived from `config-image` — are removed one
+by one, except the live revision, the previous revision (the rollback target),
+and every image any container, running or stopped, still uses. Nothing else on
+the host is in scope: no other products' images, no dangling images whose
+lineage cannot be proved, no volumes, and never a blanket `docker image prune
+-a`. The prune runs after the health check, and warns rather than failing the
+deploy if it errors. Deploys without a `config-image`, or whose config image
+does not follow the `-config` naming, skip the prune with a notice.
+
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
 | `version` | yes | — | Tag to deploy, normally the commit SHA. |
