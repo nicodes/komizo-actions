@@ -25,13 +25,22 @@ description: >
   action's outputs.
 
   The primitive is invoked as
-  `komizo-box preview up <app> <pr-number> <image...>` and
-  `komizo-box preview down <app> <pr-number>`, with every argument
+  `komizo-box preview up --app <app> --pr <pr-number> <image...>` and
+  `komizo-box preview down --app <app> --pr <pr-number>`, with every argument
   charset-validated and single-quoted — nothing is interpolated unquoted into
   the remote command. Its stdout is fenced (it is untrusted text from a host)
-  and the three outputs are parsed out of `key=value` lines, each value
-  validated before it is written to the step output; output that does not
-  follow the contract fails the step rather than being passed on half-parsed.
+  and parsed as the box binary's JSON contract: `up` prints the preview's
+  PreviewRecord as one JSON object (parsed with jq, cross-checked against the
+  requested app and PR, every consumed value revalidated), and `down` prints
+  an informational sentence that is logged, never parsed — teardown is
+  verified against `komizo-box preview ls` (a JSON array) instead, the
+  preview required to be gone from the host's state. The record carries no
+  URL: preview-url and api-url are derived from the verified PR number and
+  the host's own preview domain, read from its knob `/etc/komizo/preview`
+  over the same fenced path — an absent or unreadable knob is the box's
+  compiled default, exactly as the box itself falls back. Output that does
+  not follow the contract fails the step rather than being passed on
+  half-parsed.
 
 inputs:
   # --- which preview --------------------------------------------------------
@@ -113,17 +122,21 @@ inputs:
 outputs:
   preview-url:
     description: >
-      The preview's public URL, as the host reported it — e.g.
-      https://pr-42.preview.example.com. Set by `up`.
+      The preview's public URL, https://pr-<N>.<domain> — the PR number from
+      the host's verified record, the domain from the host's own preview
+      knob (/etc/komizo/preview, or the box's compiled default when the knob
+      is absent). Set by `up`.
     value: ${{ steps.preview.outputs.preview-url }}
   api-url:
     description: >
-      The preview's API URL, as the host reported it. Set by `up`.
+      The preview's API URL, https://pr-<N>-api.<domain> — derived the same
+      way as preview-url. Set by `up`.
     value: ${{ steps.preview.outputs.api-url }}
   gate-status:
     description: >
-      The loopback-published gate's status, as the host reported it. Set by
-      `up`; `down` reports it when the primitive does.
+      The composite's own verification of the preview's state: `up` when the
+      host's record parsed and named this preview, `down` when the teardown
+      was verified against the host's state. Set by both actions.
     value: ${{ steps.preview.outputs.gate-status }}
 
 runs:
