@@ -1,7 +1,8 @@
 name: Deploy
 description: >
   The whole deploy, in one step: connect, publish this commit's config, set
-  secrets, make the tag live, and check the result is serving.
+  secrets, make the tag live, check the result is serving, and prune this
+  app's superseded images on the host.
 
   Everything except `version` and `app` is optional. Supply what your app needs
   and the rest is skipped — no config, no secrets, no health check.
@@ -29,6 +30,12 @@ description: >
   This wraps connect, publish-config, set-secrets, activate and health-check.
   Those remain the primitives; reach for them when you need your own steps
   interleaved, and use this for everything else.
+
+  The prune is the last step and the most conservative thing that still
+  reclaims the disk: only this app's own image family (derived from
+  config-image), never the live or the previous revision -- the rollback
+  target -- and never an image a container still uses. Its failure warns and
+  never fails the deploy, which has already succeeded by then.
 
   It exists because the order is not obvious and two of the ways to get it
   wrong fail SILENTLY:
@@ -337,3 +344,18 @@ runs:
         attempts: ${{ inputs.health-attempts }}
         delay: ${{ inputs.health-delay }}
         timeout: ${{ inputs.health-timeout }}
+
+    # 6. Prune this app's superseded images on the host, keeping the live and
+    #    previous revisions (the rollback target) and every image a container
+    #    still uses. Runs only after the deploy has succeeded -- a skipped
+    #    health check does not skip it, because the precondition is the
+    #    deploy succeeding, not the URLs -- and its own failure warns rather
+    #    than failing the deploy. See prune.sh / prune-remote.sh, and
+    #    tests/deploy-prune.test.sh for the safety contract.
+    - name: Prune superseded images
+      shell: bash
+      env:
+        CONFIG_IMAGE: ${{ inputs.config-image }}
+        CURRENT: ${{ inputs.version }}
+        PREVIOUS: ${{ steps.version.outputs.previous-version }}
+      run: bash "$GITHUB_ACTION_PATH/prune.sh"
