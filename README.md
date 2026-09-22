@@ -111,6 +111,7 @@ Most workflows need only `deploy`, which composes the rest in the right order.
 | [`activate`](./activate) | Runs the deploy on the host — the step that changes what is running |
 | [`health-check`](./health-check) | Polls a URL until it answers |
 | [`run-task`](./run-task) | Invokes one app-defined, host-allowlisted production task after `connect` |
+| [`preview`](./preview) | Brings a pull request's preview up, or tears it down, via the host's `komizo-box preview` primitive |
 | [`publish`](./publish) | Publishes the Build gate's recorded images to ghcr.io, registry login internalized |
 | [`setup-godot`](./setup-godot) | Installs Godot from the caller's checksum-verified archives, cache pin internalized |
 

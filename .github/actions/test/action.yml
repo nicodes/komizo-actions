@@ -41,11 +41,12 @@ runs:
         shellcheck --version | head -2
 
     # Every standalone script: the release tool, the two extracted from
-    # deploy/action.yml, the two from publish/, and the tests. Globbed rather
-    # than listed so a script added later cannot quietly escape the check.
+    # deploy/action.yml, the two from publish/, preview's resolve and run
+    # halves, and the tests. Globbed rather than listed so a script added
+    # later cannot quietly escape the check.
     - name: Lint the standalone scripts
       shell: bash
-      run: shellcheck scripts/release.sh deploy/*.sh publish/*.sh tests/*.sh
+      run: shellcheck scripts/release.sh deploy/*.sh publish/*.sh preview/*.sh tests/*.sh
 
     # actionlint validates workflow files, not action-metadata (action.yml)
     # files, so the bash embedded in the composite actions is checked here
@@ -119,6 +120,14 @@ runs:
     - name: allowlisted task input handling
       shell: bash
       run: bash tests/run-task.test.sh
+    # The preview composite is a deploy path: it holds the deploy key (through
+    # connect) and invokes a privileged primitive on the host. Its runner half
+    # is pinned against fixture ssh -- charset validation, the exact quoted
+    # argv, the output fence, the parsed-not-trusted outputs, and fail-closed
+    # on untrusted values.
+    - name: preview safety contract
+      shell: bash
+      run: bash tests/preview.test.sh
     # The image self-prune deletes data on production hosts, so its safety
     # contract -- family prefix only, keep current + previous, never
     # container-referenced images, never a blanket prune, warn-don't-fail --

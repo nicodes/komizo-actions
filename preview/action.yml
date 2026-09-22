@@ -1,0 +1,170 @@
+name: Preview up/down
+description: >
+  Bring a pull request's preview up, or tear it down, on the deploy target:
+  connect, then ask the host's komizo-box preview primitive to do the work.
+
+  A preview is the host's to run, not the runner's. The primitive owns the
+  per-preview database, the loopback-published gate, the route write and
+  reload, the scoped TLS ask and the teardown; this action is the CI-facing
+  wrapper. It validates every value before it crosses the wire, threads the
+  same deploy-key SSH path deploy uses, and fences and parses what the host
+  says back rather than trusting it.
+
+  The connection is declared once, in the environment, exactly as for deploy:
+
+      env:
+        KOMIZO_SERVER_URL:  <the vars.KOMIZO_SERVER_URL expression>
+        KOMIZO_DEPLOY_KEY:  <the secrets.KOMIZO_DEPLOY_KEY expression>
+        KOMIZO_KNOWN_HOSTS: <the vars.KOMIZO_KNOWN_HOSTS expression>
+
+  A composite action cannot read `secrets` itself — GitHub exposes that
+  context to workflows only — so the deploy key has to arrive as an
+  environment variable either way; passing `key:` explicitly still works and
+  takes precedence. The key is read by the connect step and goes no further:
+  it is never forwarded into the preview invocation, its output, or this
+  action's outputs.
+
+  The primitive is invoked as
+  `komizo-box preview up <app> <pr-number> <image...>` and
+  `komizo-box preview down <app> <pr-number>`, with every argument
+  charset-validated and single-quoted — nothing is interpolated unquoted into
+  the remote command. Its stdout is fenced (it is untrusted text from a host)
+  and the three outputs are parsed out of `key=value` lines, each value
+  validated before it is written to the step output; output that does not
+  follow the contract fails the step rather than being passed on half-parsed.
+
+inputs:
+  # --- which preview --------------------------------------------------------
+  app:
+    description: >
+      Product slug the preview is for, e.g. gdam — the same slug the images
+      publish under. Lowercase letters, digits and hyphens, starting with a
+      letter. The host selects everything else from it: the preview's
+      database, its routes, its state directory.
+    required: true
+  pr-number:
+    description: >
+      Pull request number, a positive integer. Names the preview:
+      pr-<N>.<preview-domain>, pr-<N> in the host's state.
+    required: true
+  images:
+    description: >
+      Space-separated image refs for the preview, matching the products'
+      release naming: ghcr.io/<owner>/<project>-<component>:<sha>.
+
+      Required for both actions so the interface holds still; passed to the
+      primitive on up only. Down names the preview, and the host's own state
+      records which images ran under it.
+    required: true
+  action:
+    description: up to bring the preview up, down to tear it down.
+    required: true
+
+  # --- connection -----------------------------------------------------------
+  # Omit `host` if the connect action already ran in this job, e.g. because
+  # you needed `ssh deploy-target ...` for a step of your own first.
+  host:
+    description: >
+      Server hostname. Supplying it makes this action connect for you. Leave it
+      empty if the connect action has already run in this job.
+
+      Falls back to the KOMIZO_SERVER_URL environment variable, which is the name
+      komizo tells you to store the server's address under -- so moving an app
+      to another box is a repository variable rather than a commit.
+    required: false
+    default: ""
+  user:
+    description: >
+      Deploy account. Defaults to komizo-<app>, which is what `komizo` creates, so
+      you only need this if you overrode it. Only used when host is set.
+    required: false
+    default: ""
+  key:
+    description: >
+      Private half of the deploy key. Required when host is set, unless the
+      KOMIZO_DEPLOY_KEY environment variable carries it -- which is the name
+      komizo tells you to store it under, and the one this falls back to.
+
+      A composite action cannot read `secrets` itself; GitHub exposes that
+      context to workflows only. So the fallback is an env var the caller sets
+      once on the job rather than an input repeated on every step.
+    required: false
+    default: ""
+  known-hosts:
+    description: >
+      The server's host keys as known_hosts LINES -- what komizo copies when
+      you press `h` on an app's row. Required when host is set, unless
+      allow-unpinned-host is true.
+
+      Falls back to KOMIZO_KNOWN_HOSTS, for the same reason as `key` above.
+    required: false
+    default: ""
+  port:
+    description: SSH port.
+    required: false
+    default: "22"
+  allow-unpinned-host:
+    description: >
+      Discover the host key at run time instead of pinning it. This is
+      trust-on-first-use on EVERY run. Opt in only for throwaway hosts.
+    required: false
+    default: "false"
+
+outputs:
+  preview-url:
+    description: >
+      The preview's public URL, as the host reported it — e.g.
+      https://pr-42.preview.example.com. Set by `up`.
+    value: ${{ steps.preview.outputs.preview-url }}
+  api-url:
+    description: >
+      The preview's API URL, as the host reported it. Set by `up`.
+    value: ${{ steps.preview.outputs.api-url }}
+  gate-status:
+    description: >
+      The loopback-published gate's status, as the host reported it. Set by
+      `up`; `down` reports it when the primitive does.
+    value: ${{ steps.preview.outputs.gate-status }}
+
+runs:
+  using: composite
+  steps:
+    # Which box, resolved once and read from here on. A step output rather than
+    # a bare fallback because the connect step below is guarded by an `if:`,
+    # and an expression cannot see a value that a later shell would have
+    # defaulted -- the same seam deploy has, for the same reason.
+    #
+    # The KEY is deliberately not resolved here: a step output is stored with
+    # the job, and a private key belongs in an environment variable that goes
+    # no further than the step reading it. connect does that fallback itself.
+    - id: cfg
+      shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+      run: bash "$GITHUB_ACTION_PATH/resolve.sh"
+
+    # 1. Connect, unless an earlier step already did. This verifies the
+    #    connection, so a bad key fails before the host is asked to do
+    #    anything.
+    - if: steps.cfg.outputs.host != ''
+      uses: nicodes/komizo-actions/connect@f507b603b5b9701838b792bec8fb4005e83f5a96
+      with:
+        host: ${{ steps.cfg.outputs.host }}
+        user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', inputs.app) }}
+        key: ${{ inputs.key }}
+        known-hosts: ${{ inputs.known-hosts }}
+        port: ${{ inputs.port }}
+        allow-unpinned-host: ${{ inputs.allow-unpinned-host }}
+
+    # 2. Validate, invoke, parse. In a file rather than inline so a test can
+    #    drive it over the whole input matrix -- the validation and the output
+    #    parsing are the only logic in this action, and they decide whether the
+    #    ssh runs at all. See tests/preview.test.sh for the safety contract.
+    - id: preview
+      shell: bash
+      env:
+        APP: ${{ inputs.app }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        IMAGES: ${{ inputs.images }}
+        ACTION: ${{ inputs.action }}
+      run: bash "$GITHUB_ACTION_PATH/run.sh"
