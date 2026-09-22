@@ -151,7 +151,7 @@ echo "== the exact ssh argv =="
 run_case 0 "up passes app, pr-number and every image as flags, single-quoted" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=up \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
-expected="deploy-target doas -n /usr/local/bin/komizo-box preview up --app 'gdam' --pr '42' '$IMG_API' '$IMG_WEB'"
+expected="deploy-target doas -n /usr/local/bin/komizo-preview up --app 'gdam' --pr '42' '$IMG_API' '$IMG_WEB'"
 if grep -qxF "$expected" "$LAST_TMP/calls"; then
 	pass=$((pass + 1))
 else
@@ -169,22 +169,29 @@ fi
 run_case 0 "down names the preview as flags and passes no images" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=down \
 	STUB_REMOTE_OUTPUT="$DOWN_SENTENCE"
-expected="deploy-target doas -n /usr/local/bin/komizo-box preview down --app 'gdam' --pr '42'"
+expected="deploy-target doas -n /usr/local/bin/komizo-preview down --app 'gdam' --pr '42'"
 if grep -qxF "$expected" "$LAST_TMP/calls"; then
 	pass=$((pass + 1))
 else
 	fail=$((fail + 1))
 	printf 'FAIL  exact ssh argv for down\n      want: %s\n      got:  %s\n' "$expected" "$(cat "$LAST_TMP/calls")"
 fi
-grep -qxF "deploy-target doas -n /usr/local/bin/komizo-box preview ls" "$LAST_TMP/calls"
+grep -qxF "deploy-target doas -n /usr/local/bin/komizo-preview ls" "$LAST_TMP/calls"
 ok $? "down verifies the teardown against preview ls"
 
-# The privileged primitive goes through doas with the full path -- the
-# app-locked doas rule matches the exact command line -- while the knob read
-# stays the unprivileged deploy account's (EACCES is the compiled-default
-# fallback, per the box's own ReadPreviewKnob).
-grep -qF "doas -n /usr/local/bin/komizo-box" "$LAST_TMP/calls"
-ok $? "the primitive is invoked through doas with the full path"
+# The privileged primitive goes through doas to the root-owned wrapper --
+# the doas rule's args match exactly, so the box permits the preview entry
+# /usr/local/bin/komizo-preview (never the raw binary, which a rule could
+# not constrain to preview-only) -- while the knob read stays the
+# unprivileged deploy account's (EACCES is the compiled-default fallback).
+grep -qF "doas -n /usr/local/bin/komizo-preview" "$LAST_TMP/calls"
+ok $? "the primitive is invoked through doas to the preview wrapper"
+if grep -qF "komizo-box" "$LAST_TMP/calls"; then
+	fail=$((fail + 1))
+	printf 'FAIL  the raw komizo-box binary is invoked -- the doas rule denies it\n'
+else
+	pass=$((pass + 1))
+fi
 run_case 0 "the knob read stays unprivileged" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
@@ -235,7 +242,7 @@ no_ssh "newline pr-number reached ssh"
 run_case 0 "a registry with a port is accepted" \
 	APP=gdam PR_NUMBER=42 IMAGES="registry.internal:5000/you/gdam-api:abc" ACTION=up \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
-grep -qxF "deploy-target doas -n /usr/local/bin/komizo-box preview up --app 'gdam' --pr '42' 'registry.internal:5000/you/gdam-api:abc'" "$LAST_TMP/calls"
+grep -qxF "deploy-target doas -n /usr/local/bin/komizo-preview up --app 'gdam' --pr '42' 'registry.internal:5000/you/gdam-api:abc'" "$LAST_TMP/calls"
 ok $? "the ported registry ref rides along verbatim"
 
 echo "== the connection seam =="
