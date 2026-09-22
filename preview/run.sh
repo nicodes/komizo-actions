@@ -22,15 +22,18 @@
 # (komizo main, cmd/komizo-box/preview.go over box/preview.go). It runs
 # privileged -- the state root /var/lib/komizo is 0750 root:root, the floors
 # file is root-readable only, and docker is root's -- so the invocation goes
-# through doas with the FULL path (the app-locked doas rule matches the exact
-# command line), and -n so a rule that would prompt fails closed instead of
-# hanging the job:
+# through doas, and -n so a rule that would prompt fails closed instead of
+# hanging the job. The doas rule does not permit the raw binary: its args
+# match exactly, so a rule on komizo-box itself would permit EVERY mode as
+# root. The box therefore permits a root-owned WRAPPER, the preview entry,
+# which enforces the mode (up|down|ls|gc) and the app lock (--app must name
+# the doas caller's own app, via DOAS_USER):
 #
-#   doas -n /usr/local/bin/komizo-box preview up --app <app> --pr <N> <image...>
+#   doas -n /usr/local/bin/komizo-preview up --app <app> --pr <N> <image...>
 #       prints the preview's PreviewRecord as ONE JSON object
-#   doas -n /usr/local/bin/komizo-box preview down --app <app> --pr <N>
+#   doas -n /usr/local/bin/komizo-preview down --app <app> --pr <N>
 #       prints an informational sentence -- logged, never parsed
-#   doas -n /usr/local/bin/komizo-box preview ls
+#   doas -n /usr/local/bin/komizo-preview ls
 #       prints the surviving records as a JSON array
 #
 # The record carries no URL: the preview's hostname is pr-<N>.<domain> (and
@@ -155,12 +158,12 @@ if [ "$ACTION" = "up" ]; then
 		quoted="$quoted '$ref'"
 	done
 	# shellcheck disable=SC2029 # the expansion is deliberate, and every value is charset-guarded above
-	ssh deploy-target "doas -n /usr/local/bin/komizo-box preview up --app '$APP' --pr '$PR_NUMBER'$quoted" 2>&1 | tee "$out_file" || rc=$?
+	ssh deploy-target "doas -n /usr/local/bin/komizo-preview up --app '$APP' --pr '$PR_NUMBER'$quoted" 2>&1 | tee "$out_file" || rc=$?
 else
 	# Down names the preview; the host's own state records which images ran
 	# under it, so the refs validated above stay runner-side.
 	# shellcheck disable=SC2029 # the expansion is deliberate, and every value is charset-guarded above
-	ssh deploy-target "doas -n /usr/local/bin/komizo-box preview down --app '$APP' --pr '$PR_NUMBER'" 2>&1 | tee "$out_file" || rc=$?
+	ssh deploy-target "doas -n /usr/local/bin/komizo-preview down --app '$APP' --pr '$PR_NUMBER'" 2>&1 | tee "$out_file" || rc=$?
 fi
 echo "::$fence::"
 if [ "$rc" -ne 0 ]; then
@@ -286,10 +289,10 @@ else
 	rc=0
 	fence="komizo-preview-$(date +%s%N)-$RANDOM"
 	echo "::stop-commands::$fence"
-	ssh deploy-target "doas -n /usr/local/bin/komizo-box preview ls" 2>&1 | tee "$ls_file" || rc=$?
+	ssh deploy-target "doas -n /usr/local/bin/komizo-preview ls" 2>&1 | tee "$ls_file" || rc=$?
 	echo "::$fence::"
 	if [ "$rc" -ne 0 ]; then
-		echo "::error::the teardown could not be verified: komizo-box preview ls failed on the host (ssh exited $rc)."
+		echo "::error::the teardown could not be verified: komizo-preview ls failed on the host (ssh exited $rc)."
 		exit "$rc"
 	fi
 	mapfile -t arrays < <(jq -Rc 'fromjson? | arrays' "$ls_file")
