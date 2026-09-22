@@ -166,7 +166,7 @@ runs:
     #    connection, so a bad key fails before the host is asked to do
     #    anything.
     - if: steps.cfg.outputs.host != ''
-      uses: nicodes/komizo-actions/connect@ace4e47d4558f84e9de8a889f6cd833a83c21da0
+      uses: nicodes/komizo-actions/connect@55b427491a16235ab9d18716a18abf91e2c10b45
       with:
         host: ${{ steps.cfg.outputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', inputs.app) }}
