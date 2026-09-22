@@ -95,6 +95,7 @@ script keeps the verifying and installing.
 - [`deploy`](#deploy) — the whole sequence in one step
 - [The `deploy-target` seam](#the-deploy-target-seam) — running your own commands on the host
 - [`connect`](#connect) · [`publish-config`](#publish-config) · [`set-secrets`](#set-secrets) · [`activate`](#activate) · [`health-check`](#health-check) — the primitives, in execution order
+- [`preview`](#preview) — a pull request's preview, up and down, on the deploy target
 - [`publish`](#publish) — the release half: the Build gate's images, pushed with the registry login internalized
 - [`setup-godot`](#setup-godot) — Godot from the caller's checksum-verified archives, the cache pin internalized
 
@@ -532,6 +533,87 @@ non-sensitive allowlist selectors:
 The host wrapper remains authoritative and fixes the app directory, Compose
 service, executable, timeout, cleanup, and audit destination. Calling this
 action executes the task; merely installing or releasing it does not.
+
+## `preview`
+
+Brings a pull request's preview up on the deploy target, or tears it down —
+the CI-facing wrapper over the host's `komizo-box preview` primitive. The
+host owns everything the preview is: the per-preview database, the
+loopback-published gate, the route write and reload, the scoped TLS ask, and
+the zero-orphan teardown. This action's job is narrower: validate every value
+before it crosses the wire, connect over the same deploy-key SSH path
+[`deploy`](#deploy) uses, and fence and parse what the host says back.
+
+Run it once when the pull request's images are published, and again with
+`action: down` when the pull request closes:
+
+```yaml
+- id: preview
+  uses: nicodes/komizo-actions/preview@v0.0.16
+  env:
+    KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
+    KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
+    KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
+  with:
+    app: myapp
+    pr-number: ${{ github.event.pull_request.number }}
+    images: ghcr.io/you/myapp-api:${{ github.sha }} ghcr.io/you/myapp-web:${{ github.sha }}
+    action: up
+```
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `app` | yes | — | Product slug, e.g. `gdam` — the same slug the images publish under. Lowercase letters, digits, hyphens; a leading letter. |
+| `pr-number` | yes | — | Pull request number, a positive integer. Names the preview: `pr-<N>`. |
+| `images` | yes | — | Space-separated image refs matching the products' release naming, `ghcr.io/<owner>/<project>-<component>:<sha>`. Passed to the primitive on `up`; on `down` they are validated but stay runner-side — the host's own state records what ran under the preview. |
+| `action` | yes | — | `up` or `down`. |
+| `host` | no | `$KOMIZO_SERVER_URL` | Server hostname. Supplying it makes this action connect for you; leave empty if `connect` already ran in the job. |
+| `user` | no | `komizo-<app>` | Deploy account. Only needed if you overrode it. |
+| `key` | no | `$KOMIZO_DEPLOY_KEY` | Private half of the deploy key. Pass a secret, or set the env var and leave this out. |
+| `known-hosts` | no | `$KOMIZO_KNOWN_HOSTS` | Pinned host keys, as known_hosts lines. |
+| `port` | no | `22` | SSH port. |
+| `allow-unpinned-host` | no | `false` | Discover the host key instead of pinning it. Throwaway hosts only. |
+
+**Outputs**
+
+| Output | Description |
+| --- | --- |
+| `preview-url` | The preview's public URL as the host reported it, e.g. `https://pr-42.preview.example.com`. Set by `up`. |
+| `api-url` | The preview's API URL as the host reported it. Set by `up`. |
+| `gate-status` | The loopback-published gate's status as the host reported it. Set by `up`; reported by `down` when the primitive prints it. |
+
+**The env threading is the deploy path's, unchanged.** The connection falls
+back to `KOMIZO_SERVER_URL` / `KOMIZO_DEPLOY_KEY` / `KOMIZO_KNOWN_HOSTS`
+because a composite action cannot read `secrets` itself, so the key arrives as
+an environment variable either way — see [`connect`](#connect). The key is
+read by the connect step and goes no further: never into the remote command,
+the log, or an output.
+
+**The remote invocation is fixed text plus charset-validated arguments.**
+Every input is validated on the runner before the ssh is assembled — the app
+as a slug, the number as a positive integer, each image ref against the
+`<registry>/<owner>/<project>-<component>:<tag>` release naming, the action
+against `up|down` — and then single-quoted into the argv, so a quote or a
+dollar sign in any value stops the run rather than reaching a shell on the
+host. The host's output is fenced while it streams (it is untrusted text and
+could otherwise forge workflow commands in this job), and the outputs are
+*parsed* out of it: `preview-url=`, `api-url=` and `gate-status=` lines, each
+value revalidated — an https URL, a plain token — before it is written to the
+step output. A missing, duplicated, or malformed contract line fails the step;
+nothing is guessed from the inputs instead.
+
+The primitive invocation shipped is the stated Phase-2 interface:
+
+```
+komizo-box preview up   <app> <pr-number> <image...>
+komizo-box preview down <app> <pr-number>
+```
+
+The komizo repo's `main` does not yet carry the preview primitive's docs, so
+this shape is the interface as specified rather than as documented there; if
+the primitive's argv or its output keys change, this action's
+`preview/run.sh` and `tests/preview.test.sh` are the two places that must move
+together.
 
 ## `health-check`
 
