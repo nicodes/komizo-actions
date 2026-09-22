@@ -18,12 +18,25 @@
 #   * the deploy key is never touched: connect owns it, this script does not
 #     read it, forward it, or log it
 #
-# The primitive's invocation shape is
-#   komizo-box preview up   <app> <pr-number> <image...>
-#   komizo-box preview down <app> <pr-number>
-# and its contract output is `key=value` lines carrying preview-url, api-url
-# and gate-status. (The komizo repo's main carries no preview docs yet; this
-# shape is the stated Phase-2 interface -- see docs/actions.md.)
+# The primitive's invocation shape and output contract are the box binary's
+# (komizo main, cmd/komizo-box/preview.go over box/preview.go):
+#
+#   komizo-box preview up --app <app> --pr <N> <image...>
+#       prints the preview's PreviewRecord as ONE JSON object
+#   komizo-box preview down --app <app> --pr <N>
+#       prints an informational sentence -- logged, never parsed
+#   komizo-box preview ls
+#       prints the surviving records as a JSON array
+#
+# The record carries no URL: the preview's hostname is pr-<N>.<domain> (and
+# pr-<N>-api.<domain>) where the domain is the host's own knob,
+# /etc/komizo/preview -- key=value, DOMAIN the key (box/preview.go
+# PreviewKnobPath, default preview.gdam.dev). The host is the authority on
+# its own domain, so the knob is read over the same fenced SSH path, as the
+# same account the box's own ReadPreviewKnob runs as: the read sees exactly
+# what the box saw, and an absent or unreadable knob means the compiled
+# default, exactly as the box's own fallback means it. The value is validated
+# as a plain domain before it becomes an output; anything else fails closed.
 #
 # Inputs (environment):
 #   APP         the product slug
@@ -110,13 +123,17 @@ if [ ! -f "$SSH_CONFIG" ] || ! awk '
 	refuse "No deploy-target SSH alias. Pass host:/key:/known-hosts: to this action, or run nicodes/komizo-actions/connect in an earlier step."
 fi
 
+# The output contract is JSON, and jq does the parsing. It ships on the
+# GitHub-hosted runner images; check rather than discover it mid-parse.
+command -v jq >/dev/null || refuse "jq is required on the runner to parse the host's JSON output."
+
 # Remote output is untrusted workflow text. Fence it so a compromised host
 # cannot emit ::error::, masking, or another workflow command; the parse below
 # is what any value crosses the fence through.
 out_file="$(mktemp)"
+rc=0
 fence="komizo-preview-$(date +%s%N)-$RANDOM"
 echo "::stop-commands::$fence"
-rc=0
 if [ "$ACTION" = "up" ]; then
 	# Every argument single-quoted -- safe because the charsets above exclude
 	# quotes. The images ride along as positional arguments, one per ref.
@@ -125,12 +142,12 @@ if [ "$ACTION" = "up" ]; then
 		quoted="$quoted '$ref'"
 	done
 	# shellcheck disable=SC2029 # the expansion is deliberate, and every value is charset-guarded above
-	ssh deploy-target "komizo-box preview up '$APP' '$PR_NUMBER'$quoted" 2>&1 | tee "$out_file" || rc=$?
+	ssh deploy-target "komizo-box preview up --app '$APP' --pr '$PR_NUMBER'$quoted" 2>&1 | tee "$out_file" || rc=$?
 else
 	# Down names the preview; the host's own state records which images ran
 	# under it, so the refs validated above stay runner-side.
 	# shellcheck disable=SC2029 # the expansion is deliberate, and every value is charset-guarded above
-	ssh deploy-target "komizo-box preview down '$APP' '$PR_NUMBER'" 2>&1 | tee "$out_file" || rc=$?
+	ssh deploy-target "komizo-box preview down --app '$APP' --pr '$PR_NUMBER'" 2>&1 | tee "$out_file" || rc=$?
 fi
 echo "::$fence::"
 if [ "$rc" -ne 0 ]; then
@@ -138,59 +155,139 @@ if [ "$rc" -ne 0 ]; then
 	exit "$rc"
 fi
 
-# Parse the outputs out of the fenced capture. The contract is `key=value`
-# lines; everything else the primitive prints is its own log and is ignored.
-# A line naming one of the contract keys with a value that fails validation,
-# or naming one twice, is output that does not follow the contract: fail
-# closed rather than pass a half-trusted value on.
-preview_url=""
-api_url=""
-gate_status=""
 # In variables rather than inline: an unquoted regex is parsed as shell
 # tokens, and the URL class below carries parentheses and a semicolon.
 url_re='^https://[A-Za-z0-9][A-Za-z0-9._~:/?#@!$&()*+,;=%-]*$'
-token_re='^[a-z][a-z0-9._-]*$'
-while IFS='=' read -r key value; do
-	case "$key" in
-		preview-url|api-url)
-			# An https URL and nothing else: no whitespace, no quotes, nothing
-			# that becomes a second line or a shell word downstream.
-			if [[ ! "$value" =~ $url_re ]]; then
-				refuse "the host's $key is not a plain https URL: '$value'."
-			fi
-			;;
-		gate-status)
-			if [[ ! "$value" =~ $token_re ]]; then
-				refuse "the host's gate-status is not a plain token: '$value'."
-			fi
-			;;
-		*)
-			continue ;;
-	esac
-	case "$key" in
-		preview-url)
-			[ -z "$preview_url" ] || refuse "the host reported preview-url twice."
-			preview_url="$value" ;;
-		api-url)
-			[ -z "$api_url" ] || refuse "the host reported api-url twice."
-			api_url="$value" ;;
-		gate-status)
-			[ -z "$gate_status" ] || refuse "the host reported gate-status twice."
-			gate_status="$value" ;;
-	esac
-done < "$out_file"
 
-# An up that does not report all three has not done what the contract says --
-# a preview URL guessed from the inputs instead would point wherever the
-# workflow's assumption pointed, not where the host put the preview.
 if [ "$ACTION" = "up" ]; then
-	[ -n "$preview_url" ] || refuse "the host's output carried no preview-url line; refusing to guess."
-	[ -n "$api_url" ] || refuse "the host's output carried no api-url line; refusing to guess."
-	[ -n "$gate_status" ] || refuse "the host's output carried no gate-status line; refusing to guess."
-fi
+	# The contract is ONE JSON object -- the host's PreviewRecord
+	# (box/preview.go: v, app, pr, project, db_name, gate_port, images,
+	# created_at, last_used, route_file; db_password is json:"-" and never
+	# leaves the host). The capture can also carry the primitive's stderr
+	# notes (2>&1 above), so non-JSON lines are skipped -- but exactly one
+	# JSON object must remain. A key=value line, prose, two objects, or a
+	# record naming another preview is output that does not follow the
+	# contract: fail closed rather than pass a half-trusted value on.
+	mapfile -t records < <(jq -Rc 'fromjson? | objects' "$out_file")
+	if [ "${#records[@]}" -eq 0 ]; then
+		refuse "the host's up output carried no JSON record; refusing to guess."
+	fi
+	if [ "${#records[@]}" -gt 1 ]; then
+		refuse "the host's up output carried more than one JSON record."
+	fi
+	record="${records[0]}"
 
-# Values validated above, one per line -- $GITHUB_OUTPUT is `name=value` per
-# line, and the charsets admit neither a newline nor anything that quotes one.
-[ -z "$preview_url" ] || echo "preview-url=$preview_url" >> "$GITHUB_OUTPUT"
-[ -z "$api_url" ] || echo "api-url=$api_url" >> "$GITHUB_OUTPUT"
-[ -z "$gate_status" ] || echo "gate-status=$gate_status" >> "$GITHUB_OUTPUT"
+	# A credential on stdout is the one shape the box is pinned never to
+	# emit; a record carrying one is not the pinned build's output.
+	if jq -e 'has("db_password")' <<<"$record" >/dev/null; then
+		refuse "the host's record carried db_password -- credentials never cross the wire."
+	fi
+
+	# The record must name the preview this run asked for: a record for
+	# another app or PR is the host answering a different question.
+	if ! jq -e --arg app "$APP" --argjson pr "$PR_NUMBER" '
+		(.v | type) == "number"
+		and .app == $app
+		and .pr == $pr
+		and .project == ($app + "-pr-" + ($pr | tostring))
+		and (.db_name | type) == "string"
+		and (.gate_port | type) == "number"
+		and (.route_file | type) == "string"
+	' <<<"$record" >/dev/null; then
+		refuse "the host's record is not the PreviewRecord of $APP PR #$PR_NUMBER: $record"
+	fi
+
+	# Every value consumed is revalidated against its own charset before it
+	# crosses into an output.
+	gate_port="$(jq -r '.gate_port' <<<"$record")"
+	db_name="$(jq -r '.db_name' <<<"$record")"
+	route_file="$(jq -r '.route_file' <<<"$record")"
+	if [[ ! "$gate_port" =~ ^[0-9]+$ ]] || [ "$gate_port" -lt 1 ] || [ "$gate_port" -gt 65535 ]; then
+		refuse "the host's gate_port is not a port number: '$gate_port'."
+	fi
+	if [[ ! "$db_name" =~ ^[a-z][a-z0-9_]*$ ]]; then
+		refuse "the host's db_name is not a plain identifier: '$db_name'."
+	fi
+	if [[ ! "$route_file" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		refuse "the host's route_file is not a plain file name: '$route_file'."
+	fi
+
+	# The preview domain is the host's to say: read its knob over the same
+	# fenced path and mirror the box's own ReadPreviewKnob -- an absent or
+	# unreadable file is the compiled default (the box falls back the same
+	# way, as this same account), a present one is parsed for the first
+	# DOMAIN= line, an empty value is the default.
+	knob_file="$(mktemp)"
+	rc=0
+	fence="komizo-preview-$(date +%s%N)-$RANDOM"
+	echo "::stop-commands::$fence"
+	ssh deploy-target "if [ -r /etc/komizo/preview ]; then cat /etc/komizo/preview; fi" 2>&1 | tee "$knob_file" || rc=$?
+	echo "::$fence::"
+	if [ "$rc" -ne 0 ]; then
+		echo "::error::the preview domain could not be read from the host (ssh exited $rc)."
+		exit "$rc"
+	fi
+	domain="preview.gdam.dev"
+	while IFS= read -r ln || [ -n "$ln" ]; do
+		case "$ln" in
+			DOMAIN=*)
+				v="${ln#DOMAIN=}"
+				v="${v#"${v%%[![:space:]]*}"}"
+				v="${v%"${v##*[![:space:]]}"}"
+				if [ -n "$v" ]; then domain="$v"; fi
+				break ;;
+		esac
+	done < "$knob_file"
+	domain_re='^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$'
+	if [[ ! "$domain" =~ $domain_re ]]; then
+		refuse "the host's preview domain is not a plain domain: '$domain'."
+	fi
+
+	# The URLs the record does not carry, derived from the verified record's
+	# own naming (pr-<N>.<domain> and pr-<N>-api.<domain> -- box/preview.go
+	# PreviewHost and previewRoute) and the host-reported domain, then
+	# revalidated like any untrusted value.
+	preview_url="https://pr-$PR_NUMBER.$domain"
+	api_url="https://pr-$PR_NUMBER-api.$domain"
+	if [[ ! "$preview_url" =~ $url_re ]]; then
+		refuse "the derived preview URL is not a plain https URL: '$preview_url'."
+	fi
+	if [[ ! "$api_url" =~ $url_re ]]; then
+		refuse "the derived api URL is not a plain https URL: '$api_url'."
+	fi
+
+	# Values validated above, one per line -- $GITHUB_OUTPUT is `name=value`
+	# per line, and the charsets admit neither a newline nor anything that
+	# quotes one. gate-status is the composite's own verification, not a
+	# host field: the record parsed and named this preview, so it is up.
+	{
+		echo "preview-url=$preview_url"
+		echo "api-url=$api_url"
+		echo "gate-status=up"
+	} >> "$GITHUB_OUTPUT"
+else
+	# down's sentence is informational -- logged inside the fence above and
+	# never parsed. Teardown is verified against the host's own state
+	# instead: preview ls prints the surviving records as a JSON array, and
+	# the preview this run named must no longer be in it.
+	ls_file="$(mktemp)"
+	rc=0
+	fence="komizo-preview-$(date +%s%N)-$RANDOM"
+	echo "::stop-commands::$fence"
+	ssh deploy-target "komizo-box preview ls" 2>&1 | tee "$ls_file" || rc=$?
+	echo "::$fence::"
+	if [ "$rc" -ne 0 ]; then
+		echo "::error::the teardown could not be verified: komizo-box preview ls failed on the host (ssh exited $rc)."
+		exit "$rc"
+	fi
+	mapfile -t arrays < <(jq -Rc 'fromjson? | arrays' "$ls_file")
+	if [ "${#arrays[@]}" -ne 1 ]; then
+		refuse "the host's ls output was not one JSON array; the teardown is unverified."
+	fi
+	if ! jq -e --arg app "$APP" --argjson pr "$PR_NUMBER" '
+		[.[] | objects | select(.app == $app and .pr == $pr)] | length == 0
+	' <<<"${arrays[0]}" >/dev/null; then
+		refuse "the host's state still records $APP PR #$PR_NUMBER after down; the teardown is unverified."
+	fi
+	echo "gate-status=down" >> "$GITHUB_OUTPUT"
+fi
