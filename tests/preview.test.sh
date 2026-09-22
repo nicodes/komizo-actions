@@ -17,6 +17,9 @@
 #   * the deploy key never forwarded into the invocation, the log, or the
 #     outputs
 #   * ssh's exit code propagates -- a failed preview is a failed step
+#   * the registry credential: both halves required on up (the pull runs as
+#     root on the host), the token on stdin ONLY -- never the argv, the log,
+#     or the outputs -- and a failed login stops the step before any output
 #
 # The fixtures are the box binary's REAL output shapes, at komizo main
 # (cmd/komizo-box/preview.go over box/preview.go):
@@ -54,7 +57,9 @@ ok() { # <condition-rc> <label>
 # the preview up/down invocation, the preview ls state read, and the preview
 # knob read. Each case gets a fresh environment for the values the script
 # reads, plus an ssh config carrying the deploy-target alias
-# (SSH_CONFIG=/nonexistent removes it) and a temp GITHUB_OUTPUT.
+# (SSH_CONFIG=/nonexistent removes it) and a temp GITHUB_OUTPUT. The registry
+# credential is present by default -- up requires it to reach ssh at all --
+# and a case testing its absence overrides with an explicit empty.
 run_case() {
 	local want="$1" label="$2"
 	shift 2
@@ -66,6 +71,12 @@ run_case() {
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SSH_CALLS"
 case "$*" in
+	*"komizo-preview up"*)
+		# The registry token arrives on stdin; capture it so the test can
+		# assert it travels there and nowhere else.
+		cat > "$SSH_STDIN"
+		printf '%s\n' "${STUB_REMOTE_OUTPUT:-safe remote output}"
+		exit "${STUB_SSH_RC:-0}" ;;
 	*"preview ls"*)
 		printf '%s\n' "${STUB_LS_OUTPUT:-[]}"
 		exit "${STUB_LS_RC:-${STUB_SSH_RC:-0}}" ;;
@@ -79,13 +90,16 @@ esac
 SSH
 	chmod 755 "$tmp/bin/ssh"
 	: > "$tmp/calls"
+	: > "$tmp/stdin"
 	: > "$tmp/output"
 	out="$(
 		env -i \
 			PATH="$tmp/bin:$PATH" HOME="$tmp/home" \
 			SSH_CONFIG="$tmp/ssh_config" \
-			SSH_CALLS="$tmp/calls" GITHUB_OUTPUT="$tmp/output" \
+			SSH_CALLS="$tmp/calls" SSH_STDIN="$tmp/stdin" \
+			GITHUB_OUTPUT="$tmp/output" \
 			APP= PR_NUMBER= IMAGES= ACTION= \
+			REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 			"$@" \
 			bash preview/run.sh 2>&1
 	)"
@@ -141,6 +155,11 @@ no_outputs() { # <label> -- the last run wrote no step outputs at all
 IMG_API=ghcr.io/you/gdam-api:0123456789abcdef0123456789abcdef01234567
 IMG_WEB=ghcr.io/you/gdam-web:0123456789abcdef0123456789abcdef01234567
 
+# The registry credential fixtures. up requires both (the pull runs as root
+# on the host); the token must travel on stdin and appear NOWHERE else.
+RUSER=ci-bot
+RTOKEN=fixture-token-must-not-leak
+
 # The real shapes, as the box binary prints them at komizo main.
 RECORD_UP='{"v":1,"app":"gdam","pr":42,"project":"gdam-pr-42","db_name":"gdam_pr_42","gate_port":20000,"images":["'"$IMG_API"'","'"$IMG_WEB"'"],"created_at":"2026-09-22T03:04:05Z","last_used":"2026-09-22T03:04:05Z","route_file":"_preview-gdam-pr-42.caddy"}'
 DOWN_SENTENCE='preview gdam-pr-42 is down: project, database gdam_pr_42 and route removed.'
@@ -150,13 +169,20 @@ echo "== the exact ssh argv =="
 
 run_case 0 "up passes app, pr-number and every image as flags, single-quoted" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
-expected="deploy-target doas -n /usr/local/bin/komizo-preview up --app 'gdam' --pr '42' '$IMG_API' '$IMG_WEB'"
+expected="deploy-target doas -n /usr/local/bin/komizo-preview up --app 'gdam' --pr '42' --registry-user 'ci-bot' '$IMG_API' '$IMG_WEB'"
 if grep -qxF "$expected" "$LAST_TMP/calls"; then
 	pass=$((pass + 1))
 else
 	fail=$((fail + 1))
 	printf 'FAIL  exact ssh argv for up\n      want: %s\n      got:  %s\n' "$expected" "$(cat "$LAST_TMP/calls")"
+fi
+if grep -qF "$RTOKEN" "$LAST_TMP/calls"; then
+	fail=$((fail + 1))
+	printf 'FAIL  the registry token appeared in the argv\n'
+else
+	pass=$((pass + 1))
 fi
 expected="deploy-target if [ -r /etc/komizo/preview ]; then cat /etc/komizo/preview; fi"
 if grep -qxF "$expected" "$LAST_TMP/calls"; then
@@ -194,6 +220,7 @@ else
 fi
 run_case 0 "the knob read stays unprivileged" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
 if grep -F "etc/komizo/preview" "$LAST_TMP/calls" | grep -qF "doas"; then
 	fail=$((fail + 1))
@@ -207,7 +234,8 @@ echo "== malformed inputs never reach ssh =="
 # <label>|<APP>|<PR_NUMBER>|<IMAGES>|<ACTION> -- every row must refuse before
 # the wire.
 while IFS='|' read -r label app pr images action; do
-	run_case 1 "$label" APP="$app" PR_NUMBER="$pr" IMAGES="$images" ACTION="$action"
+	run_case 1 "$label" APP="$app" PR_NUMBER="$pr" IMAGES="$images" ACTION="$action" \
+		REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN
 	no_ssh "$label reached ssh"
 	out_has "::error::" "$label fails with an error annotation"
 done <<'CASES'
@@ -241,8 +269,9 @@ no_ssh "newline pr-number reached ssh"
 # A registry with a port is a plain reference and passes.
 run_case 0 "a registry with a port is accepted" \
 	APP=gdam PR_NUMBER=42 IMAGES="registry.internal:5000/you/gdam-api:abc" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
-grep -qxF "deploy-target doas -n /usr/local/bin/komizo-preview up --app 'gdam' --pr '42' 'registry.internal:5000/you/gdam-api:abc'" "$LAST_TMP/calls"
+grep -qxF "deploy-target doas -n /usr/local/bin/komizo-preview up --app 'gdam' --pr '42' --registry-user 'ci-bot' 'registry.internal:5000/you/gdam-api:abc'" "$LAST_TMP/calls"
 ok $? "the ported registry ref rides along verbatim"
 
 echo "== the connection seam =="
@@ -255,7 +284,8 @@ out_has "No deploy-target SSH alias" "a missing alias says to run connect"
 echo "== the fence and the exit code =="
 
 run_case 23 "ssh's exit code propagates" \
-	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up STUB_SSH_RC=23
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN STUB_SSH_RC=23
 case "$LAST_OUT" in
 	*"::stop-commands::komizo-preview-"*"::komizo-preview-"*)
 		pass=$((pass + 1)) ;;
@@ -268,6 +298,7 @@ esac
 # in it cannot execute.
 run_case 0 "host output is fenced" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="$RECORD_UP
 ::error::forged by the host" \
 	STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
@@ -283,6 +314,7 @@ echo "== up: the record is parsed, not trusted =="
 
 run_case 0 "up parses the real record and derives all three outputs" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
 outputs_contain "preview-url=https://pr-42.preview.example.com"
 outputs_contain "api-url=https://pr-42-api.preview.example.com"
@@ -292,6 +324,7 @@ outputs_contain "gate-status=up"
 # JSON record is parsed.
 run_case 0 "the host's own log lines are ignored" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="komizo-box preview: could not read /etc/komizo/preview, using defaults: open /etc/komizo/preview: permission denied
 $RECORD_UP" \
 	STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
@@ -301,17 +334,20 @@ outputs_contain "gate-status=up"
 # box's own ReadPreviewKnob falls back.
 run_case 0 "an absent knob means the compiled default domain" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="$RECORD_UP"
 outputs_contain "preview-url=https://pr-42.preview.gdam.dev"
 outputs_contain "api-url=https://pr-42-api.preview.gdam.dev"
 
 run_case 0 "a knob without a DOMAIN key means the compiled default domain" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="TTL_HOURS=48"
 outputs_contain "preview-url=https://pr-42.preview.gdam.dev"
 
 run_case 0 "an empty DOMAIN value means the compiled default domain" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="DOMAIN="
 outputs_contain "preview-url=https://pr-42.preview.gdam.dev"
 
@@ -451,8 +487,69 @@ run_case 9 "a failed ls read fails the step" \
 	STUB_REMOTE_OUTPUT="$DOWN_SENTENCE" STUB_LS_RC=9
 no_outputs "a failed ls read produced outputs"
 
-echo "== the deploy key goes nowhere =="
+echo "== the registry credential =="
 
+# up pulls as root on the host; both halves of the credential are required,
+# and a half pair is refused before anything reaches ssh.
+run_case 1 "up without registry-user refuses before ssh" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up REGISTRY_USER=
+no_ssh "missing registry-user reached ssh"
+out_has "registry-user is empty" "the missing user is named"
+
+run_case 1 "up without registry-token refuses before ssh" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up REGISTRY_TOKEN=
+no_ssh "missing registry-token reached ssh"
+out_has "registry-token is empty" "the missing token is named"
+
+run_case 1 "a token without a user is refused even on down" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=down REGISTRY_USER=
+no_ssh "a half pair reached ssh"
+out_has "registry-token is set but registry-user is empty" "the half pair is named"
+
+run_case 1 "a registry-user with a quote is refused" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up REGISTRY_USER="ci'bot"
+no_ssh "a quoted registry-user reached ssh"
+
+# The token rides stdin to the wrapper and appears NOWHERE else: not in the
+# argv (visible in the host's process list), not in the log, not in the
+# outputs.
+run_case 0 "the token travels on stdin only" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
+grep -qxF "$RTOKEN" "$LAST_TMP/stdin"
+ok $? "the token arrived on the up call's stdin"
+if grep -qF "$RTOKEN" "$LAST_TMP/calls" \
+	|| printf '%s' "$LAST_OUT" | grep -qF "$RTOKEN" \
+	|| grep -qF "$RTOKEN" "$LAST_TMP/output"; then
+	fail=$((fail + 1))
+	printf 'FAIL  the token reached the argv, the log, or the outputs\n'
+else
+	pass=$((pass + 1))
+fi
+
+# A hostile token -- spaces, quotes, substitutions -- travels stdin verbatim
+# and nowhere else.
+# shellcheck disable=SC2016 # single quotes are deliberate: the token must stay literal
+HOSTILE='tok; $(id) `id` "double"'\''single'\'''
+run_case 0 "a hostile token travels stdin verbatim" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up REGISTRY_TOKEN="$HOSTILE" \
+	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
+grep -qxF "$HOSTILE" "$LAST_TMP/stdin"
+ok $? "the hostile token arrived verbatim on stdin"
+if grep -qF "$HOSTILE" "$LAST_TMP/calls"; then
+	fail=$((fail + 1))
+	printf 'FAIL  the hostile token reached the argv\n'
+else
+	pass=$((pass + 1))
+fi
+
+# A failed login/up call fails the step before any output is written -- no
+# partial state crosses the fence.
+run_case 17 "a failed login stops the step before any output" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up STUB_SSH_RC=17
+no_outputs "a failed login produced outputs"
+
+echo "== the deploy key goes nowhere =="
 secret=credential-must-not-appear
 run_case 0 "the deploy key is not forwarded" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
@@ -531,6 +628,14 @@ ok $? "the run step drives preview/run.sh"
 # shellcheck disable=SC2016 # single quotes are deliberate: literal workflow expressions
 grep -q 'APP: ${{ inputs.app }}' preview/action.yml
 ok $? "app arrives through env, not interpolation"
+# shellcheck disable=SC2016 # single quotes are deliberate: literal workflow expressions
+grep -q 'REGISTRY_USER: ${{ inputs.registry-user }}' preview/action.yml
+ok $? "registry-user arrives through env, not interpolation"
+
+# shellcheck disable=SC2016 # single quotes are deliberate: literal workflow expressions
+grep -q 'REGISTRY_TOKEN: ${{ inputs.registry-token }}' preview/action.yml
+ok $? "registry-token arrives through env, not interpolation"
+
 
 # shellcheck disable=SC2016 # single quotes are deliberate: literal workflow expressions
 grep -q 'value: ${{ steps.preview.outputs.preview-url }}' preview/action.yml
