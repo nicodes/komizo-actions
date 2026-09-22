@@ -59,6 +59,9 @@
 #   PR_NUMBER   the pull request number
 #   IMAGES      space-separated image refs (passed to the primitive on up)
 #   ACTION      up | down
+#   REGISTRY_USER   the ghcr username the host logs in as before up's pulls
+#   REGISTRY_TOKEN  the ghcr password for that login -- rides stdin to the
+#                   wrapper, never an argument, never echoed
 #   SSH_CONFIG  ssh config to look for deploy-target in; defaults to
 #               ~/.ssh/config (a seam for tests)
 #   GITHUB_OUTPUT  where the parsed outputs go
@@ -68,6 +71,8 @@ set -euo pipefail
 : "${PR_NUMBER:=}"
 : "${IMAGES:=}"
 : "${ACTION:=}"
+: "${REGISTRY_USER:=}"
+: "${REGISTRY_TOKEN:=}"
 : "${SSH_CONFIG:=$HOME/.ssh/config}"
 
 refuse() {
@@ -97,6 +102,35 @@ fi
 # padded or signed value would name a different one than the pull request.
 if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
 	refuse "pr-number must be a positive integer; got '$PR_NUMBER'."
+fi
+
+# The registry credential pair. up pulls the PR's images AS ROOT on the host
+# (through the doas wrapper), and root's docker config carries no ghcr
+# authorization -- so the credential rides stdin to the wrapper, which logs
+# in, pulls, and drops it however the run exits (deploy/activate's precedent:
+# the credential goes to the root command that pulls, never to a separate
+# ssh docker login, and never as an argument -- argv is visible in the host's
+# process list). Required on up; unused on down, where a half-pair is still a
+# workflow bug worth naming.
+if [ "$ACTION" = "up" ]; then
+	if [ -z "$REGISTRY_USER" ]; then
+		refuse "registry-user is empty. up pulls the PR's images as root on the host; pass registry-user (e.g. github.actor) and registry-token (the run-scoped secrets.GITHUB_TOKEN)."
+	fi
+	if [ -z "$REGISTRY_TOKEN" ]; then
+		refuse "registry-token is empty. up pulls the PR's images as root on the host; pass the run-scoped secrets.GITHUB_TOKEN (packages:read)."
+	fi
+elif [ -n "$REGISTRY_TOKEN" ] && [ -z "$REGISTRY_USER" ]; then
+	refuse "registry-token is set but registry-user is empty; the host cannot log in without a username."
+fi
+if [ -n "$REGISTRY_USER" ]; then
+	# Brackets are admitted for bot logins: a caller may pass github.actor
+	# from a dispatch, which runs as github-actions[bot] (activate's call).
+	# The value is single-quoted into the remote command below, so this
+	# charset -- which excludes quotes -- is what makes that quoting safe.
+	case "$REGISTRY_USER" in
+		*[!A-Za-z0-9._@\[\]-]*)
+			refuse "registry-user must be letters, digits, dot, underscore, at-sign, brackets or hyphen; got '$REGISTRY_USER'." ;;
+	esac
 fi
 
 # Split on whitespace without globbing -- read does not expand wildcards the
@@ -157,8 +191,14 @@ if [ "$ACTION" = "up" ]; then
 	for ref in "${image_words[@]}"; do
 		quoted="$quoted '$ref'"
 	done
+	# The registry token rides stdin to the wrapper, NEVER an argument --
+	# argv is visible in the host's process list to every user on the box
+	# (deploy/activate's precedent). The wrapper logs root into ghcr, pulls
+	# the images, and drops the credential however the run exits; a failed
+	# login fails the call, so up never runs on a half-authenticated host.
 	# shellcheck disable=SC2029 # the expansion is deliberate, and every value is charset-guarded above
-	ssh deploy-target "doas -n /usr/local/bin/komizo-preview up --app '$APP' --pr '$PR_NUMBER'$quoted" 2>&1 | tee "$out_file" || rc=$?
+	printf '%s' "$REGISTRY_TOKEN" \
+		| ssh deploy-target "doas -n /usr/local/bin/komizo-preview up --app '$APP' --pr '$PR_NUMBER' --registry-user '$REGISTRY_USER'$quoted" 2>&1 | tee "$out_file" || rc=$?
 else
 	# Down names the preview; the host's own state records which images ran
 	# under it, so the refs validated above stay runner-side.

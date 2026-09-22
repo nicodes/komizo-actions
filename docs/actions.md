@@ -567,6 +567,8 @@ Run it once when the pull request's images are published, and again with
 | `pr-number` | yes | — | Pull request number, a positive integer. Names the preview: `pr-<N>`. |
 | `images` | yes | — | Space-separated image refs matching the products' release naming, `ghcr.io/<owner>/<project>-<component>:<sha>`. Passed to the primitive on `up`; on `down` they are validated but stay runner-side — the host's own state records what ran under the preview. |
 | `action` | yes | — | `up` or `down`. |
+| `registry-user` | on `up` | — | Registry username for the host's ghcr login before the pull, e.g. `github.actor`. `up` pulls as root on the host, and root's docker config carries no ghcr authorization without it. Unused on `down`. |
+| `registry-token` | on `up` | — | Registry password for the same login. Prefer the run-scoped `GITHUB_TOKEN` (`packages:read`): the token travels on stdin to the host's root-owned preview wrapper — never as an argument, never echoed — and the wrapper drops the credential however the run exits. |
 | `host` | no | `$KOMIZO_SERVER_URL` | Server hostname. Supplying it makes this action connect for you; leave empty if `connect` already ran in the job. |
 | `user` | no | `komizo-<app>` | Deploy account. Only needed if you overrode it. |
 | `key` | no | `$KOMIZO_DEPLOY_KEY` | Private half of the deploy key. Pass a secret, or set the env var and leave this out. |
@@ -650,6 +652,15 @@ surviving records as a JSON array, and the preview this run named must no
 longer be in it. A missing, malformed, or still-recording state fails the
 step. `gate-status` is the composite's own verdict on that verification:
 `up` or `down`.
+
+`up` pulls the PR's images as root on the host, and root's docker config
+carries no ghcr authorization of its own — so the host logs in first. The
+credential follows deploy's precedent: the token travels on **stdin** to the
+wrapper (never as an argument — argv is visible in the host's process list),
+the wrapper logs in, pulls, and drops the credential however the run exits,
+and a failed login fails the call before any pull. The composite refuses
+runner-side when `registry-user` or `registry-token` is missing on `up`, and
+a token without a user is refused on either action.
 
 If the primitive's argv or its JSON fields change, this action's
 `preview/run.sh` and `tests/preview.test.sh` are the two places that must

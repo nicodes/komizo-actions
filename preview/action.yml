@@ -75,6 +75,28 @@ inputs:
     description: up to bring the preview up, down to tear it down.
     required: true
 
+  # --- registry -------------------------------------------------------------
+  # up pulls the PR's images AS ROOT on the host (through the doas wrapper),
+  # and root's docker config carries no ghcr authorization — so the host must
+  # log in first. Required when action is up; unused on down (no pulls).
+  registry-user:
+    description: >
+      Registry username for the host's ghcr login before `up` pulls — e.g.
+      github.actor. Required when action is up: the pull runs as root on the
+      host, and without a login it fails anonymous against a private package.
+      Unused on down.
+    required: false
+    default: ""
+  registry-token:
+    description: >
+      Registry password for the same login. Prefer the run-scoped
+      GITHUB_TOKEN (packages:read) so nothing long-lived is left on the
+      server: the token travels on stdin to the host's root-owned preview
+      wrapper — never as an argument, never echoed — and the wrapper drops
+      the credential however the run exits. Required when action is up.
+    required: false
+    default: ""
+
   # --- connection -----------------------------------------------------------
   # Omit `host` if the connect action already ran in this job, e.g. because
   # you needed `ssh deploy-target ...` for a step of your own first.
@@ -186,4 +208,6 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         IMAGES: ${{ inputs.images }}
         ACTION: ${{ inputs.action }}
+        REGISTRY_USER: ${{ inputs.registry-user }}
+        REGISTRY_TOKEN: ${{ inputs.registry-token }}
       run: bash "$GITHUB_ACTION_PATH/run.sh"
