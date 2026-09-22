@@ -19,24 +19,37 @@
 #     read it, forward it, or log it
 #
 # The primitive's invocation shape and output contract are the box binary's
-# (komizo main, cmd/komizo-box/preview.go over box/preview.go):
+# (komizo main, cmd/komizo-box/preview.go over box/preview.go). It runs
+# privileged -- the state root /var/lib/komizo is 0750 root:root, the floors
+# file is root-readable only, and docker is root's -- so the invocation goes
+# through doas with the FULL path (the app-locked doas rule matches the exact
+# command line), and -n so a rule that would prompt fails closed instead of
+# hanging the job:
 #
-#   komizo-box preview up --app <app> --pr <N> <image...>
+#   doas -n /usr/local/bin/komizo-box preview up --app <app> --pr <N> <image...>
 #       prints the preview's PreviewRecord as ONE JSON object
-#   komizo-box preview down --app <app> --pr <N>
+#   doas -n /usr/local/bin/komizo-box preview down --app <app> --pr <N>
 #       prints an informational sentence -- logged, never parsed
-#   komizo-box preview ls
+#   doas -n /usr/local/bin/komizo-box preview ls
 #       prints the surviving records as a JSON array
 #
 # The record carries no URL: the preview's hostname is pr-<N>.<domain> (and
 # pr-<N>-api.<domain>) where the domain is the host's own knob,
 # /etc/komizo/preview -- key=value, DOMAIN the key (box/preview.go
 # PreviewKnobPath, default preview.gdam.dev). The host is the authority on
-# its own domain, so the knob is read over the same fenced SSH path, as the
-# same account the box's own ReadPreviewKnob runs as: the read sees exactly
-# what the box saw, and an absent or unreadable knob means the compiled
-# default, exactly as the box's own fallback means it. The value is validated
-# as a plain domain before it becomes an output; anything else fails closed.
+# its own domain, so the knob is read over the same fenced SSH path; an
+# absent or unreadable knob is read as the compiled default. The value is
+# validated as a plain domain before it becomes an output; anything else
+# fails closed.
+#
+# One divergence to know about: the primitive runs as ROOT (through doas),
+# so its own ReadPreviewKnob sees a knob file the unprivileged read here
+# cannot (EACCES -- /etc/komizo is 0750 root:komizo_monitor). An operator
+# who sets DOMAIN in a root-only knob routes pr-<N>.<their-domain> while
+# this action reports the compiled default. Hosts running the stock layout
+# (no knob file) are unaffected: both sides land on the default. The clean
+# fix is the box reporting its effective domain in the up record -- a
+# komizo-side change, tracked as a follow-up.
 #
 # Inputs (environment):
 #   APP         the product slug
@@ -142,12 +155,12 @@ if [ "$ACTION" = "up" ]; then
 		quoted="$quoted '$ref'"
 	done
 	# shellcheck disable=SC2029 # the expansion is deliberate, and every value is charset-guarded above
-	ssh deploy-target "komizo-box preview up --app '$APP' --pr '$PR_NUMBER'$quoted" 2>&1 | tee "$out_file" || rc=$?
+	ssh deploy-target "doas -n /usr/local/bin/komizo-box preview up --app '$APP' --pr '$PR_NUMBER'$quoted" 2>&1 | tee "$out_file" || rc=$?
 else
 	# Down names the preview; the host's own state records which images ran
 	# under it, so the refs validated above stay runner-side.
 	# shellcheck disable=SC2029 # the expansion is deliberate, and every value is charset-guarded above
-	ssh deploy-target "komizo-box preview down --app '$APP' --pr '$PR_NUMBER'" 2>&1 | tee "$out_file" || rc=$?
+	ssh deploy-target "doas -n /usr/local/bin/komizo-box preview down --app '$APP' --pr '$PR_NUMBER'" 2>&1 | tee "$out_file" || rc=$?
 fi
 echo "::$fence::"
 if [ "$rc" -ne 0 ]; then
@@ -213,10 +226,9 @@ if [ "$ACTION" = "up" ]; then
 	fi
 
 	# The preview domain is the host's to say: read its knob over the same
-	# fenced path and mirror the box's own ReadPreviewKnob -- an absent or
-	# unreadable file is the compiled default (the box falls back the same
-	# way, as this same account), a present one is parsed for the first
-	# DOMAIN= line, an empty value is the default.
+	# fenced path -- an absent or unreadable file is the compiled default
+	# (see the header for the one divergence that introduces), a present one
+	# is parsed for the first DOMAIN= line, an empty value is the default.
 	knob_file="$(mktemp)"
 	rc=0
 	fence="komizo-preview-$(date +%s%N)-$RANDOM"
@@ -274,7 +286,7 @@ else
 	rc=0
 	fence="komizo-preview-$(date +%s%N)-$RANDOM"
 	echo "::stop-commands::$fence"
-	ssh deploy-target "komizo-box preview ls" 2>&1 | tee "$ls_file" || rc=$?
+	ssh deploy-target "doas -n /usr/local/bin/komizo-box preview ls" 2>&1 | tee "$ls_file" || rc=$?
 	echo "::$fence::"
 	if [ "$rc" -ne 0 ]; then
 		echo "::error::the teardown could not be verified: komizo-box preview ls failed on the host (ssh exited $rc)."
