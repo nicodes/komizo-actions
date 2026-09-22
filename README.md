@@ -10,6 +10,9 @@ historical artifacts.
 There is no published v0.0.6: its automated release candidate was refused by
 protected-main checks before any remote tag or release was created.
 
+v0.0.17/v0.0.18 deleted — broken against the doas-hardened box contract;
+v0.0.19 is the first doas-form release.
+
 Release tags are fixed by the release workflow and composed actions are pinned
 to a commit SHA. GitHub release records themselves remain editable; this project
 does not claim platform-enforced release immutability.
