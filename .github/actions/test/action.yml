@@ -119,6 +119,14 @@ runs:
     - name: allowlisted task input handling
       shell: bash
       run: bash tests/run-task.test.sh
+    # The image self-prune deletes data on production hosts, so its safety
+    # contract -- family prefix only, keep current + previous, never
+    # container-referenced images, never a blanket prune, warn-don't-fail --
+    # is pinned against fixture ssh/docker rather than exercised live.
+    - name: deploy image self-prune safety contract
+      shell: bash
+      run: bash tests/deploy-prune.test.sh
+
 
     - name: release behavior contracts
       shell: bash
