@@ -25,14 +25,16 @@ description: >
   action's outputs.
 
   The primitive is privileged — its state root and the floors file are
-  root's, and docker is root's — so it is invoked through doas with the full
-  path the app-locked doas rule permits:
-  `doas -n /usr/local/bin/komizo-box preview up --app <app> --pr <pr-number> <image...>`
-  and `doas -n /usr/local/bin/komizo-box preview down --app <app> --pr <pr-number>`,
+  root's, and docker is root's — so it is invoked through doas. The doas
+  rule's args match exactly, so the box permits not the raw binary (a rule
+  on it would allow every mode as root) but a root-owned wrapper, the
+  preview entry, which enforces the mode and the app lock:
+  `doas -n /usr/local/bin/komizo-preview up --app <app> --pr <pr-number> <image...>`
+  and `doas -n /usr/local/bin/komizo-preview down --app <app> --pr <pr-number>`,
   with every argument charset-validated and single-quoted — nothing is
   interpolated unquoted into the remote command, and `-n` makes a rule that
   would prompt fail closed instead of hanging the job. The teardown
-  verification (`preview ls`) goes through doas the same way; the preview
+  verification (`ls`) goes through doas the same way; the preview
   knob read stays unprivileged, an absent or unreadable knob reading as the
   box's compiled default domain. The primitive's stdout is fenced (it is
   untrusted text from a host)

@@ -605,13 +605,17 @@ The primitive's invocation shape and output contract are the box binary's
 (komizo `main`, `cmd/komizo-box/preview.go` over `box/preview.go`). It runs
 privileged — the state root `/var/lib/komizo` is `0750 root:root`, the floors
 file is root-readable only, and docker is root's — so the invocation goes
-through doas with the full path the app-locked doas rule matches, and `-n`
-so a rule that would prompt fails closed instead of hanging the job:
+through doas, with `-n` so a rule that would prompt fails closed instead of
+hanging the job. The doas rule's args match exactly, so the box permits not
+the raw binary (a rule on `komizo-box` itself would allow every mode as
+root) but a root-owned wrapper, the preview entry, which enforces the mode
+(`up|down|ls|gc`) and the app lock (`--app` must name the doas caller's own
+app):
 
 ```
-doas -n /usr/local/bin/komizo-box preview up --app <app> --pr <N> <image...>
-doas -n /usr/local/bin/komizo-box preview down --app <app> --pr <N>
-doas -n /usr/local/bin/komizo-box preview ls
+doas -n /usr/local/bin/komizo-preview up --app <app> --pr <N> <image...>
+doas -n /usr/local/bin/komizo-preview down --app <app> --pr <N>
+doas -n /usr/local/bin/komizo-preview ls
 ```
 
 `up` prints the preview's `PreviewRecord` as **one JSON object** — fields
