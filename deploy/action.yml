@@ -286,7 +286,7 @@ runs:
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before anything has been published.
     - if: steps.cfg.outputs.host != ''
-      uses: nicodes/komizo-actions/connect@c8c528ba5d7b09dd570caf29d039dc70d1d6ca22
+      uses: nicodes/komizo-actions/connect@29cff35a1ec5309b045518fa9202b0519aa88723
       with:
         host: ${{ steps.cfg.outputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', steps.cfg.outputs.app) }}
@@ -309,7 +309,7 @@ runs:
     #    asked to deploy this tag.
     - id: config
       if: inputs.config != '' || inputs.config-compose != ''
-      uses: nicodes/komizo-actions/publish-config@c8c528ba5d7b09dd570caf29d039dc70d1d6ca22
+      uses: nicodes/komizo-actions/publish-config@29cff35a1ec5309b045518fa9202b0519aa88723
       with:
         config: ${{ inputs.config }}
         compose: ${{ inputs.config-compose }}
@@ -320,14 +320,14 @@ runs:
     # 3. Secrets BEFORE the deploy, so the containers it recreates start with
     #    the current values.
     - if: steps.cfg.outputs.has-secrets == 'true'
-      uses: nicodes/komizo-actions/set-secrets@c8c528ba5d7b09dd570caf29d039dc70d1d6ca22
+      uses: nicodes/komizo-actions/set-secrets@29cff35a1ec5309b045518fa9202b0519aa88723
       with:
         names: ${{ inputs.secrets }}
         command: doas /usr/local/bin/set-secret-${{ steps.cfg.outputs.app }}
 
     # 4. Make the tag live.
     - id: version
-      uses: nicodes/komizo-actions/activate@c8c528ba5d7b09dd570caf29d039dc70d1d6ca22
+      uses: nicodes/komizo-actions/activate@29cff35a1ec5309b045518fa9202b0519aa88723
       with:
         version: ${{ inputs.version }}
         registry: ${{ inputs.registry }}
@@ -338,7 +338,7 @@ runs:
     # 5. Prove it is serving. Skipped entirely when no URL is given.
     - id: health
       if: inputs.health-urls != ''
-      uses: nicodes/komizo-actions/health-check@c8c528ba5d7b09dd570caf29d039dc70d1d6ca22
+      uses: nicodes/komizo-actions/health-check@29cff35a1ec5309b045518fa9202b0519aa88723
       with:
         urls: ${{ inputs.health-urls }}
         attempts: ${{ inputs.health-attempts }}
