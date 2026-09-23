@@ -632,12 +632,16 @@ for another preview, or a field of the wrong shape all fail closed.
 
 The record carries no URL: the preview's hostname is `pr-<N>.<domain>` (and
 `pr-<N>-api.<domain>`) where the domain is the host's own knob,
-`/etc/komizo/preview` — key=value, `DOMAIN` the key, compiled default
+`/etc/komizo/preview` — key=value, `DOMAIN.<app>` the per-app key, bare
+`DOMAIN` the default for apps without one, compiled default
 `preview.gdam.dev` (`box/preview.go` `PreviewKnobPath` /
 `PreviewDomainDefault` / `PreviewHost` / `previewRoute`). The action reads
-the knob over the same fenced SSH path, and an absent or unreadable knob is
-read as the compiled default. The value is validated as a plain domain
-before it becomes a URL, and the derived URLs are revalidated as https URLs.
+the knob over the same fenced SSH path and walks the same chain the box's
+own `ReadPreviewKnob` walks — first `DOMAIN.<app>`, then bare `DOMAIN`,
+then the compiled default, an absent or unreadable knob reading as the
+default, an empty value falling through to the next link. The resolved
+value is validated as a plain domain before it becomes a URL, and the
+derived URLs are revalidated as https URLs.
 One divergence: the primitive runs as root through doas, so its own knob
 read sees a file this unprivileged read cannot (`/etc/komizo` is
 `0750 root:komizo_monitor`); an operator who sets `DOMAIN` in a root-only
