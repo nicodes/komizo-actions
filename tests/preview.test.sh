@@ -351,6 +351,52 @@ run_case 0 "an empty DOMAIN value means the compiled default domain" \
 	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="DOMAIN="
 outputs_contain "preview-url=https://pr-42.preview.gdam.dev"
 
+# Per-app domains: DOMAIN.<app> wins over the bare DOMAIN, which wins over
+# the compiled default -- the same chain the box walks, so the derived URL
+# is the route the box wrote.
+run_case 0 "a DOMAIN.<app> key wins over the bare DOMAIN" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
+	STUB_REMOTE_OUTPUT="$RECORD_UP" \
+	STUB_KNOB_OUTPUT="DOMAIN=preview.example.com
+DOMAIN.gdam=preview.gdam.example.com"
+	outputs_contain "preview-url=https://pr-42.preview.gdam.example.com"
+	outputs_contain "api-url=https://pr-42-api.preview.gdam.example.com"
+
+run_case 0 "a DOMAIN.<app> key alone is used" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
+	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="DOMAIN.gdam=preview.gdam.example.com"
+	outputs_contain "preview-url=https://pr-42.preview.gdam.example.com"
+
+run_case 0 "another app's DOMAIN.<app> key is ignored" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
+	STUB_REMOTE_OUTPUT="$RECORD_UP" \
+	STUB_KNOB_OUTPUT="DOMAIN.other=other.example.com
+DOMAIN=preview.example.com"
+	outputs_contain "preview-url=https://pr-42.preview.example.com"
+
+run_case 0 "an empty DOMAIN.<app> value falls through to the bare DOMAIN" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
+	STUB_REMOTE_OUTPUT="$RECORD_UP" \
+	STUB_KNOB_OUTPUT="DOMAIN.gdam=
+DOMAIN=preview.example.com"
+	outputs_contain "preview-url=https://pr-42.preview.example.com"
+
+run_case 0 "an empty DOMAIN.<app> and no bare DOMAIN means the compiled default" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
+	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="DOMAIN.gdam="
+	outputs_contain "preview-url=https://pr-42.preview.gdam.dev"
+
+run_case 1 "a DOMAIN.<app> value that is not a domain fails closed" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
+	STUB_REMOTE_OUTPUT="$RECORD_UP" STUB_KNOB_OUTPUT="DOMAIN.gdam=not-a-domain"
+	no_outputs "a bad per-app domain produced outputs"
+
 echo "== up: fail closed on unexpected shape =="
 
 # The old assumed contract: a host emitting key=value where JSON is expected
