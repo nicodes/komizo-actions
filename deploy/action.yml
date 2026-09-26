@@ -28,7 +28,7 @@ description: >
   every secret this step does not need, stays out of it.
 
   service-env-profile is an opt-in that replaces that path for one approved
-  profile, fields-postgres-v1, and only for app fieldsofrevik. Leave it empty
+  profile, fields-postgres-v2, and only for app fieldsofrevik. Leave it empty
   on any other app and set-secrets is unchanged. App fieldsofrevik refuses an
   empty profile. Set the profile and no profile value is sent: not
   KOMIZO_SECRET_*, not KOMIZO_SCOPED_*, not a secrets: list. The action reads
@@ -189,13 +189,15 @@ inputs:
   service-env-profile:
     description: >
       Opt in to the scoped service-env profile instead of set-secrets. The
-      only approved value is fields-postgres-v1, and only for app
+      only approved value is fields-postgres-v2, and only for app
       fieldsofrevik. Empty (the default) keeps the legacy KOMIZO_SECRET_*
       path exactly.
 
-      When set, expected-generation is required, KOMIZO_SECRET_*,
-      KOMIZO_SCOPED_* and secrets: are refused rather than pushed, and
-      health-urls is required. Status is read before activate and again after
+      fields-postgres-v1 is rejected. When set, expected-generation and
+      health-urls are required. KOMIZO_SECRET_*, KOMIZO_SCOPED_*, a secrets:
+      list, and the eleven host-local names including CLERK_SECRET_KEY are
+      refused. Their values are not logged and are not sent to set-secrets
+      or SSH. Status is read before activate and again after
       health. The deploy command gains a fourth argument, the same id. A
       missing or mismatched id fails the job. There is no stage, confirm, or
       abort. docker compose up may not recreate a service whose resolved

@@ -1,12 +1,12 @@
 name: Read scoped service env status
 description: >
-  Read the host's fields-postgres-v1 status for app fieldsofrevik. Requires
+  Read the host's fields-postgres-v2 status for app fieldsofrevik. Requires
   connect. This sends no profile value and has no stage, confirm, or abort.
 
   The remote command is exactly
   doas /usr/local/bin/scoped-env-status-fieldsofrevik
   with no arguments and an empty stdin. Success is exit 0 and one line
-  wire=v2 profile=fields-postgres-v1 source=host-local state=ready
+  wire=v2 profile=fields-postgres-v2 source=host-local state=ready
   generation=<32 lowercase hex> reason=ok
   whose generation equals expected-generation. Any other grammar, a refusal
   reason, a missing or mismatched id, extra stdout, or exit 75 (lock timeout,
@@ -20,7 +20,7 @@ description: >
 
 inputs:
   profile:
-    description: Must be fields-postgres-v1. No other profile is approved.
+    description: Must be fields-postgres-v2. No other profile is approved.
     required: true
   app:
     description: >

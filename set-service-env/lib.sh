@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# set-service-env/lib.sh - checks for the fields-postgres-v1 status contract.
+# set-service-env/lib.sh - checks for the fields-postgres-v2 status contract.
 #
 # Sourced, never executed. v2 carries no profile values. The only remote
 # status command is the literal
@@ -11,7 +11,7 @@
 
 export LC_ALL=C
 
-SCOPED_PROFILE=fields-postgres-v1
+SCOPED_PROFILE=fields-postgres-v2
 SCOPED_APP=fieldsofrevik
 
 scoped_refuse() {
@@ -24,6 +24,8 @@ scoped_check_profile() {
 		"$SCOPED_PROFILE") ;;
 		"")
 			scoped_refuse "service-env-profile is empty. The only approved profile is ${SCOPED_PROFILE}." ;;
+		fields-postgres-v1)
+			scoped_refuse "service-env-profile fields-postgres-v1 is not approved. The only approved profile is ${SCOPED_PROFILE}." ;;
 		*)
 			scoped_refuse "service-env-profile '${SERVICE_ENV_PROFILE}' is not approved. The only approved profile is ${SCOPED_PROFILE}." ;;
 	esac
@@ -43,12 +45,32 @@ scoped_check_app() {
 scoped_check_no_profile_values() {
 	local var
 	if [ -n "${SECRET_NAMES:-}" ] && [ -n "${SECRET_NAMES//[[:space:]]/}" ]; then
-		scoped_refuse "fields-postgres-v1 does not accept a secrets: list. Profile values are host-local and are not pushed."
+		scoped_refuse "fields-postgres-v2 does not accept a secrets: list. Profile values are host-local and are not pushed."
 	fi
 	while IFS= read -r var; do
 		[ -z "$var" ] && continue
-		scoped_refuse "fields-postgres-v1 does not accept ${var}. Profile values are host-local and are not sent over GitHub or SSH."
+		scoped_refuse "fields-postgres-v2 does not accept ${var}. Profile values are host-local and are not sent over GitHub or SSH."
 	done < <(compgen -v | grep -E '^(KOMIZO_SCOPED_|KOMIZO_SECRET_)' | sort || true)
+	# The eleven host-local names. A set variable is refused even when empty.
+	# The value is never expanded into the message or a remote command.
+	while IFS= read -r var; do
+		[ -z "$var" ] && continue
+		if [ -n "${!var+x}" ]; then
+			scoped_refuse "fields-postgres-v2 does not accept ${var}. Profile values are host-local and are not sent over GitHub or SSH."
+		fi
+	done <<'NAMES'
+POSTGRES_PASSWORD
+REVIK_MIGRATOR_PASSWORD
+REVIK_APP_PASSWORD
+REVIK_BACKUP_PASSWORD
+DATABASE_URL
+DATABASE_MIGRATION_URL
+WS_SECRET
+CLERK_ISSUER
+CLERK_JWKS_URL
+CLERK_AUTHORIZED_PARTIES
+CLERK_SECRET_KEY
+NAMES
 }
 
 scoped_check_generation() {
@@ -87,7 +109,7 @@ try:
 except UnicodeDecodeError:
     sys.exit(2)
 pat = re.compile(
-    r"wire=v2 profile=fields-postgres-v1 source=host-local "
+    r"wire=v2 profile=fields-postgres-v2 source=host-local "
     r"state=(ready|missing|invalid) "
     r"generation=([0-9a-f]{32}|none) "
     r"reason=(ok|no-current|bad-mode|symlink|partial|profile-mismatch)\Z"
