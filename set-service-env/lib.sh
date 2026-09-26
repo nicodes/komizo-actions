@@ -107,3 +107,27 @@ if ready != ok or ready != hex_id or ok != hex_id:
 sys.stdout.write(state + "\n" + generation + "\n" + reason + "\n")
 PY
 }
+
+# Return 0 when neither file contains a recognizable secret shape. Return 3
+# when one does. Never prints either file. A compose error can carry an env
+# value; the caller must fail closed and emit only a generic diagnostic.
+scoped_deploy_output_is_secret() {
+	python3 - "$@" <<'PY'
+import re, sys
+pat = re.compile(
+    rb"(?i)("
+    rb"[a-z][a-z0-9+.-]*://[^\s/@]+:[^\s/@]+@"
+    rb"|password\s*="
+    rb"|KOMIZO_(?:SCOPED|SECRET)_"
+    rb"|WS_SECRET"
+    rb"|DATABASE_URL\s*="
+    rb"|SECRET_KEY\s*="
+    rb")"
+)
+for path in sys.argv[1:]:
+    data = open(path, "rb").read()
+    if pat.search(data):
+        sys.exit(3)
+sys.exit(0)
+PY
+}

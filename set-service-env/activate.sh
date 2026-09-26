@@ -15,6 +15,10 @@
 # Success requires ssh exit 0 and exactly one stdout line
 #   deploy: scoped-generation=<the same 32 hex>
 # Absence of that line is failure, unlike the optional previous-version line.
+# Stdout and stderr are captured in mode 0600 and are not copied into the
+# GitHub log. The only remote lines this script emits are ones it
+# reconstructs after validation: the matching generation id, and nothing
+# else. A recognizable secret shape fails closed with a generic diagnostic.
 # This does not roll back containers or the host-local provision. A failed
 # activate stays failed.
 #
@@ -76,25 +80,30 @@ elif [ -n "$REGISTRY_USER" ]; then
 	scoped_refuse "registry-user is set but registry-token is empty; refusing a mixed deploy argv."
 fi
 
-log=$(mktemp)
-chmod 600 "$log"
+stdout_file=$(mktemp)
+stderr_file=$(mktemp)
+chmod 600 "$stdout_file" "$stderr_file"
 cleanup() {
-	rm -f "$log"
+	rm -f "$stdout_file" "$stderr_file"
 }
 trap cleanup EXIT
 
 echo "Deploying ${VERSION} generation=${EXPECTED_GENERATION}"
 
-fence="komizo-$(date +%s%N)-$RANDOM"
-echo "::stop-commands::$fence"
 rc=0
 # shellcheck disable=SC2029 # the remote command is built from charset-checked fields
 printf '%s' "$REGISTRY_TOKEN" \
 	| ssh deploy-target "doas /usr/local/bin/deploy-fieldsofrevik '${VERSION}' '${reg_arg}' '${user_arg}' '${EXPECTED_GENERATION}'" \
-		2>&1 | tee "$log" || rc=$?
-echo "::$fence::"
+		>"$stdout_file" 2>"$stderr_file" || rc=$?
 
-gen_lines=$(grep -cE '^deploy: scoped-generation=[0-9a-f]{32}$' "$log" || true)
+secret_rc=0
+scoped_deploy_output_is_secret "$stdout_file" "$stderr_file" || secret_rc=$?
+if [ "$secret_rc" -ne 0 ]; then
+	echo "::error::scoped deploy output looked secret-like and was suppressed."
+	exit 1
+fi
+
+gen_lines=$(grep -cE '^deploy: scoped-generation=[0-9a-f]{32}$' "$stdout_file" || true)
 if [ "$gen_lines" -ne 1 ]; then
 	echo "::error::deploy did not print exactly one deploy: scoped-generation=<32hex> line."
 	if [ "$rc" -ne 0 ]; then
@@ -102,7 +111,7 @@ if [ "$gen_lines" -ne 1 ]; then
 	fi
 	exit 1
 fi
-reported=$(grep -E '^deploy: scoped-generation=[0-9a-f]{32}$' "$log")
+reported=$(grep -E '^deploy: scoped-generation=[0-9a-f]{32}$' "$stdout_file")
 reported=${reported#deploy: scoped-generation=}
 if [ "$reported" != "$EXPECTED_GENERATION" ]; then
 	echo "::error::deploy scoped-generation=${reported} did not match expected-generation."
@@ -113,11 +122,11 @@ if [ "$rc" -ne 0 ]; then
 	exit "$rc"
 fi
 
-prev_count=$(grep -c '^deploy: previous-version=' "$log" || true)
+prev_count=$(grep -c '^deploy: previous-version=' "$stdout_file" || true)
 if [ "$prev_count" -gt 1 ]; then
 	scoped_refuse "deploy printed previous-version more than once."
 fi
-previous=$(sed -n 's/^deploy: previous-version=//p' "$log" | head -n 1)
+previous=$(sed -n 's/^deploy: previous-version=//p' "$stdout_file" | head -n 1)
 case "$previous" in
 	*[!A-Za-z0-9._-]*)
 		scoped_refuse "deploy previous-version was not a plain image tag and was not recorded." ;;
@@ -130,4 +139,5 @@ fi
 	echo "previous-version=${previous}"
 	echo "scoped-generation=${reported}"
 } >>"$GITHUB_OUTPUT"
+echo "deploy: scoped-generation=${reported}"
 echo "Scoped deploy completed generation=${reported}."
