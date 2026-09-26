@@ -75,6 +75,7 @@ config publish and the restart:
 | [`connect`](#connect) | Installs the key + pinned host key, defines `deploy-target` | — |
 | [`publish-config`](#publish-config) | Publishes `compose.yml` as an image | registry login |
 | [`set-secrets`](#set-secrets) | Writes secrets the host can't read back | `connect` |
+| [`set-service-env`](#set-service-env) | Reads the fields-postgres-v2 host-local status | `connect` |
 | [`activate`](#activate) | Runs the deploy on the host — the step that changes what is running | `connect` |
 | [`health-check`](#health-check) | Polls a URL until it answers | — |
 
@@ -95,6 +96,7 @@ script keeps the verifying and installing.
 - [`deploy`](#deploy) — the whole sequence in one step
 - [The `deploy-target` seam](#the-deploy-target-seam) — running your own commands on the host
 - [`connect`](#connect) · [`publish-config`](#publish-config) · [`set-secrets`](#set-secrets) · [`activate`](#activate) · [`health-check`](#health-check) — the primitives, in execution order
+- [`set-service-env`](#set-service-env) — the fields-postgres-v2 status read, not a pinned sibling
 - [`preview`](#preview) — a pull request's preview, up and down, on the deploy target
 - [`publish`](#publish) — the release half: the Build gate's images, pushed with the registry login internalized
 - [`setup-godot`](#setup-godot) — Godot from the caller's checksum-verified archives, the cache pin internalized
@@ -123,6 +125,8 @@ does not follow the `-config` naming, skip the prune with a notice.
 | `config-hostnames` | no | `""` | File listing the hostnames this app answers on, one per line. Goes with `config-compose`; a `komizo.yml` carries its own. |
 | `config-image` | no | `""` | Config image reference **without** a tag. Required with `config` or `config-compose`. |
 | `secrets` | no | `""` | Rarely needed — names for values passed as plain env vars. Normally the `KOMIZO_SECRET_*` env vars are the list. |
+| `service-env-profile` | no | `""` | Opt in to `fields-postgres-v2` instead of `set-secrets`. Empty keeps the legacy path, except app `fieldsofrevik`, which refuses it. Requires `expected-generation` and `health-urls`. Sends no profile value. See [fields-scoped-env-v1](fields-scoped-env-v1.md). |
+| `expected-generation` | no | `""` | 32 lowercase hex. Required with the profile. Refused when the profile is empty. Nonsecret. |
 | `registry` | no | `ghcr.io` | Registry the host authenticates against. Empty to skip. |
 | `registry-user` | no | `""` | Registry username. |
 | `registry-token` | no | `""` | Registry password. Prefer the run-scoped `GITHUB_TOKEN`. |
@@ -455,6 +459,41 @@ if the new value must take effect immediately; Compose picks it up when the
 container is recreated.
 
 **Outputs:** `count` — how many secrets were set.
+
+## `set-service-env`
+
+Reads the host's scoped service-env status for the one approved profile,
+`fields-postgres-v2` (app `fieldsofrevik`). Requires `connect`. Most workflows
+should not call it directly: [`deploy`](#deploy)'s `service-env-profile`
+input runs this before activate and again after health, and fails the job if
+the postflight does not match.
+
+Leave `service-env-profile` empty and, for every app except `fieldsofrevik`,
+`set-secrets` is unchanged. `fieldsofrevik` refuses an empty profile. Set the
+profile and no profile value is pushed. `fields-postgres-v1` is rejected.
+`KOMIZO_SECRET_*`, `KOMIZO_SCOPED_*`, a `secrets:` list, and the eleven
+host-local names including `CLERK_SECRET_KEY` are refused. Their values are
+not logged and are not sent to set-secrets or SSH.
+
+The remote command is exactly
+`doas /usr/local/bin/scoped-env-status-fieldsofrevik`, with no arguments and
+an empty stdin. There is no stage, confirm, or abort. A failed activate or
+health check stays failed. This is not a rollback of containers, database
+role credentials, or the host-local provision. `docker compose up` may not
+recreate a service whose resolved config is unchanged.
+
+The Fields deploy command is not the pinned `activate` action. It is four
+arguments, and Actions requires `deploy: scoped-generation=<id>`. The full
+contract is [fields-scoped-env-v1](fields-scoped-env-v1.md). Remote deploy
+text is not copied into the log. It does not claim a fresh cutover is safe.
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `profile` | yes | — | Must be `fields-postgres-v2`. |
+| `app` | no | `KOMIZO_APP_NAME` | Must be `fieldsofrevik`. Not interpolated into the command. |
+| `expected-generation` | yes | — | 32 lowercase hex. Compared locally. Not a status argument. |
+
+**Outputs:** `generation` — the id the status line reported, when it matched. Not a secret.
 
 ## `activate`
 

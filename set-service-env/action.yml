@@ -1,0 +1,53 @@
+name: Read scoped service env status
+description: >
+  Read the host's fields-postgres-v2 status for app fieldsofrevik. Requires
+  connect. This sends no profile value and has no stage, confirm, or abort.
+
+  The remote command is exactly
+  doas /usr/local/bin/scoped-env-status-fieldsofrevik
+  with no arguments and an empty stdin. Success is exit 0 and one line
+  wire=v2 profile=fields-postgres-v2 source=host-local state=ready
+  generation=<32 lowercase hex> reason=ok
+  whose generation equals expected-generation. Any other grammar, a refusal
+  reason, a missing or mismatched id, extra stdout, or exit 75 (lock timeout,
+  empty stdout) fails the step. Remote text that is not that grammar is not
+  logged.
+
+  This does not replace the host deploy recheck under its lock. Deploy is
+  what passes the same id as the fourth argument and requires
+  deploy: scoped-generation=<id>. A failed activate or health check stays
+  failed. There is no Actions rollback of the host-local provision.
+
+inputs:
+  profile:
+    description: Must be fields-postgres-v2. No other profile is approved.
+    required: true
+  app:
+    description: >
+      Must be fieldsofrevik. Falls back to KOMIZO_APP_NAME. The host command
+      is not built from this string.
+    required: false
+    default: ""
+  expected-generation:
+    description: >
+      Opaque generation id, exactly 32 lowercase hex. Nonsecret. Compared
+      locally to the status line. Not sent as a status argument.
+    required: true
+
+outputs:
+  generation:
+    description: >
+      The generation the status line reported, when it matched
+      expected-generation. Empty if the step failed. Not a secret.
+    value: ${{ steps.run.outputs.generation }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        SERVICE_ENV_PROFILE: ${{ inputs.profile }}
+        APP: ${{ inputs.app }}
+        EXPECTED_GENERATION: ${{ inputs.expected-generation }}
+      run: bash "$GITHUB_ACTION_PATH/status.sh"
