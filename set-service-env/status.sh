@@ -12,7 +12,7 @@
 # abort, or send a profile value.
 #
 # Inputs (environment):
-#   SERVICE_ENV_PROFILE   fields-postgres-v1
+#   SERVICE_ENV_PROFILE   fields-postgres-v2
 #   APP                   fieldsofrevik
 #   EXPECTED_GENERATION   32 lowercase hex
 #   SSH_CONFIG            ssh config to look for deploy-target in

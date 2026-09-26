@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/set-service-env.test.sh - pin the fields-postgres-v1 status contract.
+# tests/set-service-env.test.sh - pin the fields-postgres-v2 status contract.
 # shellcheck disable=SC2319
 #
 # v2 sends no profile value. The runner half is a pure function of its inputs:
@@ -37,7 +37,7 @@ ok() {
 }
 
 status_line() { # <state> <generation> <reason>
-	printf 'wire=v2 profile=fields-postgres-v1 source=host-local state=%s generation=%s reason=%s\n' "$1" "$2" "$3"
+	printf 'wire=v2 profile=fields-postgres-v2 source=host-local state=%s generation=%s reason=%s\n' "$1" "$2" "$3"
 }
 
 install_ssh() {
@@ -144,7 +144,7 @@ stdin_empty() {
 echo "== status =="
 
 run_script set-service-env/status.sh 0 "ready/ok matching id succeeds" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_STDOUT="$(status_line ready "$GEN" ok)"
 argv_is "deploy-target doas /usr/local/bin/scoped-env-status-fieldsofrevik" \
@@ -160,21 +160,21 @@ else
 fi
 
 run_script set-service-env/status.sh 1 "missing/no-current is a refusal even at exit 0" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_STDOUT="$(status_line missing none no-current)"
 log_has "state=missing reason=no-current" "a closed refusal is named"
 log_lacks "wire=v2" "the raw status line is not logged"
 
 run_script set-service-env/status.sh 1 "ready/ok with a different id is a mismatch" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_STDOUT="$(status_line ready "$OTHER" ok)"
 log_has "generation=$OTHER" "the reported id is named"
 log_lacks "Scoped env status ready" "a mismatch is not success"
 
 run_script set-service-env/status.sh 1 "an injected status line is suppressed" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_STDOUT="$(printf '%s\n::set-output name=x::postgres-secret-value\n' "$(status_line ready "$GEN" ok)")"
 log_lacks "postgres-secret-value" "injected stdout is not logged"
@@ -182,63 +182,63 @@ log_lacks "::set-output" "a workflow command is not logged"
 log_has "was suppressed" "protocol failure is a fixed message"
 
 run_script set-service-env/status.sh 1 "wrong key order is suppressed" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
-	STUB_STDOUT="profile=fields-postgres-v1 wire=v2 source=host-local state=ready generation=$GEN reason=ok"
-log_lacks "profile=fields-postgres-v1 wire=v2" "a reordered line is not logged"
+	STUB_STDOUT="profile=fields-postgres-v2 wire=v2 source=host-local state=ready generation=$GEN reason=ok"
+log_lacks "profile=fields-postgres-v2 wire=v2" "a reordered line is not logged"
 
 run_script set-service-env/status.sh 1 "ready without ok is a protocol error" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_STDOUT="$(status_line ready "$GEN" no-current)"
 log_lacks "reason=no-current" "an invariant break is not echoed"
 
 run_script set-service-env/status.sh 1 "a hex id on a non-ready line is a protocol error" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_STDOUT="$(status_line invalid "$GEN" bad-mode)"
 log_lacks "reason=bad-mode" "a hex id outside ready/ok is not logged"
 log_has "was suppressed" "the mixed line is a protocol failure"
 
 run_script set-service-env/status.sh 1 "exit 1 with empty stdout is no line" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_SSH_RC=1 STUB_STDOUT=
 log_has "wrote no line" "an empty exit 1 is named"
 log_lacks "Scoped env status ready" "an empty exit 1 is not success"
 
 run_script set-service-env/status.sh 75 "exit 75 with empty stdout is lock timeout" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_SSH_RC=75 STUB_STDOUT=
 log_has "lock timeout" "lock timeout is named"
 
 run_script set-service-env/status.sh 1 "exit 75 with stdout is not a timeout success" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_SSH_RC=75 STUB_STDOUT="$(status_line ready "$GEN" ok)"
 log_lacks "Scoped env status ready" "a timed-out line is not success"
 log_lacks "wire=v2" "timeout stdout is not logged"
 
 run_script set-service-env/status.sh 255 "ssh failure with empty stdout fails closed" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_SSH_RC=255 STUB_STDERR='postgres-secret-value'
 log_has "ssh failed" "ssh failure is named"
 log_lacks "postgres-secret-value" "stderr is not parsed or logged"
 
 run_script set-service-env/status.sh 1 "a bad generation never reaches ssh" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION='0123456789ABCDEF0123456789ABCDEF'
 no_ssh "uppercase generation did not ssh"
 
 run_script set-service-env/status.sh 1 "a short generation never reaches ssh" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION=abc
 no_ssh "short generation did not ssh"
 
 run_script set-service-env/status.sh 1 "KOMIZO_SCOPED_* is refused" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	KOMIZO_SCOPED_WS_SECRET='ws-secret-value+/='
 no_ssh "a scoped value did not ssh"
@@ -246,19 +246,49 @@ log_has "KOMIZO_SCOPED_WS_SECRET" "the variable name is the message"
 log_lacks "ws-secret-value+/=" "the scoped value is not logged"
 
 run_script set-service-env/status.sh 1 "KOMIZO_SECRET_* is refused" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	KOMIZO_SECRET_DATABASE_URL='postgres://app:db-secret@db/app'
 no_ssh "a legacy secret did not ssh"
 log_lacks "db-secret" "the legacy secret value is not logged"
 
+run_script set-service-env/status.sh 1 "CLERK_SECRET_KEY in the runner is refused" \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" \
+	CLERK_SECRET_KEY='sk_test_fake-clerk-secret'
+no_ssh "a clerk secret did not ssh"
+log_has "does not accept CLERK_SECRET_KEY" "the refusal names the variable"
+log_lacks "fake-clerk-secret" "the clerk secret value is not logged"
+log_lacks "sk_test_" "the clerk secret prefix is not logged"
+
+run_script set-service-env/status.sh 1 "a set profile value is refused even when empty" \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" \
+	WS_SECRET=
+no_ssh "an empty profile value did not ssh"
+log_has "does not accept WS_SECRET" "an empty profile value is still a channel"
+
+run_script set-service-env/status.sh 1 "fields-postgres-v1 is not a profile" \
+	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN"
+no_ssh "a v1 profile did not ssh"
+log_has "fields-postgres-v1 is not approved" "v1 is named as rejected"
+
+run_script set-service-env/status.sh 1 "a v1 status line is a protocol error" \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" \
+	STUB_STDOUT="wire=v2 profile=fields-postgres-v1 source=host-local state=ready generation=$GEN reason=ok"
+log_lacks "profile=fields-postgres-v1" "a v1 status line is not logged"
+log_has "was suppressed" "a v1 status line is a protocol failure"
+log_lacks "Scoped env status ready" "a v1 status line is not success"
+
 run_script set-service-env/status.sh 1 "the wrong app is refused" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=blog \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=blog \
 	EXPECTED_GENERATION="$GEN"
 no_ssh "wrong app did not ssh"
 
 run_script set-service-env/status.sh 1 "no deploy-target means no ssh" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	SSH_CONFIG=/dev/null
 no_ssh "missing deploy-target did not ssh"
@@ -269,7 +299,7 @@ install_ssh "$tmp"
 env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp/home" \
 	SSH_CONFIG="$tmp/ssh_config" SSH_CALLS="$tmp/calls" SSH_STDIN="$tmp/stdin" \
 	GITHUB_OUTPUT="$tmp/output" RUNNER_TEMP="$tmp" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
 	STUB_STDOUT="$(status_line ready "$GEN" ok)" \
 	bash set-service-env/status.sh >/dev/null
@@ -277,7 +307,7 @@ env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp/home" \
 env -i PATH="$tmp/bin:/usr/bin:/bin" HOME="$tmp/home" \
 	SSH_CONFIG="$tmp/ssh_config" SSH_CALLS="$tmp/calls" SSH_STDIN="$tmp/stdin" \
 	GITHUB_OUTPUT="$tmp/output2" RUNNER_TEMP="$tmp" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$OTHER" \
 	STUB_STDOUT="$(status_line ready "$GEN" ok)" \
 	bash set-service-env/status.sh >/dev/null
@@ -293,7 +323,7 @@ rm -rf "$tmp"
 echo "== activate =="
 
 run_script set-service-env/activate.sh 0 "four empty-auth args and the required line" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 REGISTRY=ghcr.io \
 	STUB_STDOUT="$(printf 'deploy: previous-version=old1\ndeploy: scoped-generation=%s' "$GEN")"
 argv_is "deploy-target doas /usr/local/bin/deploy-fieldsofrevik 'abc123' '' '' '$GEN'" \
@@ -307,7 +337,7 @@ log_has "deploy: scoped-generation=$GEN" "the accepted id is reconstructed"
 log_lacks "previous-version=old1" "a recorded tag is not replayed from the host line"
 
 run_script set-service-env/activate.sh 0 "registry auth is the middle pair and stdin" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	REGISTRY=ghcr.io REGISTRY_USER='github-actions[bot]' \
 	REGISTRY_TOKEN='registry-token-value' \
@@ -325,13 +355,13 @@ else
 fi
 
 run_script set-service-env/activate.sh 1 "a mixed registry pair is refused" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	REGISTRY_USER=someone
 no_ssh "mixed argv did not ssh"
 
 run_script set-service-env/activate.sh 1 "missing scoped-generation line fails at exit 0" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	STUB_STDOUT='deploy: previous-version=old1'
 log_has "exactly one" "absence is a failure"
@@ -344,13 +374,13 @@ else
 fi
 
 run_script set-service-env/activate.sh 1 "a mismatched deploy line fails" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	STUB_STDOUT="deploy: scoped-generation=$OTHER"
 log_has "did not match" "mismatch is named"
 
 run_script set-service-env/activate.sh 255 "ssh failure is not a successful deploy" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	STUB_SSH_RC=255 STUB_STDERR='postgres-secret-value'
 log_lacks "Scoped deploy completed" "ssh failure is not success"
@@ -363,7 +393,7 @@ else
 fi
 
 run_script set-service-env/activate.sh 1 "a secret in remote output is suppressed and fails closed" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	STUB_STDOUT="$(printf 'deploy: scoped-generation=%s\nError response from daemon: DATABASE_URL=postgres://fields:fake-db-secret@db:5432/fields\n' "$GEN")" \
 	STUB_STDERR='compose failed to interpolate WS_SECRET=fake-ws-secret'
@@ -382,7 +412,7 @@ else
 fi
 
 run_script set-service-env/activate.sh 0 "benign extra deploy lines are not echoed" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	STUB_STDOUT="$(printf 'deploy: previous-version=old1\ndeploy: started=yes\ndeploy: scoped-generation=%s\ndeploy: reverse proxy reloaded\n' "$GEN")" \
 	STUB_STDERR='deploy: WARNING -- the proxy would not reload; it is still serving its previous routes'
@@ -392,7 +422,7 @@ log_lacks "still serving" "stderr is not logged"
 log_has "Scoped deploy completed" "benign extra lines do not fail the deploy"
 
 run_script set-service-env/activate.sh 1 "an unsafe previous-version is not recorded" \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	STUB_STDOUT="$(printf 'deploy: previous-version=old::set-output\ndeploy: scoped-generation=%s' "$GEN")"
 log_has "not a plain image tag" "a forged previous-version is refused"
@@ -421,21 +451,38 @@ log_has "silently dropped" "legacy generation is refused"
 
 run_script set-service-env/validate.sh 1 "the opt-in fails closed without health-urls" \
 	ALLOW_EMPTY_PROFILE=1 REQUIRE_HEALTH=1 \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN"
 log_has "health-urls is empty" "health is required"
 
 run_script set-service-env/validate.sh 0 "the opt-in accepts health-urls and a generation" \
 	ALLOW_EMPTY_PROFILE=1 REQUIRE_HEALTH=1 \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" HEALTH_URLS='https://example.test/health'
 
 run_script set-service-env/validate.sh 1 "the opt-in refuses a secrets list" \
 	ALLOW_EMPTY_PROFILE=1 REQUIRE_HEALTH=1 \
-	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" HEALTH_URLS='https://example.test/health' \
 	SECRET_NAMES=DATABASE_URL
 log_has "does not accept a secrets: list" "the names list is refused"
+
+run_script set-service-env/validate.sh 1 "the opt-in refuses CLERK_SECRET_KEY before ssh" \
+	ALLOW_EMPTY_PROFILE=1 REQUIRE_HEALTH=1 \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" HEALTH_URLS='https://example.test/health' \
+	CLERK_SECRET_KEY='sk_test_fake-clerk-secret'
+no_ssh "validate did not ssh with a clerk secret"
+log_lacks "fake-clerk-secret" "validate does not log the clerk secret"
+
+run_script set-service-env/activate.sh 1 "a clerk secret in deploy output is suppressed" \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
+	STUB_STDOUT="deploy: scoped-generation=$GEN" \
+	STUB_STDERR='CLERK_SECRET_KEY=sk_test_remote-clerk-secret'
+log_lacks "remote-clerk-secret" "a remote clerk secret is not logged"
+log_lacks "CLERK_SECRET_KEY" "the remote assignment is not logged"
+log_lacks "Scoped deploy completed" "a remote clerk secret is not success"
 
 echo "== wiring =="
 
@@ -523,6 +570,7 @@ for phrase in \
 	'not prove that a fresh PostgreSQL cutover is safe' \
 	'doas /usr/local/bin/scoped-env-status-fieldsofrevik' \
 	'deploy: scoped-generation=' \
+	'profile=fields-postgres-v1' \
 	'mode 0600 files' \
 	'There is no stage, confirm, or abort'; do
 	if grep -qF "$phrase" docs/fields-scoped-env-v1.md; then

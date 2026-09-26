@@ -3,12 +3,12 @@
 #
 # Deploy runs this with ALLOW_EMPTY_PROFILE=1 and REQUIRE_HEALTH=1. An empty
 # profile is the legacy path for every app except fieldsofrevik, which fails
-# closed. A set profile must be fields-postgres-v1 for that app, with a
+# closed. A set profile must be fields-postgres-v2 for that app, with a
 # 32-hex expected generation, no profile values, and a health-urls list.
 # Nothing here opens a connection.
 #
 # Inputs (environment):
-#   SERVICE_ENV_PROFILE   empty, or fields-postgres-v1
+#   SERVICE_ENV_PROFILE   empty, or fields-postgres-v2
 #   APP                   resolved app name; KOMIZO_APP_NAME is the fallback
 #   SECRET_NAMES          the deploy secrets: input
 #   HEALTH_URLS           the deploy health-urls input

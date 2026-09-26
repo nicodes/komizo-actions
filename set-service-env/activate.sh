@@ -2,7 +2,7 @@
 # set-service-env/activate.sh - Fields deploy argv, four positional arguments.
 #
 # Legacy activate is not this script. This runs only for fieldsofrevik with
-# fields-postgres-v1. The remote command is exactly
+# fields-postgres-v2. The remote command is exactly
 #   doas /usr/local/bin/deploy-fieldsofrevik
 #     '<version>' '<registry-or-empty>' '<registry-user-or-empty>' '<32hex>'
 # The registry token, if any, stays on stdin. The generation is not an

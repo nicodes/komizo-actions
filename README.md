@@ -68,9 +68,11 @@ That connects over SSH, publishes this commit's `compose.yml` as an image, sets
 any secrets, makes the tag live, and polls until the app answers — failing the
 job if it does not.
 
-One app opts out of that secret path. `service-env-profile: fields-postgres-v1`
+One app opts out of that secret path. `service-env-profile: fields-postgres-v2`
 is approved only for `fieldsofrevik`, and that app refuses an empty profile.
-No profile value is sent. The action reads a host-local status line and passes
+No profile value is sent. `fields-postgres-v1` is rejected, as is a runner
+`CLERK_SECRET_KEY` or any other profile-value variable; the value is not
+logged. The action reads a host-local status line and passes
 a nonsecret generation id as the fourth deploy argument. Leave the input empty
 on any other app and nothing here changes. A failed activate or health check
 stays failed; this is not a rollback of the host-local provision. `docker
@@ -121,7 +123,7 @@ Most workflows need only `deploy`, which composes the rest in the right order.
 | [`connect`](./connect) | Installs the key and the pinned host key |
 | [`publish-config`](./publish-config) | Ships `compose.yml` and the hostname list as an image |
 | [`set-secrets`](./set-secrets) | Writes secrets the host cannot read back |
-| [`set-service-env`](./set-service-env) | Reads the fields-postgres-v1 host-local status; deploy passes the generation id |
+| [`set-service-env`](./set-service-env) | Reads the fields-postgres-v2 host-local status; deploy passes the generation id |
 | [`activate`](./activate) | Runs the deploy on the host — the step that changes what is running |
 | [`health-check`](./health-check) | Polls a URL until it answers |
 | [`run-task`](./run-task) | Invokes one app-defined, host-allowlisted production task after `connect` |

@@ -1,4 +1,4 @@
-# fields-postgres-v1 scoped service env
+# fields-postgres-v2 scoped service env
 
 This is the CI half of one approved profile. It is not a release, and it does
 not prove that a fresh PostgreSQL cutover is safe. Volume discovery, the
@@ -8,9 +8,11 @@ is tagged, merged, or installed on a host.
 ## What it is
 
 Actions carries no profile value. Not a database URL, not a role password,
-not `WS_SECRET`, and not the public Clerk settings. Those live in one
-privileged host-local batch. This action sends only a nonsecret generation id,
-and only on the deploy command.
+not `WS_SECRET`, not `CLERK_SECRET_KEY`, and not the public Clerk settings.
+Those live in one privileged host-local batch of eleven values. A runner
+environment that already has one of those names is refused. The value is
+not logged and is not sent to set-secrets or SSH. This action sends only a
+nonsecret generation id, and only on the deploy command.
 
 Status is a separate read:
 
@@ -21,7 +23,7 @@ doas /usr/local/bin/scoped-env-status-fieldsofrevik
 No arguments. No stdin. No `doas -n`. Success is exit 0 and exactly one line:
 
 ```text
-wire=v2 profile=fields-postgres-v1 source=host-local state=ready generation=<32 lowercase hex> reason=ok
+wire=v2 profile=fields-postgres-v2 source=host-local state=ready generation=<32 lowercase hex> reason=ok
 ```
 
 The generation must equal `expected-generation`. A grammar-valid refusal
@@ -33,13 +35,15 @@ generation is `none`. A 32-hex generation on a missing or invalid line, or
 any other pairing of those three, is a protocol error and is not logged.
 
 The closed reason enum is `ok`, `no-current`, `bad-mode`, `symlink`,
-`partial`, and `profile-mismatch`.
+`partial`, and `profile-mismatch`. A `fields-postgres-v1` profile, or a
+status line that still says `profile=fields-postgres-v1`, is rejected.
+That line is not logged.
 
 ## Deploy
 
 `deploy`'s `service-env-profile` input is the opt-in. Empty — the default —
 leaves every app except `fieldsofrevik` on `set-secrets`. App `fieldsofrevik`
-refuses an empty profile. Set to `fields-postgres-v1`, it requires app
+refuses an empty profile. Set to `fields-postgres-v2`, it requires app
 `fieldsofrevik`, a 32-hex `expected-generation`, and `health-urls`.
 
 `KOMIZO_SECRET_*`, `KOMIZO_SCOPED_*`, and a `secrets:` list are refused. A
