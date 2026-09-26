@@ -28,8 +28,9 @@ The generation must equal `expected-generation`. A grammar-valid refusal
 (`state=missing|invalid`, `generation=none`, or a reason other than `ok`)
 still fails the step, even when the host exits 0. Exit 75 with empty stdout
 is a lock timeout. Any other stdout is a protocol error and is not logged.
-`ready`, `ok`, and a 32-hex generation travel together; a line that pairs
-them any other way is a protocol error.
+`ready`, `ok`, and a 32-hex generation travel together. Otherwise the
+generation is `none`. A 32-hex generation on a missing or invalid line, or
+any other pairing of those three, is a protocol error and is not logged.
 
 The closed reason enum is `ok`, `no-current`, `bad-mode`, `symlink`,
 `partial`, and `profile-mismatch`.

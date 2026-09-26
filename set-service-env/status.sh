@@ -62,6 +62,11 @@ if [ "$rc" -eq 75 ]; then
 	exit 1
 fi
 
+if [ "$rc" -eq 1 ] && [ ! -s "$stdout_file" ]; then
+	echo "::error::scoped-env status wrote no line (exit 1)."
+	exit 1
+fi
+
 if [ "$rc" -ne 0 ] && [ ! -s "$stdout_file" ]; then
 	echo "::error::scoped-env status ssh failed (exit ${rc}). Remote text was suppressed."
 	exit "$rc"

@@ -95,11 +95,15 @@ pat = re.compile(
 m = pat.fullmatch(text)
 if not m:
     sys.exit(2)
+# ready iff reason=ok iff generation is 32 lowercase hex. Any other
+# pairing, including a hex id on a missing or invalid line, is not a
+# valid status line. A valid refusal has generation=none.
 state, generation, reason = m.group(1), m.group(2), m.group(3)
-success = state == "ready" and reason == "ok" and generation != "none"
-if state == "ready" or reason == "ok":
-    if not success:
-        sys.exit(2)
+hex_id = generation != "none"
+ready = state == "ready"
+ok = reason == "ok"
+if ready != ok or ready != hex_id or ok != hex_id:
+    sys.exit(2)
 sys.stdout.write(state + "\n" + generation + "\n" + reason + "\n")
 PY
 }

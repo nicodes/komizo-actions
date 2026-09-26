@@ -193,6 +193,20 @@ run_script set-service-env/status.sh 1 "ready without ok is a protocol error" \
 	STUB_STDOUT="$(status_line ready "$GEN" no-current)"
 log_lacks "reason=no-current" "an invariant break is not echoed"
 
+run_script set-service-env/status.sh 1 "a hex id on a non-ready line is a protocol error" \
+	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" \
+	STUB_STDOUT="$(status_line invalid "$GEN" bad-mode)"
+log_lacks "reason=bad-mode" "a hex id outside ready/ok is not logged"
+log_has "was suppressed" "the mixed line is a protocol failure"
+
+run_script set-service-env/status.sh 1 "exit 1 with empty stdout is no line" \
+	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" \
+	STUB_SSH_RC=1 STUB_STDOUT=
+log_has "wrote no line" "an empty exit 1 is named"
+log_lacks "Scoped env status ready" "an empty exit 1 is not success"
+
 run_script set-service-env/status.sh 75 "exit 75 with empty stdout is lock timeout" \
 	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" \
