@@ -282,6 +282,13 @@ log_lacks "profile=fields-postgres-v1" "a v1 status line is not logged"
 log_has "was suppressed" "a v1 status line is a protocol failure"
 log_lacks "Scoped env status ready" "a v1 status line is not success"
 
+run_script set-service-env/status.sh 1 "a recorded v1 profile is profile-mismatch, not ready" \
+	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" \
+	STUB_STDOUT="$(status_line invalid none profile-mismatch)"
+log_has "state=invalid reason=profile-mismatch" "the host refusal is named"
+log_lacks "Scoped env status ready" "profile-mismatch is not success"
+
 run_script set-service-env/status.sh 1 "the wrong app is refused" \
 	SERVICE_ENV_PROFILE=fields-postgres-v2 APP=blog \
 	EXPECTED_GENERATION="$GEN"
