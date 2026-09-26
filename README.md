@@ -68,6 +68,16 @@ That connects over SSH, publishes this commit's `compose.yml` as an image, sets
 any secrets, makes the tag live, and polls until the app answers — failing the
 job if it does not.
 
+One app opts out of that secret path. `service-env-profile: fields-postgres-v1`
+is approved only for `fieldsofrevik`. It does not push `KOMIZO_SECRET_*`. The
+ten `KOMIZO_SCOPED_*` values are staged before activate and confirmed only
+after the health check. Leave the input empty and nothing here changes.
+Abort restores the env link and does not roll back containers, database role
+credentials or migrations, and `docker compose up` may not recreate a service
+whose resolved config is unchanged. The contract, including what is still
+unresolved on the host, is in
+[docs/fields-scoped-env-v1.md](./docs/fields-scoped-env-v1.md).
+
 **[Full reference →](./docs/actions.md)**
 
 ## What these need
@@ -111,6 +121,7 @@ Most workflows need only `deploy`, which composes the rest in the right order.
 | [`connect`](./connect) | Installs the key and the pinned host key |
 | [`publish-config`](./publish-config) | Ships `compose.yml` and the hostname list as an image |
 | [`set-secrets`](./set-secrets) | Writes secrets the host cannot read back |
+| [`set-service-env`](./set-service-env) | Stages the fields-postgres-v1 scoped env; deploy confirms it only after health |
 | [`activate`](./activate) | Runs the deploy on the host — the step that changes what is running |
 | [`health-check`](./health-check) | Polls a URL until it answers |
 | [`run-task`](./run-task) | Invokes one app-defined, host-allowlisted production task after `connect` |

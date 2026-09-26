@@ -75,6 +75,7 @@ config publish and the restart:
 | [`connect`](#connect) | Installs the key + pinned host key, defines `deploy-target` | — |
 | [`publish-config`](#publish-config) | Publishes `compose.yml` as an image | registry login |
 | [`set-secrets`](#set-secrets) | Writes secrets the host can't read back | `connect` |
+| [`set-service-env`](#set-service-env) | Stages, confirms, aborts or reads the fields-postgres-v1 scoped env | `connect` |
 | [`activate`](#activate) | Runs the deploy on the host — the step that changes what is running | `connect` |
 | [`health-check`](#health-check) | Polls a URL until it answers | — |
 
@@ -95,6 +96,7 @@ script keeps the verifying and installing.
 - [`deploy`](#deploy) — the whole sequence in one step
 - [The `deploy-target` seam](#the-deploy-target-seam) — running your own commands on the host
 - [`connect`](#connect) · [`publish-config`](#publish-config) · [`set-secrets`](#set-secrets) · [`activate`](#activate) · [`health-check`](#health-check) — the primitives, in execution order
+- [`set-service-env`](#set-service-env) — the fields-postgres-v1 opt-in, not a sixth pinned sibling
 - [`preview`](#preview) — a pull request's preview, up and down, on the deploy target
 - [`publish`](#publish) — the release half: the Build gate's images, pushed with the registry login internalized
 - [`setup-godot`](#setup-godot) — Godot from the caller's checksum-verified archives, the cache pin internalized
@@ -123,6 +125,7 @@ does not follow the `-config` naming, skip the prune with a notice.
 | `config-hostnames` | no | `""` | File listing the hostnames this app answers on, one per line. Goes with `config-compose`; a `komizo.yml` carries its own. |
 | `config-image` | no | `""` | Config image reference **without** a tag. Required with `config` or `config-compose`. |
 | `secrets` | no | `""` | Rarely needed — names for values passed as plain env vars. Normally the `KOMIZO_SECRET_*` env vars are the list. |
+| `service-env-profile` | no | `""` | Opt in to `fields-postgres-v1` instead of `set-secrets`. Empty keeps the legacy path. Only app `fieldsofrevik`. Requires `health-urls` and the ten `KOMIZO_SCOPED_*` values. See [fields-scoped-env-v1](fields-scoped-env-v1.md). |
 | `registry` | no | `ghcr.io` | Registry the host authenticates against. Empty to skip. |
 | `registry-user` | no | `""` | Registry username. |
 | `registry-token` | no | `""` | Registry password. Prefer the run-scoped `GITHUB_TOKEN`. |
@@ -455,6 +458,43 @@ if the new value must take effect immediately; Compose picks it up when the
 container is recreated.
 
 **Outputs:** `count` — how many secrets were set.
+
+## `set-service-env`
+
+Stages, confirms, aborts or reads the host's scoped service env for the one
+approved profile, `fields-postgres-v1` (app `fieldsofrevik`). Requires
+`connect`. Most workflows should not call it directly: [`deploy`](#deploy)'s
+`service-env-profile` input runs stage before activate, confirm only after
+health success, and abort on activation or health failure, and it fails the
+job if a stage was not confirmed.
+
+Leave `service-env-profile` empty and `set-secrets` is unchanged. Set it and
+`KOMIZO_SECRET_*` is not pushed to the aggregate `secrets.env`. Supplying
+those names beside the opt-in is refused.
+
+The ten values are `KOMIZO_SCOPED_*` environment variables, not inputs. `stage`
+sends them on stdin as 11 LF lines (`v1`, then ASCII-sorted
+`KEY=<RFC4648 padded standard base64>`). The remote command is exactly
+`doas /usr/local/bin/set-scoped-env-fieldsofrevik <stage|confirm|abort|status>`,
+with no other arguments.
+
+Abort restores the link. It does not roll back containers, database role
+credentials or migrations. `docker compose up` may not recreate a service
+whose resolved config is unchanged, so a rotation is not proof of a restart.
+Mapping onto `./secrets/current/{postgres,migrate,api,godot-api}.env` and the
+`WS_SECRET` fanout are host-side. The host cancellation lease,
+previous-generation retention and strict value charset are unresolved.
+
+The full contract, including the draft release note (not published), is
+[fields-scoped-env-v1](fields-scoped-env-v1.md).
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `operation` | yes | — | `stage`, `confirm`, `abort` or `status`. |
+| `profile` | yes | — | Must be `fields-postgres-v1`. |
+| `app` | no | `KOMIZO_APP_NAME` | Must be `fieldsofrevik`. Not interpolated into the command. |
+
+**Outputs:** `result` — the operation that completed. Not a host status line.
 
 ## `activate`
 
