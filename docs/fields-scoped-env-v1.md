@@ -62,6 +62,11 @@ app-config mutation. Actions still requires exactly one stdout line
 `deploy: scoped-generation=<the same id>` and exit 0. Absence fails, unlike
 the optional `deploy: previous-version=` line. Preflight does not replace
 that recheck. Postflight repeats the status compare after health.
+Remote stdout and stderr are captured in mode 0600 files and are not
+copied into the GitHub log. The step emits the generation id only after
+it has validated that exact line. Other remote text is suppressed. A
+recognizable secret shape fails the step without logging the captured
+bytes.
 
 There is no stage, confirm, or abort. A failed activate, a failed health
 check, or a cancelled job stays failed. This action does not roll back

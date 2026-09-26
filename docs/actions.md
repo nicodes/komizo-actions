@@ -482,8 +482,8 @@ recreate a service whose resolved config is unchanged.
 
 The Fields deploy command is not the pinned `activate` action. It is four
 arguments, and Actions requires `deploy: scoped-generation=<id>`. The full
-contract is [fields-scoped-env-v1](fields-scoped-env-v1.md). It does not
-claim a fresh cutover is safe.
+contract is [fields-scoped-env-v1](fields-scoped-env-v1.md). Remote deploy
+text is not copied into the log. It does not claim a fresh cutover is safe.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |

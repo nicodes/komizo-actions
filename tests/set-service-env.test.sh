@@ -303,7 +303,8 @@ grep -qxF "scoped-generation=$GEN" "$LAST_TMP/output"
 ok $? "activate records the generation"
 grep -qxF "previous-version=old1" "$LAST_TMP/output"
 ok $? "a plain previous-version is recorded"
-log_has "::stop-commands::" "deploy output is inside a workflow fence"
+log_has "deploy: scoped-generation=$GEN" "the accepted id is reconstructed"
+log_lacks "previous-version=old1" "a recorded tag is not replayed from the host line"
 
 run_script set-service-env/activate.sh 0 "registry auth is the middle pair and stdin" \
 	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
@@ -353,6 +354,7 @@ run_script set-service-env/activate.sh 255 "ssh failure is not a successful depl
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	STUB_SSH_RC=255 STUB_STDERR='postgres-secret-value'
 log_lacks "Scoped deploy completed" "ssh failure is not success"
+log_lacks "postgres-secret-value" "ssh stderr is not copied into the log"
 if grep -q 'postgres-secret-value' "$LAST_TMP/output"; then
 	fail=$((fail + 1))
 	printf 'FAIL  deploy stderr reached GITHUB_OUTPUT\n'
@@ -360,11 +362,41 @@ else
 	pass=$((pass + 1))
 fi
 
+run_script set-service-env/activate.sh 1 "a secret in remote output is suppressed and fails closed" \
+	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
+	STUB_STDOUT="$(printf 'deploy: scoped-generation=%s\nError response from daemon: DATABASE_URL=postgres://fields:fake-db-secret@db:5432/fields\n' "$GEN")" \
+	STUB_STDERR='compose failed to interpolate WS_SECRET=fake-ws-secret'
+log_lacks "fake-db-secret" "a database URL in stdout is not logged"
+log_lacks "fake-ws-secret" "a secret in stderr is not logged"
+log_lacks "DATABASE_URL" "the secret assignment is not logged"
+log_lacks "WS_SECRET" "the stderr assignment is not logged"
+log_lacks "postgres://fields" "the credential URL is not logged"
+log_lacks "Scoped deploy completed" "secret-like output is not a green deploy"
+log_has "suppressed" "the failure is a generic diagnostic"
+if grep -q 'fake-db-secret\|fake-ws-secret' "$LAST_TMP/output"; then
+	fail=$((fail + 1))
+	printf 'FAIL  a remote secret reached GITHUB_OUTPUT\n'
+else
+	pass=$((pass + 1))
+fi
+
+run_script set-service-env/activate.sh 0 "benign extra deploy lines are not echoed" \
+	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
+	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
+	STUB_STDOUT="$(printf 'deploy: previous-version=old1\ndeploy: started=yes\ndeploy: scoped-generation=%s\ndeploy: reverse proxy reloaded\n' "$GEN")" \
+	STUB_STDERR='deploy: WARNING -- the proxy would not reload; it is still serving its previous routes'
+log_lacks "started=yes" "a known extra line is not replayed"
+log_lacks "reverse proxy reloaded" "an unvalidated stdout line is not logged"
+log_lacks "still serving" "stderr is not logged"
+log_has "Scoped deploy completed" "benign extra lines do not fail the deploy"
+
 run_script set-service-env/activate.sh 1 "an unsafe previous-version is not recorded" \
 	SERVICE_ENV_PROFILE=fields-postgres-v1 APP=fieldsofrevik \
 	EXPECTED_GENERATION="$GEN" VERSION=abc123 \
 	STUB_STDOUT="$(printf 'deploy: previous-version=old::set-output\ndeploy: scoped-generation=%s' "$GEN")"
 log_has "not a plain image tag" "a forged previous-version is refused"
+log_lacks "set-output" "a forged previous-version is not logged"
 if grep -q 'set-output' "$LAST_TMP/output"; then
 	fail=$((fail + 1))
 	printf 'FAIL  forged previous-version reached GITHUB_OUTPUT\n'
@@ -459,6 +491,12 @@ grep -qF 'doas /usr/local/bin/scoped-env-status-fieldsofrevik' set-service-env/s
 ok $? "status command is the frozen literal"
 grep -qF 'doas /usr/local/bin/deploy-fieldsofrevik' set-service-env/activate.sh
 ok $? "deploy command is the frozen literal"
+if grep -q 'tee ' set-service-env/activate.sh; then
+	fail=$((fail + 1))
+	printf 'FAIL  activate still tees remote output into the log\n'
+else
+	pass=$((pass + 1))
+fi
 # shellcheck disable=SC2016 # the ${ is a literal we refuse to find
 if grep -qF 'deploy-${' set-service-env/status.sh set-service-env/activate.sh; then
 	fail=$((fail + 1))
@@ -485,6 +523,7 @@ for phrase in \
 	'not prove that a fresh PostgreSQL cutover is safe' \
 	'doas /usr/local/bin/scoped-env-status-fieldsofrevik' \
 	'deploy: scoped-generation=' \
+	'mode 0600 files' \
 	'There is no stage, confirm, or abort'; do
 	if grep -qF "$phrase" docs/fields-scoped-env-v1.md; then
 		pass=$((pass + 1))
