@@ -1,141 +1,75 @@
 # fields-postgres-v1 scoped service env
 
-This is the CI half of one approved profile. It is not a general secret
-store, and it is not a release. Nothing here is tagged or published.
+This is the CI half of one approved profile. It is not a release, and it does
+not prove that a fresh PostgreSQL cutover is safe. Volume discovery, the
+`PG_VERSION` fail-closed, and Compose recreation are host-owned. Nothing here
+is tagged, merged, or installed on a host.
 
 ## What it is
 
-`set-service-env` talks to the host command the CLI profile installs:
+Actions carries no profile value. Not a database URL, not a role password,
+not `WS_SECRET`, and not the public Clerk settings. Those live in one
+privileged host-local batch. This action sends only a nonsecret generation id,
+and only on the deploy command.
+
+Status is a separate read:
 
 ```text
-doas /usr/local/bin/set-scoped-env-fieldsofrevik <stage|confirm|abort|status>
+doas /usr/local/bin/scoped-env-status-fieldsofrevik
 ```
 
-No other arguments. No `doas -n`. The host lock is that command's; this
-action has no flag that skips it.
+No arguments. No stdin. No `doas -n`. Success is exit 0 and exactly one line:
 
-The only approved profile is `fields-postgres-v1`, and only for app
-`fieldsofrevik`. Any other profile or app is refused before a connection.
+```text
+wire=v2 profile=fields-postgres-v1 source=host-local state=ready generation=<32 lowercase hex> reason=ok
+```
 
-`deploy`'s `service-env-profile` input is the lifecycle. Empty — the default
-— leaves `set-secrets` exactly as it was. Set to `fields-postgres-v1`, it
-does not call `set-secrets` and does not push `KOMIZO_SECRET_*` to the
-aggregate `secrets.env`. A `KOMIZO_SECRET_*` variable or a `secrets:` list
-beside the opt-in is refused, so a green run cannot mean "those were pushed
-too".
+The generation must equal `expected-generation`. A grammar-valid refusal
+(`state=missing|invalid`, `generation=none`, or a reason other than `ok`)
+still fails the step, even when the host exits 0. Exit 75 with empty stdout
+is a lock timeout. Any other stdout is a protocol error and is not logged.
+`ready`, `ok`, and a 32-hex generation travel together; a line that pairs
+them any other way is a protocol error.
 
-## Values
+The closed reason enum is `ok`, `no-current`, `bad-mode`, `symlink`,
+`partial`, and `profile-mismatch`.
 
-The caller supplies ten nonempty environment variables. They are not action
-inputs: an input is recorded in the workflow run.
+## Deploy
 
-| Variable | Key on the wire |
-| --- | --- |
-| `KOMIZO_SCOPED_CLERK_AUTHORIZED_PARTIES` | `CLERK_AUTHORIZED_PARTIES` |
-| `KOMIZO_SCOPED_CLERK_ISSUER` | `CLERK_ISSUER` |
-| `KOMIZO_SCOPED_CLERK_JWKS_URL` | `CLERK_JWKS_URL` |
-| `KOMIZO_SCOPED_DATABASE_MIGRATION_URL` | `DATABASE_MIGRATION_URL` |
-| `KOMIZO_SCOPED_DATABASE_URL` | `DATABASE_URL` |
-| `KOMIZO_SCOPED_POSTGRES_PASSWORD` | `POSTGRES_PASSWORD` |
-| `KOMIZO_SCOPED_REVIK_APP_PASSWORD` | `REVIK_APP_PASSWORD` |
-| `KOMIZO_SCOPED_REVIK_BACKUP_PASSWORD` | `REVIK_BACKUP_PASSWORD` |
-| `KOMIZO_SCOPED_REVIK_MIGRATOR_PASSWORD` | `REVIK_MIGRATOR_PASSWORD` |
-| `KOMIZO_SCOPED_WS_SECRET` | `WS_SECRET` |
+`deploy`'s `service-env-profile` input is the opt-in. Empty — the default —
+leaves every app except `fieldsofrevik` on `set-secrets`. App `fieldsofrevik`
+refuses an empty profile. Set to `fields-postgres-v1`, it requires app
+`fieldsofrevik`, a 32-hex `expected-generation`, and `health-urls`.
 
-All ten are checked before the first remote call of `stage`. An empty value
-is the same failure as a missing one: GitHub substitutes an empty string for
-a secret that does not exist. An extra `KOMIZO_SCOPED_*` name is refused, so
-a typo is not silently dropped.
+`KOMIZO_SECRET_*`, `KOMIZO_SCOPED_*`, and a `secrets:` list are refused. A
+green run cannot mean those were pushed.
 
-`stage` sends them on stdin only. The payload is exactly 11 LF-terminated
-lines and no extra byte: `v1`, then those keys in ASCII order, each
-`KEY=<RFC4648 padded standard base64 of the raw value>`. The base64 is one
-line even when the value contains a newline. `confirm`, `abort` and `status`
-send an empty stdin. Nothing is an argument, because arguments are visible
-in the host process list.
+The Fields deploy does not use the pinned `activate` action. That pin has no
+fourth argument. This checkout runs:
 
-The action does not enforce a stricter charset than "nonempty, and bash can
-hold it" (no NUL). The host's strict value charset is unresolved. A value the
-host rejects fails the step. The value is not logged.
+```text
+doas /usr/local/bin/deploy-fieldsofrevik '<version>' '<registry>' '<registry-user>' '<expected-generation>'
+```
 
-## Lifecycle
+The registry token, if any, stays on stdin. No token means the middle two
+arguments are empty quoted strings, including when the registry input still
+defaults to `ghcr.io`. A mixed empty/nonempty pair is refused locally.
+Legacy activate calls stay at one or three arguments.
 
-`deploy` with the opt-in:
+The host rechecks the id under its lock immediately before the first
+app-config mutation. Actions still requires exactly one stdout line
+`deploy: scoped-generation=<the same id>` and exit 0. Absence fails, unlike
+the optional `deploy: previous-version=` line. Preflight does not replace
+that recheck. Postflight repeats the status compare after health.
 
-1. Validates the profile, the app, the ten values, the absence of legacy
-   secret names, and a nonempty `health-urls`, before connect.
-2. Stages, before activate.
-3. Activates.
-4. Health-checks. An empty `health-urls` is refused up front. Confirm is not
-   legal after a skipped check.
-5. Confirms only when the health step's outcome is success. Confirm deletes
-   the previous generation on the host.
-6. On activation failure, health failure, or a cancellation that still lets
-   the runner run an `if: always()` step, aborts if this job's stage ssh
-   returned 0 and confirm did not complete.
-7. Fails the job if stage succeeded and confirm did not. Abort restoring the
-   link does not make the deploy green.
+There is no stage, confirm, or abort. A failed activate, a failed health
+check, or a cancelled job stays failed. This action does not roll back
+containers, database role credentials, or the host-local provision. `docker
+compose up` may not recreate a service whose resolved config is unchanged,
+so a green deploy is not proof that every container restarted.
 
-A composite action cannot declare a `post:` step. If the runner is killed
-during the stage ssh, no marker is written and no abort runs. That case fails
-loud when a later step still runs, and says the cancellation lease is
-unresolved. It does not claim the link was restored.
+## What this does not claim
 
-The direct action is the same four verbs. `stage` succeeding there means
-staged, not confirmed. A workflow that only stages is green with an
-unconfirmed stage. Pair it with confirm or abort, including an `if: always()`
-abort, or use `deploy`.
-
-## What the host does, and what this action does not
-
-Fields Compose is planned to read
-`./secrets/current/{postgres,migrate,api,godot-api}.env`. Mapping the ten
-values onto those files, and fanning `WS_SECRET` out, happen host-side. This
-action does not write those files.
-
-`stage` switches `current` atomically and retains one prior pending
-generation. `confirm` deletes that previous generation. `abort` restores the
-link. Abort does not roll back containers, database role credentials or
-migrations.
-
-`docker compose up` may not recreate a service whose resolved config is
-unchanged. Activate does not pass `--force-recreate`, and this action does
-not change that command. A staged rotation, and a green deploy, are not proof
-that every container restarted onto the new values. A container that kept
-running still has the environment it started with. A container that was
-recreated has the new one. This action cannot tell those apart.
-
-After a failed health check the link may already have been restored while the
-containers are still the ones activate started. That split is not repaired
-here.
-
-## Unresolved on the host
-
-These are not accepted, and this action does not close them:
-
-- **Cancellation lease.** A runner killed during `stage`, or a host lock held
-  by a session that will not return, can leave a staged generation. The
-  action aborts when it has a marker and a live runner. It cannot abort a
-  host it can no longer reach, and it does not invent a lease timeout.
-- **Previous-generation retention.** `confirm` is what deletes the previous
-  generation. If confirm never runs and abort never reaches the host, that
-  generation can be retained indefinitely. Abort restores the link; it does
-  not delete generations. No retention bound is implemented here because the
-  host contract does not define one.
-- **Strict value charset.** Unresolved. The action encodes any nonempty value
-  and surfaces a host rejection without logging the value.
-
-## Draft release note
-
-Not published. Not a tag. Not a GitHub release. Do not run `scripts/release.sh`
-for this branch.
-
-> `set-service-env` and `deploy`'s `service-env-profile: fields-postgres-v1`
-> stage ten `KOMIZO_SCOPED_*` values to
-> `doas /usr/local/bin/set-scoped-env-fieldsofrevik` before activate, confirm
-> only after health success, and abort on activation or health failure. The
-> legacy `KOMIZO_SECRET_*` path is unchanged when the input is empty, and is
-> not used when it is set. Abort does not roll back containers, database role
-> credentials or migrations. `docker compose up` may not recreate a service
-> whose resolved config is unchanged. The host cancellation lease,
-> previous-generation retention and strict value charset remain unresolved.
+The host must refuse an uncertain existing `pg_data` or role state, and must
+refuse role-password rotation in v1. Those checks are not in this repository.
+Do not treat a green Actions run as a fresh cutover.

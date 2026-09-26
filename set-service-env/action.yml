@@ -1,70 +1,45 @@
-name: Set scoped service env
+name: Read scoped service env status
 description: >
-  Stage, confirm, abort or status the host's scoped service env for the one
-  approved profile, fields-postgres-v1 (app fieldsofrevik). Requires connect.
+  Read the host's fields-postgres-v1 status for app fieldsofrevik. Requires
+  connect. This sends no profile value and has no stage, confirm, or abort.
 
-  This is the primitive. The deploy action's service-env-profile input is the
-  lifecycle: it stages before activate, confirms only after health success,
-  aborts on activation or health failure, and fails the job if a stage was
-  not confirmed. Calling stage here and stopping is a green step with an
-  unconfirmed stage — pair it with confirm or abort, including an if: always()
-  abort, or use deploy. A composite action cannot declare a post: step, so a
-  runner that is killed during stage cannot be cleaned up from here.
+  The remote command is exactly
+  doas /usr/local/bin/scoped-env-status-fieldsofrevik
+  with no arguments and an empty stdin. Success is exit 0 and one line
+  wire=v2 profile=fields-postgres-v1 source=host-local state=ready
+  generation=<32 lowercase hex> reason=ok
+  whose generation equals expected-generation. Any other grammar, a refusal
+  reason, a missing or mismatched id, extra stdout, or exit 75 (lock timeout,
+  empty stdout) fails the step. Remote text that is not that grammar is not
+  logged.
 
-  Values arrive as KOMIZO_SCOPED_<KEY> environment variables, never as
-  inputs. An input is recorded in the workflow run. The ten keys are fixed:
-  CLERK_AUTHORIZED_PARTIES, CLERK_ISSUER, CLERK_JWKS_URL,
-  DATABASE_MIGRATION_URL, DATABASE_URL, POSTGRES_PASSWORD,
-  REVIK_APP_PASSWORD, REVIK_BACKUP_PASSWORD, REVIK_MIGRATOR_PASSWORD,
-  WS_SECRET. All ten must be nonempty before stage opens a connection.
-  stage sends them on stdin only, as 11 LF lines: v1, then KEY=<RFC4648
-  padded standard base64>, keys in ASCII order. confirm, abort and status
-  send an empty stdin. The remote command is exactly
-  doas /usr/local/bin/set-scoped-env-fieldsofrevik <stage|confirm|abort|status>
-  with no other arguments. The host lock is the host command's; this action
-  has no flag that skips it.
-
-  Mapping those values onto ./secrets/current/{postgres,migrate,api,godot-api}.env
-  and fanning WS_SECRET out are host-side. This action does not write those
-  files and does not push KOMIZO_SECRET_* to the aggregate secrets.env.
-
-  Abort restores the scoped-env link. It does not roll back containers,
-  database role credentials or migrations. docker compose up may not recreate
-  a service whose resolved config is unchanged, so a staged rotation is not
-  proof that every container restarted onto the new values. The host's
-  cancellation lease, indefinite previous-generation retention, and strict
-  value charset are unresolved; this action does not claim to close them.
-  It accepts any nonempty value bash can hold and fails closed if the host
-  rejects it, without logging the value.
+  This does not replace the host deploy recheck under its lock. Deploy is
+  what passes the same id as the fourth argument and requires
+  deploy: scoped-generation=<id>. A failed activate or health check stays
+  failed. There is no Actions rollback of the host-local provision.
 
 inputs:
-  operation:
-    description: >
-      stage, confirm, abort or status. stage switches the host's current
-      link and retains one prior generation. confirm deletes that previous
-      generation and is only appropriate after the deploy and its health
-      check have succeeded. abort restores the link and does not roll back
-      containers, database role credentials or migrations. status prints a
-      nonsecret status.
-    required: true
   profile:
-    description: >
-      Must be fields-postgres-v1. No other profile is approved.
+    description: Must be fields-postgres-v1. No other profile is approved.
     required: true
   app:
     description: >
-      Must be fieldsofrevik, the only app the profile is approved for.
-      Falls back to KOMIZO_APP_NAME. The host command is not built from this
-      string; a mismatch is refused rather than interpolated.
+      Must be fieldsofrevik. Falls back to KOMIZO_APP_NAME. The host command
+      is not built from this string.
     required: false
     default: ""
+  expected-generation:
+    description: >
+      Opaque generation id, exactly 32 lowercase hex. Nonsecret. Compared
+      locally to the status line. Not sent as a status argument.
+    required: true
 
 outputs:
-  result:
+  generation:
     description: >
-      The operation that completed: stage, confirm, abort or status. Empty
-      if the step failed. Not a host status line, and never a secret.
-    value: ${{ steps.run.outputs.result }}
+      The generation the status line reported, when it matched
+      expected-generation. Empty if the step failed. Not a secret.
+    value: ${{ steps.run.outputs.generation }}
 
 runs:
   using: composite
@@ -72,7 +47,7 @@ runs:
     - id: run
       shell: bash
       env:
-        OPERATION: ${{ inputs.operation }}
         SERVICE_ENV_PROFILE: ${{ inputs.profile }}
         APP: ${{ inputs.app }}
-      run: bash "$GITHUB_ACTION_PATH/run.sh"
+        EXPECTED_GENERATION: ${{ inputs.expected-generation }}
+      run: bash "$GITHUB_ACTION_PATH/status.sh"
