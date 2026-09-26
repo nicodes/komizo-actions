@@ -128,11 +128,11 @@ runs:
     - name: preview safety contract
       shell: bash
       run: bash tests/preview.test.sh
-    # The scoped-env path stages production credentials and switches the
-    # host's current link. Its runner half is pinned against fixture ssh:
-    # the exact argv, the 11-line stdin payload, no secret bytes in the log,
-    # fail-closed before the first remote call, and abort only when a stage
-    # this job completed was not confirmed.
+    # The scoped-env path reads a host-local status line and passes a
+    # nonsecret generation id. It sends no profile value. Its runner half is
+    # pinned against fixture ssh: the exact argv, empty status stdin, no
+    # secret bytes in the log, fail-closed before the first remote call, and
+    # no stage, confirm, or abort.
     - name: scoped service env contract
       shell: bash
       run: bash tests/set-service-env.test.sh

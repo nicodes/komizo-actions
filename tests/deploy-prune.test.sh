@@ -421,7 +421,7 @@ else
 fi
 
 # shellcheck disable=SC2016 # single quotes are deliberate: a literal workflow expression
-grep -q 'PREVIOUS: \${{ steps.version.outputs.previous-version }}' deploy/action.yml
+grep -q 'PREVIOUS: \${{ steps.version.outputs.previous-version || steps.scoped-activate.outputs.previous-version }}' deploy/action.yml
 ok $? "the prune keeps the previous revision from the activate output"
 
 # shellcheck disable=SC2016 # single quotes are deliberate: a literal workflow expression
