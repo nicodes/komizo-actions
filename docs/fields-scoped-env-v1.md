@@ -37,7 +37,9 @@ any other pairing of those three, is a protocol error and is not logged.
 The closed reason enum is `ok`, `no-current`, `bad-mode`, `symlink`,
 `partial`, and `profile-mismatch`. A `fields-postgres-v1` profile, or a
 status line that still says `profile=fields-postgres-v1`, is rejected.
-That line is not logged.
+That line is not logged. A recorded v1 profile is not relabeled ready.
+The host still prints `profile=fields-postgres-v2` and
+`state=invalid generation=none reason=profile-mismatch`.
 
 ## Deploy
 
