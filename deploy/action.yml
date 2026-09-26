@@ -27,6 +27,18 @@ description: >
   is the property worth keeping: the rest of the job's environment, including
   every secret this step does not need, stays out of it.
 
+  service-env-profile is an opt-in that replaces that path for one approved
+  profile, fields-postgres-v1, and only for app fieldsofrevik. Leave it empty
+  and set-secrets is unchanged. Set it and KOMIZO_SECRET_* is not pushed to
+  the aggregate secrets.env; the ten KOMIZO_SCOPED_* values are staged on
+  stdin to doas /usr/local/bin/set-scoped-env-fieldsofrevik before activate,
+  confirmed only after health success, and aborted if activate or health
+  fails. An empty health-urls fails closed. Abort restores the link and does
+  not roll back containers, database role credentials or migrations. docker
+  compose up may not recreate a service whose resolved config is unchanged.
+  The host cancellation lease, previous-generation retention and strict value
+  charset are unresolved. See docs/fields-scoped-env-v1.md.
+
   This wraps connect, publish-config, set-secrets, activate and health-check.
   Those remain the primitives; reach for them when you need your own steps
   interleaved, and use this for everything else.
@@ -174,6 +186,24 @@ inputs:
     required: false
     default: ""
 
+  service-env-profile:
+    description: >
+      Opt in to the scoped service-env profile instead of set-secrets. The
+      only approved value is fields-postgres-v1, and only for app
+      fieldsofrevik. Empty (the default) keeps the legacy KOMIZO_SECRET_*
+      path exactly.
+
+      When set, the ten KOMIZO_SCOPED_* environment variables are required,
+      KOMIZO_SECRET_* and secrets: are refused rather than pushed, health-urls
+      is required, stage runs before activate, confirm runs only after health
+      success, and a stage that is not confirmed fails the job. Abort restores
+      the host link and does not roll back containers, database role
+      credentials or migrations. docker compose up may not recreate a service
+      whose resolved config is unchanged, so a green deploy is not proof that
+      every container restarted onto the new values.
+    required: false
+    default: ""
+
   # --- registry -------------------------------------------------------------
   registry:
     description: Registry the host authenticates against before pulling. Empty to skip.
@@ -261,6 +291,7 @@ runs:
         HOST: ${{ inputs.host }}
         APP: ${{ inputs.app }}
         SECRET_NAMES: ${{ inputs.secrets }}
+        SERVICE_ENV_PROFILE: ${{ inputs.service-env-profile }}
       run: bash "$GITHUB_ACTION_PATH/resolve.sh"
 
     # Everything this action alone can check, checked before anything is
@@ -281,7 +312,16 @@ runs:
         CONFIG_COMPOSE: ${{ inputs.config-compose }}
         CONFIG_HOSTNAMES: ${{ inputs.config-hostnames }}
         CONFIG_IMAGE: ${{ inputs.config-image }}
-      run: bash "$GITHUB_ACTION_PATH/validate.sh"
+        SERVICE_ENV_PROFILE: ${{ steps.cfg.outputs.service-env-profile }}
+        HEALTH_URLS: ${{ inputs.health-urls }}
+        SECRET_NAMES: ${{ inputs.secrets }}
+      run: |
+        set -euo pipefail
+        bash "$GITHUB_ACTION_PATH/validate.sh"
+        # ALLOW_EMPTY_PROFILE keeps the legacy path a no-op here. REQUIRE_HEALTH
+        # is the opt-in's fail-closed: confirm is illegal without a health success.
+        ALLOW_EMPTY_PROFILE=1 REQUIRE_HEALTH=1 \
+          bash "$GITHUB_ACTION_PATH/../set-service-env/validate.sh"
 
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before anything has been published.
@@ -319,11 +359,28 @@ runs:
 
     # 3. Secrets BEFORE the deploy, so the containers it recreates start with
     #    the current values.
-    - if: steps.cfg.outputs.has-secrets == 'true'
+    #    Skipped when the scoped profile is set. The opt-in must not push
+    #    KOMIZO_SECRET_* to the aggregate secrets.env; validate.sh has already
+    #    refused the combination, and this if is the bypass if that gate is
+    #    ever skipped.
+    - if: steps.cfg.outputs.has-secrets == 'true' && steps.cfg.outputs.service-env-profile == ''
       uses: nicodes/komizo-actions/set-secrets@29cff35a1ec5309b045518fa9202b0519aa88723
       with:
         names: ${{ inputs.secrets }}
         command: doas /usr/local/bin/set-secret-${{ steps.cfg.outputs.app }}
+
+    # 3b. Scoped env BEFORE activate, and only then. The script is the sibling
+    #     in this same checkout, not a uses: pin: the action does not exist at
+    #     the last release SHA, and pinning deploy to a SHA that contains this
+    #     file already pins the script. See set-service-env/run.sh.
+    - id: scoped-stage
+      if: steps.cfg.outputs.service-env-profile != ''
+      shell: bash
+      env:
+        OPERATION: stage
+        SERVICE_ENV_PROFILE: ${{ steps.cfg.outputs.service-env-profile }}
+        APP: ${{ steps.cfg.outputs.app }}
+      run: bash "$GITHUB_ACTION_PATH/../set-service-env/run.sh"
 
     # 4. Make the tag live.
     - id: version
@@ -345,11 +402,53 @@ runs:
         delay: ${{ inputs.health-delay }}
         timeout: ${{ inputs.health-timeout }}
 
+    # 5b. Confirm only after health success. A skipped health check is not a
+    #     success: the opt-in refused an empty health-urls before stage, and
+    #     this if requires the health step's outcome, not merely a green job.
+    - id: scoped-confirm
+      if: steps.cfg.outputs.service-env-profile != '' && steps.health.outcome == 'success'
+      shell: bash
+      env:
+        OPERATION: confirm
+        SERVICE_ENV_PROFILE: ${{ steps.cfg.outputs.service-env-profile }}
+        APP: ${{ steps.cfg.outputs.app }}
+      run: bash "$GITHUB_ACTION_PATH/../set-service-env/run.sh"
+
+    # 5c. Abort a stage this job completed and did not confirm. always() is
+    #     the most reliable cleanup a composite action can express: it runs
+    #     on failure and, when the runner is still alive, on cancellation.
+    #     It does not run if the runner is killed. The script aborts only when
+    #     the stage marker exists and confirm has not completed. Abort restores
+    #     the link; it does not roll back containers, database role credentials
+    #     or migrations.
+    - id: scoped-abort
+      if: always() && steps.cfg.outputs.service-env-profile != '' && steps.scoped-confirm.outcome != 'success' && steps.scoped-stage.outcome != 'skipped'
+      shell: bash
+      env:
+        SERVICE_ENV_PROFILE: ${{ steps.cfg.outputs.service-env-profile }}
+        APP: ${{ steps.cfg.outputs.app }}
+        SCOPED_STAGE_OUTCOME: ${{ steps.scoped-stage.outcome }}
+      run: bash "$GITHUB_ACTION_PATH/../set-service-env/abort-if-staged.sh"
+
+    # 5d. Never green on an unconfirmed stage. Abort may have restored the
+    #     link; that does not make the deploy successful. A skipped confirm
+    #     after a successful stage is a failure, including when health failed
+    #     or the job was cancelled and this step still ran.
+    - id: scoped-unconfirmed
+      if: always() && steps.scoped-stage.outcome == 'success' && steps.scoped-confirm.outcome != 'success'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::error::scoped env was staged but not confirmed; the deploy is not successful."
+        exit 1
+
     # 6. Prune this app's superseded images on the host, keeping the live and
     #    previous revisions (the rollback target) and every image a container
     #    still uses. Runs only after the deploy has succeeded -- a skipped
     #    health check does not skip it, because the precondition is the
-    #    deploy succeeding, not the URLs -- and its own failure warns rather
+    #    deploy succeeding, not the URLs -- except a scoped-env deploy that
+    #    staged and did not confirm, which the step above has already failed.
+    #    Its own failure warns rather
     #    than failing the deploy. See prune.sh / prune-remote.sh, and
     #    tests/deploy-prune.test.sh for the safety contract.
     - name: Prune superseded images

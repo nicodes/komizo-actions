@@ -1,0 +1,78 @@
+name: Set scoped service env
+description: >
+  Stage, confirm, abort or status the host's scoped service env for the one
+  approved profile, fields-postgres-v1 (app fieldsofrevik). Requires connect.
+
+  This is the primitive. The deploy action's service-env-profile input is the
+  lifecycle: it stages before activate, confirms only after health success,
+  aborts on activation or health failure, and fails the job if a stage was
+  not confirmed. Calling stage here and stopping is a green step with an
+  unconfirmed stage — pair it with confirm or abort, including an if: always()
+  abort, or use deploy. A composite action cannot declare a post: step, so a
+  runner that is killed during stage cannot be cleaned up from here.
+
+  Values arrive as KOMIZO_SCOPED_<KEY> environment variables, never as
+  inputs. An input is recorded in the workflow run. The ten keys are fixed:
+  CLERK_AUTHORIZED_PARTIES, CLERK_ISSUER, CLERK_JWKS_URL,
+  DATABASE_MIGRATION_URL, DATABASE_URL, POSTGRES_PASSWORD,
+  REVIK_APP_PASSWORD, REVIK_BACKUP_PASSWORD, REVIK_MIGRATOR_PASSWORD,
+  WS_SECRET. All ten must be nonempty before stage opens a connection.
+  stage sends them on stdin only, as 11 LF lines: v1, then KEY=<RFC4648
+  padded standard base64>, keys in ASCII order. confirm, abort and status
+  send an empty stdin. The remote command is exactly
+  doas /usr/local/bin/set-scoped-env-fieldsofrevik <stage|confirm|abort|status>
+  with no other arguments. The host lock is the host command's; this action
+  has no flag that skips it.
+
+  Mapping those values onto ./secrets/current/{postgres,migrate,api,godot-api}.env
+  and fanning WS_SECRET out are host-side. This action does not write those
+  files and does not push KOMIZO_SECRET_* to the aggregate secrets.env.
+
+  Abort restores the scoped-env link. It does not roll back containers,
+  database role credentials or migrations. docker compose up may not recreate
+  a service whose resolved config is unchanged, so a staged rotation is not
+  proof that every container restarted onto the new values. The host's
+  cancellation lease, indefinite previous-generation retention, and strict
+  value charset are unresolved; this action does not claim to close them.
+  It accepts any nonempty value bash can hold and fails closed if the host
+  rejects it, without logging the value.
+
+inputs:
+  operation:
+    description: >
+      stage, confirm, abort or status. stage switches the host's current
+      link and retains one prior generation. confirm deletes that previous
+      generation and is only appropriate after the deploy and its health
+      check have succeeded. abort restores the link and does not roll back
+      containers, database role credentials or migrations. status prints a
+      nonsecret status.
+    required: true
+  profile:
+    description: >
+      Must be fields-postgres-v1. No other profile is approved.
+    required: true
+  app:
+    description: >
+      Must be fieldsofrevik, the only app the profile is approved for.
+      Falls back to KOMIZO_APP_NAME. The host command is not built from this
+      string; a mismatch is refused rather than interpolated.
+    required: false
+    default: ""
+
+outputs:
+  result:
+    description: >
+      The operation that completed: stage, confirm, abort or status. Empty
+      if the step failed. Not a host status line, and never a secret.
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        OPERATION: ${{ inputs.operation }}
+        SERVICE_ENV_PROFILE: ${{ inputs.profile }}
+        APP: ${{ inputs.app }}
+      run: bash "$GITHUB_ACTION_PATH/run.sh"
