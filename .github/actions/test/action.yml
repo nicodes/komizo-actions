@@ -42,11 +42,11 @@ runs:
 
     # Every standalone script: the release tool, the two extracted from
     # deploy/action.yml, the two from publish/, preview's resolve and run
-    # halves, and the tests. Globbed rather than listed so a script added
-    # later cannot quietly escape the check.
+    # halves, the scoped-env scripts, and the tests. Globbed rather than
+    # listed so a script added later cannot quietly escape the check.
     - name: Lint the standalone scripts
       shell: bash
-      run: shellcheck scripts/release.sh deploy/*.sh publish/*.sh preview/*.sh tests/*.sh
+      run: shellcheck scripts/release.sh deploy/*.sh publish/*.sh preview/*.sh set-service-env/*.sh tests/*.sh
 
     # actionlint validates workflow files, not action-metadata (action.yml)
     # files, so the bash embedded in the composite actions is checked here
@@ -128,6 +128,14 @@ runs:
     - name: preview safety contract
       shell: bash
       run: bash tests/preview.test.sh
+    # The scoped-env path reads a host-local status line and passes a
+    # nonsecret generation id. It sends no profile value. Its runner half is
+    # pinned against fixture ssh: the exact argv, empty status stdin, no
+    # secret bytes in the log, fail-closed before the first remote call, and
+    # no stage, confirm, or abort.
+    - name: scoped service env contract
+      shell: bash
+      run: bash tests/set-service-env.test.sh
     # The image self-prune deletes data on production hosts, so its safety
     # contract -- family prefix only, keep current + previous, never
     # container-referenced images, never a blanket prune, warn-don't-fail --
