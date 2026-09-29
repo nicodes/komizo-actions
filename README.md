@@ -64,6 +64,12 @@ The host gets exactly what is written there and nothing else. Handing the action
 it would put every secret the job can see into the step's environment, including
 the ones the app has no business holding.
 
+That env block is one half of [the secret rule](docs/secrets.md): a secret is
+held in GitHub and delivered by komizo, or it is generated on the host and
+never leaves it — and there is no third way. `check-secrets` is that rule as a
+check, and it runs on pull requests rather than at deploy time, because the
+useful moment to refuse a hand-placed credential is before it reaches a server.
+
 That connects over SSH, publishes this commit's `compose.yml` as an image, sets
 any secrets, makes the tag live, and polls until the app answers — failing the
 job if it does not.

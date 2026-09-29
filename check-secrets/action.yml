@@ -1,0 +1,102 @@
+name: Check the secret rule
+description: >
+  Fail the build when this app's secrets do not follow the rule every app on
+  these servers follows: a secret is held in GitHub and delivered by komizo, or
+  it is generated on the host and never leaves it — and there is no third way.
+
+  Read-only and offline. It needs no deploy key, no registry token and no
+  server, so it belongs in CI beside the other static checks rather than in the
+  deploy job. Run it on pull requests: the point is to refuse the change, not
+  to discover afterwards that production drifted.
+
+  What it checks, and the mistake behind each one:
+
+    * Every `KOMIZO_SECRET_<NAME>` is a `${{ secrets.NAME }}` expression. A
+      literal there is a committed secret; a computed one leaves no record of
+      what was sent.
+    * The workflow does not write the host's secret store any other way — no
+      scp of an env file, no `ssh host 'cat >> secrets.env'`, no calling
+      `set-secret-<app>` by hand. A value placed that way has no provenance.
+    * Every `env_file` a service reads is either `secrets.env` (delivered from
+      GitHub), a per-service file under the scoped-env directory (provisioned
+      on the host), or a host-local file named in `host-only`. A fourth path is
+      a secret nobody can say the origin of.
+    * `secrets.env` holds EVERY secret this app keeps in GitHub, so only the
+      service that needs them may read it. This is the Revik near-miss: putting
+      all four services on one file would have handed the API the migrator DSN.
+    * No secret-shaped literal is committed in the compose file or the
+      workflow.
+
+  It cannot see the host, which is the other half of the rule: `set-secret`
+  writes and never deletes, so a name dropped from `cd.yml` stays on the box
+  forever. `scripts/host-secret-drift.sh` is that half, run by an operator.
+
+inputs:
+  compose:
+    description: Path to the compose file the host runs.
+    required: false
+    default: deploy/compose.yml
+  workflows:
+    description: >
+      Newline-separated deploy workflows to read. All of them, not just
+      production: a preview deploy delivers secrets too, and it is the one more
+      likely to have been written in a hurry.
+    required: false
+    default: .github/workflows/cd.yml
+  scoped-env-dir:
+    description: >
+      Path prefix, relative to the app directory on the host, that marks a
+      per-service env file provisioned there rather than delivered from GitHub.
+      Empty disables the form entirely, so every such file must be named in
+      host-only.
+    required: false
+    default: secrets/current
+  host-only:
+    description: >
+      Newline-separated `path: service[,service]` entries naming a host-local
+      secret file and the services allowed to read it. This is where the
+      PostgreSQL owner credentials go — the ones generated at provisioning that
+      CI has never seen. Listed one at a time, with their readers, so widening
+      access is a diff rather than a line in a compose file nobody reviews.
+
+          host-only: |
+            postgres-owner.env: postgres
+    required: false
+    default: ""
+  secrets-env-services:
+    description: >
+      Comma-separated services permitted to read `secrets.env`. Leave empty and
+      at most one service may — which is the right answer for almost every app.
+      Set it to say out loud that two services share the whole secret set.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Check the secret rule
+      shell: bash
+      env:
+        COMPOSE: ${{ inputs.compose }}
+        WORKFLOWS: ${{ inputs.workflows }}
+        SCOPED_ENV_DIR: ${{ inputs.scoped-env-dir }}
+        HOST_ONLY: ${{ inputs.host-only }}
+        SECRETS_ENV_SERVICES: ${{ inputs.secrets-env-services }}
+      run: |
+        set -euo pipefail
+        args=(--compose "$COMPOSE" --scoped-env-dir "$SCOPED_ENV_DIR")
+        # Read the newline-separated inputs with `read -r` rather than word
+        # splitting: a host-only entry contains a space after the colon, and
+        # splitting on it would turn one rule into two malformed ones.
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          args+=(--workflow "$line")
+        done <<< "$WORKFLOWS"
+        while IFS= read -r line; do
+          [ -n "$line" ] || continue
+          args+=(--host-only "$line")
+        done <<< "$HOST_ONLY"
+        if [ -n "$SECRETS_ENV_SERVICES" ]; then
+          args+=(--secrets-env-services "$SECRETS_ENV_SERVICES")
+        fi
+        python3 "$GITHUB_ACTION_PATH/check.py" "${args[@]}"
