@@ -46,7 +46,7 @@ runs:
     # listed so a script added later cannot quietly escape the check.
     - name: Lint the standalone scripts
       shell: bash
-      run: shellcheck scripts/release.sh deploy/*.sh publish/*.sh preview/*.sh set-service-env/*.sh tests/*.sh
+      run: shellcheck scripts/*.sh deploy/*.sh publish/*.sh preview/*.sh set-service-env/*.sh tests/*.sh
 
     # actionlint validates workflow files, not action-metadata (action.yml)
     # files, so the bash embedded in the composite actions is checked here
@@ -117,6 +117,14 @@ runs:
       shell: bash
       run: bash tests/parse-config.test.sh
 
+    # check-secrets is the only action here that exists to say NO, so a
+    # regression in it is silent: the build stays green and the rule stops
+    # being enforced. Every refusal in this suite is a state an app in this
+    # portfolio was actually found in.
+    - name: the secret rule
+      shell: bash
+      run: bash tests/check-secrets.test.sh
+
     - name: allowlisted task input handling
       shell: bash
       run: bash tests/run-task.test.sh
@@ -168,7 +176,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        if bash tests/parse-config.test.sh | grep -q '^SKIP'; then
-          echo "::error::the komizo.yml parser tests skipped themselves -- PyYAML is missing"
-          exit 1
-        fi
+        for suite in tests/parse-config.test.sh tests/check-secrets.test.sh; do
+          if bash "$suite" | grep -q '^SKIP'; then
+            echo "::error::$suite skipped itself -- PyYAML is missing"
+            exit 1
+          fi
+        done
