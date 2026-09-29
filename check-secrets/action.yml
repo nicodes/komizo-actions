@@ -11,9 +11,12 @@ description: >
 
   What it checks, and the mistake behind each one:
 
-    * Every `KOMIZO_SECRET_<NAME>` is a `${{ secrets.NAME }}` expression. A
-      literal there is a committed secret; a computed one leaves no record of
-      what was sent.
+    * Every `KOMIZO_SECRET_<NAME>` is a `secrets.NAME` expression. A literal
+      there is a committed secret; a computed one leaves no record of what was
+      sent. (Written without its braces on purpose: Actions evaluates
+      expressions inside an action.yml description, and the literal form made
+      every workflow using this action fail to load with "Unrecognized
+      named-value: 'secrets'" before a single step ran.)
     * The workflow does not write the host's secret store any other way — no
       scp of an env file, no `ssh host 'cat >> secrets.env'`, no calling
       `set-secret-<app>` by hand. A value placed that way has no provenance.
