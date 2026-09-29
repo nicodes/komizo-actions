@@ -100,6 +100,7 @@ script keeps the verifying and installing.
 - [`preview`](#preview) — a pull request's preview, up and down, on the deploy target
 - [`publish`](#publish) — the release half: the Build gate's images, pushed with the registry login internalized
 - [`setup-godot`](#setup-godot) — Godot from the caller's checksum-verified archives, the cache pin internalized
+- [`check-secrets`](#check-secrets) — the secret rule, refused at pull-request time rather than found on a host
 
 ## `deploy`
 
@@ -408,6 +409,40 @@ secrets out of all three. That is what `set-secrets` is for.
 
 **Outputs:** `image-ref` — the full pushed reference *including* the tag,
 unlike the `image` input, which must not carry one.
+
+## `check-secrets`
+
+Fails the build when this app's secrets do not follow
+[the secret rule](secrets.md): a secret is held in GitHub and delivered by
+komizo, or it is generated on the host and never leaves it — and there is no
+third way.
+
+Read-only and offline. No deploy key, no registry token, no server, so it
+belongs in CI beside the other static checks and runs on pull requests. The
+point is to refuse the change, not to find out later that production drifted.
+
+```yaml
+- uses: nicodes/komizo-actions/check-secrets@v0.0.1
+  with:
+    compose: deploy/compose.yml
+    workflows: |
+      .github/workflows/cd.yml
+    host-only: |
+      postgres-owner.env: postgres
+```
+
+| input | default | what it is |
+| --- | --- | --- |
+| `compose` | `deploy/compose.yml` | the compose file the host runs |
+| `workflows` | `.github/workflows/cd.yml` | newline-separated deploy workflows; list the preview one too |
+| `scoped-env-dir` | `secrets/current` | prefix marking a per-service file provisioned on the host |
+| `host-only` | — | newline-separated `path: service[,service]` — the generated credentials and who may read them |
+| `secrets-env-services` | — | comma-separated services that may read `secrets.env`; empty means at most one |
+
+It cannot see the host, which is the other half of the rule: `set-secret`
+writes and never deletes, so a name dropped from `cd.yml` stays on the box.
+`scripts/host-secret-drift.sh` is that half, run by an operator against a
+server. It reads key names only.
 
 ## `set-secrets`
 
