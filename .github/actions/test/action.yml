@@ -95,6 +95,15 @@ runs:
         sys.exit(rc)
         PY
 
+    # Actions evaluates expressions in an action.yml's description fields too.
+    # One in there is a load failure for every workflow that calls the action,
+    # reported against a line of prose, before a step runs -- which is how
+    # five repositories went red at once on the v0.0.23 check-secrets
+    # description.
+    - name: no expression syntax in action prose
+      shell: bash
+      run: bash tests/action-descriptions.test.sh
+
     # Everything else here is a thin wrapper around ssh or docker, which cannot
     # be tested without a server and a registry -- and is not where the bugs
     # were. These two are pure functions of their inputs, they gate everything
@@ -176,7 +185,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        for suite in tests/parse-config.test.sh tests/check-secrets.test.sh; do
+        for suite in tests/parse-config.test.sh tests/check-secrets.test.sh tests/action-descriptions.test.sh; do
           if bash "$suite" | grep -q '^SKIP'; then
             echo "::error::$suite skipped itself -- PyYAML is missing"
             exit 1
