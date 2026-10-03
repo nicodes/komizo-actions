@@ -106,6 +106,17 @@ fi
 gen_lines=$(grep -cE '^deploy: scoped-generation=[0-9a-f]{32}$' "$stdout_file" || true)
 if [ "$gen_lines" -ne 1 ]; then
 	echo "::error::deploy did not print exactly one deploy: scoped-generation=<32hex> line."
+	# Why, when the host said why. See scoped_deploy_refusals: the secret
+	# screen above has already passed, and only komizo's own refusal grammar
+	# is eligible. Without this the three most common causes are
+	# indistinguishable from each other and from a broken SSH hop.
+	refusals=$(scoped_deploy_refusals "$stdout_file" "$stderr_file" || true)
+	if [ -n "$refusals" ]; then
+		echo "The host refused:"
+		echo "$refusals"
+	else
+		echo "The host printed no recognizable refusal; run the deploy script on the box to see its output."
+	fi
 	if [ "$rc" -ne 0 ]; then
 		exit "$rc"
 	fi

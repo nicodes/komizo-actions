@@ -153,3 +153,55 @@ for path in sys.argv[1:]:
 sys.exit(0)
 PY
 }
+
+# Print the host's own refusal lines, so a failed deploy says WHY.
+#
+# Three unrelated faults -- a compose env_file map, a missing identity key,
+# and a full disk -- all surfaced to CI as the identical sentence "deploy did
+# not print exactly one deploy: scoped-generation=<32hex> line", because this
+# action captures the remote output and never shows it. Diagnosing the third
+# took six failed deploys and an operator running the host script by hand.
+#
+# SAFE BY CONSTRUCTION, not by hope. The caller runs
+# scoped_deploy_output_is_secret over both files and exits non-zero before it
+# ever reaches here, so anything printed below has already passed the secret
+# screen. This adds no new exposure; it only stops discarding what survived.
+#
+# On top of that: only lines komizo itself authors are eligible. Its refusals
+# are a closed set -- `grep 'deploy: refusing:' alpine.sh` -- whose only
+# interpolations are paths, filenames and byte counts. Anything carrying a
+# value is not in that grammar and is not matched.
+#
+# A line is dropped rather than cleaned if it is not plain printable ASCII, or
+# if it contains '::' or a percent escape: those are GitHub workflow-command
+# syntax, and a remote string that reaches the log unescaped can forge an
+# annotation. komizo's own messages contain neither.
+scoped_deploy_refusals() {
+	python3 - "$@" <<'PY'
+import re, sys
+
+ALLOWED = re.compile(rb"^deploy: (refusing: |WARNING -- ).{1,200}$")
+UNSAFE = re.compile(rb"::|%[0-9A-Fa-f]{2}|%25")
+
+out = []
+for path in sys.argv[1:]:
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        continue
+    for line in data.splitlines():
+        line = line.rstrip()
+        if not ALLOWED.match(line) or UNSAFE.search(line):
+            continue
+        # Printable ASCII only; a control byte in a log line is never komizo's.
+        if any(b < 0x20 or b > 0x7E for b in line):
+            continue
+        if line not in out:
+            out.append(line)
+
+# Bounded: a loop that refuses once per service could otherwise paste a wall
+# of identical lines into the annotation.
+for line in out[:5]:
+    sys.stdout.write(line.decode("ascii") + "\n")
+PY
+}

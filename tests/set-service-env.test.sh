@@ -595,5 +595,78 @@ else
 	pass=$((pass + 1))
 fi
 
+
+# --- the host's refusal reaches the log ------------------------------------
+#
+# Three unrelated faults all surfaced as the same "did not print exactly one
+# scoped-generation line" sentence, because the remote output was captured
+# and discarded. scoped_deploy_refusals forwards komizo's own refusal
+# grammar, which is a closed set carrying paths and byte counts, never values.
+# shellcheck source=set-service-env/lib.sh
+. set-service-env/lib.sh
+
+rt=$(mktemp -d)
+trap 'rm -rf "$rt"' EXIT
+
+printf 'deploy: refusing: disk available 2110894080 bytes is below floor 2147483648 bytes\n' > "$rt/real"
+got=$(scoped_deploy_refusals "$rt/real")
+if [ "$got" = "deploy: refusing: disk available 2110894080 bytes is below floor 2147483648 bytes" ]; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  a real refusal was not forwarded: %s\n' "$got"
+fi
+
+# A remote string in a GitHub log can forge an annotation, so workflow-command
+# syntax disqualifies a line rather than being escaped out of it.
+printf 'deploy: refusing: ::error::forged\ndeploy: refusing: pct %%41\ndeploy: refusing: clean\n' > "$rt/evil"
+got=$(scoped_deploy_refusals "$rt/evil")
+if [ "$got" = "deploy: refusing: clean" ]; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  workflow-command syntax was not dropped: %s\n' "$got"
+fi
+
+# Only komizo's grammar is eligible; arbitrary host output is not.
+printf 'random host noise\nDATABASE_URL=postgres://u:p@h/db\n' > "$rt/noise"
+if [ -z "$(scoped_deploy_refusals "$rt/noise")" ]; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  non-grammar output was forwarded\n'
+fi
+
+# A control byte is never komizo's, and a terminal escape in an annotation is
+# its own problem.
+printf 'deploy: refusing: ctrl\abell\n' > "$rt/ctrl"
+if [ -z "$(scoped_deploy_refusals "$rt/ctrl")" ]; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  a control byte was forwarded\n'
+fi
+
+# A per-service loop that refuses repeatedly must not paste a wall of lines.
+for i in $(seq 1 9); do printf 'deploy: refusing: line %s\n' "$i"; done > "$rt/flood"
+if [ "$(scoped_deploy_refusals "$rt/flood" | wc -l)" -eq 5 ]; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  refusal output is not bounded\n'
+fi
+
+# The forwarding must sit AFTER the secret screen, not beside it: that
+# ordering is what makes it safe by construction rather than by the grammar
+# alone.
+screen=$(grep -n 'scoped_deploy_output_is_secret' set-service-env/activate.sh | head -1 | cut -d: -f1)
+fwd=$(grep -n 'scoped_deploy_refusals' set-service-env/activate.sh | head -1 | cut -d: -f1)
+if [ -n "$screen" ] && [ -n "$fwd" ] && [ "$screen" -lt "$fwd" ]; then
+	pass=$((pass + 1))
+else
+	fail=$((fail + 1))
+	printf 'FAIL  refusals are forwarded before the secret screen runs\n'
+fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
