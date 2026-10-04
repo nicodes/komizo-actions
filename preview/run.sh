@@ -262,7 +262,18 @@ if [ "$ACTION" = "up" ]; then
 	if [[ ! "$gate_port" =~ ^[0-9]+$ ]] || [ "$gate_port" -lt 1 ] || [ "$gate_port" -gt 65535 ]; then
 		refuse "the host's gate_port is not a port number: '$gate_port'."
 	fi
-	if [[ ! "$db_name" =~ ^[a-z][a-z0-9_]*$ ]]; then
+	# EMPTY IS LEGAL, and means this preview has no database.
+	#
+	# A gate-only product -- one static container, no API -- is given no
+	# role and no database at all by the box, deliberately: creating one
+	# nothing can open is exactly the invasiveness komizo#162 removed. The
+	# box reports that as db_name "". Rejecting it here made every
+	# gate-only preview fail AFTER the stack was already up and routed:
+	#
+	#   the host's db_name is not a plain identifier: ''
+	#
+	# A non-empty name is still held to the same charset it always was.
+	if [ -n "$db_name" ] && [[ ! "$db_name" =~ ^[a-z][a-z0-9_]*$ ]]; then
 		refuse "the host's db_name is not a plain identifier: '$db_name'."
 	fi
 	if [[ ! "$route_file" =~ ^[A-Za-z0-9._-]+$ ]]; then
