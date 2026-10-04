@@ -24,4 +24,7 @@ echo "Publishing $PROJECT $REVISION:$COMPONENTS through $HELPER"
 # "api db" as a single component -- and is safe because every word passed the
 # allowlist in validate.sh before this step could run.
 # shellcheck disable=SC2086 # words were allowlisted by validate.sh
-python3 "$HELPER" publish --project "$PROJECT" --revision "$REVISION" --components $COMPONENTS
+namespace=()
+if [ -n "${IMAGE_BASE:-}" ]; then namespace=(--image-base "$IMAGE_BASE"); fi
+# shellcheck disable=SC2086 # each component passed the slug guard
+python3 "$HELPER" publish --project "$PROJECT" "${namespace[@]}" --revision "$REVISION" --components $COMPONENTS
