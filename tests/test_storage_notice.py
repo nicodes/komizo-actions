@@ -230,10 +230,12 @@ class ActionTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
 
     def test_shared_ci_discovers_notice_tests(self):
+        self.assertIn("python3 -m unittest discover -s tests -v", (ROOT / "Makefile").read_text())
+        self.assertTrue((ROOT / "tests/test_storage_notice.py").is_file())
         ci = yaml.safe_load((ROOT / ".github/actions/test/action.yml").read_text())
         self.assertTrue(
             any(
-                "test_storage_notice.py" in s.get("run", "")
+                "make install check" in s.get("run", "")
                 for s in ci["runs"]["steps"]
             )
         )

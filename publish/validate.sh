@@ -58,15 +58,13 @@ if [ "${#component_words[@]}" -eq 0 ]; then
 	echo '::error::components is empty. Pass the space-separated image components, e.g. "api db gate config".'
 	exit 1
 fi
-allowed=" api db pb service gate config maintenance "
 seen=""
 unknown=""
 duplicate=""
 for component in "${component_words[@]}"; do
-	case "$allowed" in
-		*" $component "*) ;;
-		*) unknown="$unknown $component" ;;
-	esac
+	if [[ ! "$component" =~ ^[a-z][a-z0-9-]*$ ]]; then
+		unknown="$unknown $component"
+	fi
 	case "$seen" in
 		*" $component "*) duplicate="$duplicate $component" ;;
 		# Appended with a trailing space too, so every stored word sits
@@ -75,7 +73,7 @@ for component in "${component_words[@]}"; do
 	esac
 done
 if [ -n "$unknown" ]; then
-	echo "::error::unknown image component(s):$unknown. The release helper allows: api db pb service gate config maintenance."
+	echo "::error::unknown image component(s):$unknown. Components must be lowercase slugs."
 	exit 1
 fi
 # The helper requires distinct components; a repeated one is usually a paste
@@ -123,4 +121,11 @@ esac
 if [ ! -f "${HELPER:-}" ]; then
 	echo "::error::release helper '${HELPER:-}' is not a file in the workspace. The helper is the caller's vendored copy (scripts/engineering/helpers/release.py by default) -- did actions/checkout run at the revision being published?"
 	exit 1
+fi
+
+# Old released helpers still work when no prefix is supplied. New callers must
+# provide the namespace; it is passed as an argv value, never interpolated code.
+if [ -n "${IMAGE_BASE:-}" ] && [[ ! "$IMAGE_BASE" =~ ^[a-z0-9.-]+(:[0-9]+)?/[a-z0-9][a-z0-9/._-]*$ ]]; then
+  echo '::error::image-base must name a registry repository prefix' >&2
+  exit 1
 fi
