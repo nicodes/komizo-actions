@@ -453,6 +453,21 @@ run_case 1 "a gate_port out of range fails closed" \
 	STUB_REMOTE_OUTPUT='{"v":1,"app":"gdam","pr":42,"project":"gdam-pr-42","db_name":"gdam_pr_42","gate_port":70000,"images":[],"created_at":"2026-09-22T03:04:05Z","last_used":"2026-09-22T03:04:05Z","route_file":"_preview-gdam-pr-42.caddy"}'
 no_outputs "an out-of-range gate_port produced outputs"
 
+# GATE-ONLY PREVIEWS: the box gives a product with no API no role and no
+# database at all, deliberately (komizo#162) -- creating one nothing can
+# open is the invasiveness that change removed. It reports that as db_name
+# "". This composite used to reject it, so every gate-only preview failed
+# AFTER its stack was up and routed, with a message about an identifier.
+# The four gate-only products in the fleet could not be previewed at all.
+run_case 0 "a gate-only preview with no database succeeds" \
+	APP=gdam PR_NUMBER=42 IMAGES="$IMG_WEB" ACTION=up \
+	REGISTRY_USER=$RUSER REGISTRY_TOKEN=$RTOKEN \
+	STUB_REMOTE_OUTPUT='{"v":1,"app":"gdam","pr":42,"project":"gdam-pr-42","db_name":"","gate_port":20000,"images":["'"$IMG_WEB"'"],"created_at":"2026-09-22T03:04:05Z","last_used":"2026-09-22T03:04:05Z","route_file":"_preview-gdam-pr-42.caddy"}' \
+	STUB_KNOB_OUTPUT="$KNOB_EXAMPLE"
+outputs_contain "preview-url=https://pr-42.preview.example.com"
+
+# And an empty name buys nothing for a hostile one: the charset still
+# applies the moment there is anything to check.
 run_case 1 "a db_name that is not a plain identifier fails closed" \
 	APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up \
 	STUB_REMOTE_OUTPUT='{"v":1,"app":"gdam","pr":42,"project":"gdam-pr-42","db_name":"gdam_pr_42;id","gate_port":20000,"images":[],"created_at":"2026-09-22T03:04:05Z","last_used":"2026-09-22T03:04:05Z","route_file":"_preview-gdam-pr-42.caddy"}'
