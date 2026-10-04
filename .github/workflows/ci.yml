@@ -24,6 +24,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -40,6 +41,7 @@ permissions:
 
 jobs:
   ci:
+    name: Test
     runs-on: ubuntu-latest
     # Bounded, so a step that hangs fails here rather than sitting until the
     # runner's own timeout hours later. Nothing here is slow; this is the
@@ -47,5 +49,11 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate unified workflow contract
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/fleet-workflow-contract"
+          "$RUNNER_TEMP/fleet-workflow-contract/bin/python" -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r .github/workflow-contract-requirements.txt
+          "$RUNNER_TEMP/fleet-workflow-contract/bin/python" .github/workflow_contract.py
       - name: Test
         uses: ./.github/actions/test
