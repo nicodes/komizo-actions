@@ -42,6 +42,10 @@ inputs:
       failing it here costs one failed step rather than a registry login that
       happened on the way to finding out.
     required: true
+  image-base:
+    description: Explicit registry repository prefix; required with the generic cicd release helper
+    required: false
+    default: ''
   revision:
     description: >
       Full 40-hex commit SHA being released. A short SHA will not do: it is the
@@ -51,12 +55,8 @@ inputs:
     required: true
   components:
     description: >
-      Space-separated image components, from the set the release helper
-      enforces: api db pb service gate config maintenance. Distinct. Validated
-      here as well so a typo fails before the registry login — with the caveat
-      that the helper stays authoritative: this copy can lag a newly added
-      component until this action's next release, and the helper's refusal is
-      the one that cannot be stale.
+      Distinct lowercase image component names. The caller declares the set;
+      the helper binds it to recorded image identities and the archive.
     required: true
 
   # --- registry --------------------------------------------------------------
@@ -100,6 +100,7 @@ runs:
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}
+        IMAGE_BASE: ${{ inputs.image-base }}
         REVISION: ${{ inputs.revision }}
         COMPONENTS: ${{ inputs.components }}
         REGISTRY_USER: ${{ inputs.registry-user }}
@@ -136,6 +137,7 @@ runs:
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}
+        IMAGE_BASE: ${{ inputs.image-base }}
         REVISION: ${{ inputs.revision }}
         COMPONENTS: ${{ inputs.components }}
         HELPER: ${{ inputs.release-helper-path }}
