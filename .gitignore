@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 
 .private-release/
+
+# Local contract evidence and temporary tooling.
+/.artifacts/
