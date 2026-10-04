@@ -1,0 +1,25 @@
+{
+  "dependency-maintenance": {
+    "commands": [
+      [
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "export CICD_ENGINEERING=\"$(mise where http:cicd-engineering)\"\nexport PYTHONDONTWRITEBYTECODE=1\npython3 \"$CICD_ENGINEERING/helpers/watch-tools.py\""
+      ]
+    ]
+  },
+  "security-scan": {
+    "commands": [
+      [
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "python3 -m venv \"$RUNNER_TEMP/fleet-security-scan\"\n\"$RUNNER_TEMP/fleet-security-scan/bin/python\" -m pip install --disable-pip-version-check pip-audit==2.10.1\n\"$RUNNER_TEMP/fleet-security-scan/bin/python\" -m pip_audit -r .github/workflow-contract-requirements.txt"
+      ]
+    ],
+    "timeout_seconds": 7200
+  }
+}
