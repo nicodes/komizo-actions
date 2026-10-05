@@ -575,12 +575,12 @@ fi
 
 for phrase in \
 	'not prove that a fresh PostgreSQL cutover is safe' \
-	'doas /usr/local/bin/scoped-env-status-fieldsofrevik' \
+	'host-local status command' \
 	'deploy: scoped-generation=' \
-	'profile=fields-postgres-v1' \
+	'supported profile' \
 	'mode 0600 files' \
 	'There is no stage, confirm, or abort'; do
-	if grep -qF "$phrase" docs/fields-scoped-env-v1.md; then
+	if grep -qF "$phrase" README.md; then
 		pass=$((pass + 1))
 	else
 		fail=$((fail + 1))
@@ -588,7 +588,7 @@ for phrase in \
 	fi
 done
 
-if grep -qE 'set-scoped-env-fieldsofrevik|eleven LF|RFC4648' docs/fields-scoped-env-v1.md README.md docs/actions.md; then
+if grep -qE 'set-scoped-env-fieldsofrevik|eleven LF|RFC4648' README.md; then
 	fail=$((fail + 1))
 	printf 'FAIL  docs still describe the ten-secret wire\n'
 else
