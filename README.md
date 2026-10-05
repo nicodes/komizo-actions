@@ -1,177 +1,38 @@
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 388b3beb27c3796fb535a773fcb68a7f9aaceebafd594df311f6a3b2bf00aa58 -->
+
 # komizo-actions
 
-GitHub Actions that deploy to your own server. Merge, and it's live.
+Reusable GitHub Actions for deploying Compose applications to hosts prepared by the Komizo CLI. The supported action invokes the app-scoped host deployment operation.
 
-The supported action invokes the established app-scoped `deploy-APP` Compose
-operation. The optional journaled rollout model published in v0.0.4 and v0.0.5
-was abandoned and is superseded by v0.0.7 and later; those tags remain as
-historical artifacts.
+The abandoned rollout model is superseded by v0.0.7 and later. Historical tags are not a recommendation to adopt the abandoned model.
 
-There is no published v0.0.6: its automated release candidate was refused by
-protected-main checks before any remote tag or release was created.
+## Deploy
 
-v0.0.17/v0.0.18 deleted — broken against the doas-hardened box contract;
-v0.0.19 is the first doas-form release.
-
-Release tags are fixed by the release workflow and composed actions are pinned
-to a commit SHA. GitHub release records themselves remain editable; this project
-does not claim platform-enforced release immutability.
+Pin a reviewed full commit SHA. Configure a deploy account, pinned SSH host keys and an app-scoped host allowlist before running this action.
 
 ```yaml
-- uses: nicodes/komizo-actions/deploy@v0.0.1
-  env:
-    KOMIZO_APP_NAME: ${{ vars.KOMIZO_APP_NAME }}
-    KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
-    KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
-    KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
-
-    KOMIZO_SECRET_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+- uses: nicodes/komizo-actions/deploy@8558c0494f00efd97d8053db43a0ffaa826da00d
   with:
+    app: example
+    host: ${{ vars.DEPLOY_HOST }}
+    key: ${{ secrets.DEPLOY_KEY }}
+    known-hosts: ${{ vars.DEPLOY_KNOWN_HOSTS }}
     version: ${{ github.sha }}
     config-compose: deploy/compose.yml
-    config-image: ghcr.io/you/myapp-config
+    config-image: ghcr.io/example/app-config
     registry-user: ${{ github.actor }}
     registry-token: ${{ secrets.GITHUB_TOKEN }}
-    health-urls: |
-      https://myapp.example.com/health
+    health-urls: https://app.example.com/health
 ```
 
-The first four are the names komizo tells you to store, and the ones these
-actions look for. Passing them as `app:`, `host:`, `key:` and `known-hosts:`
-still works and takes precedence — the environment is the default, not a
-replacement.
+Use `KOMIZO_SECRET_<NAME>` environment variables only for secrets this application needs. Do not forward every available secret. Host-local profile values must stay on the host; the action sends only a nonsecret generation id. A failed activation or healthcheck stays failed and does not prove database rollback.
 
-Keeping the server's address out of the workflow is worth more than the line it
-saves: moving an app to another box, or reaching a box by a different name while
-its public DNS is mid-cutover, becomes a repository variable rather than a commit
-and a deploy.
+See each action’s `action.yml` for its current input contract. Release refs are fixed by project policy; a full commit SHA gives an immutable action pin.
 
-`KOMIZO_APP_NAME` is the one to hold loosely. The app name is also the name of
-its gateway service in `compose.yml` — the shared proxy is pointed at
-`<app>-gateway` — and it appears in its image references. Both are committed and
-both must agree with it. Changing it in settings alone points the proxy at a
-container that does not exist, and nothing reports that.
+## Host-local environment profiles
 
-**Everything named `KOMIZO_SECRET_<NAME>` is pushed to the host as `<NAME>`.** A
-composite action cannot read `secrets` itself — GitHub exposes that context to
-workflows only — so a value has to arrive as an environment variable either way.
-The prefix is what lets that env block be the only place a secret is named,
-rather than a list of values and a second list agreeing with it. Renaming comes
-free, since the left side is the name the host receives.
+The action does not prove that a fresh PostgreSQL cutover is safe. Use a separate host-local status command, an exact expected generation and the supported profile. Remote output is captured in mode 0600 files. The validated receipt is `deploy: scoped-generation=<expected generation>`. There is no stage, confirm, or abort. Profile-specific credentials remain on the host and must not be sent by the runner.
 
-The host gets exactly what is written there and nothing else. Handing the action
-`toJSON(secrets)` would be shorter still and is deliberately not how this works:
-it would put every secret the job can see into the step's environment, including
-the ones the app has no business holding.
+## Host-local environment profiles
 
-That env block is one half of [the secret rule](docs/secrets.md): a secret is
-held in GitHub and delivered by komizo, or it is generated on the host and
-never leaves it — and there is no third way. `check-secrets` is that rule as a
-check, and it runs on pull requests rather than at deploy time, because the
-useful moment to refuse a hand-placed credential is before it reaches a server.
-
-That connects over SSH, publishes this commit's `compose.yml` as an image, sets
-any secrets, makes the tag live, and polls until the app answers — failing the
-job if it does not.
-
-One app opts out of that secret path. `service-env-profile: fields-postgres-v2`
-is approved only for `fieldsofrevik`, and that app refuses an empty profile.
-No profile value is sent. `fields-postgres-v1` is rejected, as is a runner
-`CLERK_SECRET_KEY` or any other profile-value variable; the value is not
-logged. The action reads a host-local status line and passes
-a nonsecret generation id as the fourth deploy argument. Leave the input empty
-on any other app and nothing here changes. A failed activate or health check
-stays failed; this is not a rollback of the host-local provision. `docker
-compose up` may not recreate a service whose resolved config is unchanged.
-The contract is in
-[docs/fields-scoped-env-v1.md](./docs/fields-scoped-env-v1.md).
-
-**[Full reference →](./docs/actions.md)**
-
-## What these need
-
-A server prepared by the `komizo` CLI. These actions are the CI half of a pair,
-and they assume the other half is already in place:
-
-- a deploy account that may run exactly two commands, neither of which is a shell
-- a root-owned app directory that the deploy account cannot write to
-- `compose.yml` arriving as a registry image rather than as a file copied in over
-  SSH
-
-Without that there is nothing on the far end for `deploy` to call. **The CLI is
-not public yet** — if you have found this repo and want to use it, that is the
-missing piece, and it is better said here than discovered from a failing job.
-
-## Why it is split this way
-
-The deploy key these actions hold is the least privileged thing in the system.
-It can deploy a tag that already exists in your registry, and it can overwrite a
-secret it is not allowed to read back. It cannot run Docker, write to the app
-directory, or introduce code of its own.
-
-That boundary is the point, and it is why `compose.yml` travels as a registry
-image: whoever can change `compose.yml` can mount the host filesystem into a
-container, which is the same as being root. So changing it requires registry
-push, not merely holding the deploy key.
-
-A leaked deploy key lets an attacker roll your stack back to a tag you have
-already published, and overwrite secrets. It does not let them run code of their
-own. Protect registry push accordingly, and pin third-party actions by SHA —
-they run in the same job as the deploy key.
-
-## The actions
-
-Most workflows need only `deploy`, which composes the rest in the right order.
-
-| Action | Does |
-| --- | --- |
-| [`deploy`](./deploy) | Everything below, correctly sequenced |
-| [`connect`](./connect) | Installs the key and the pinned host key |
-| [`publish-config`](./publish-config) | Ships `compose.yml` and the hostname list as an image |
-| [`set-secrets`](./set-secrets) | Writes secrets the host cannot read back |
-| [`set-service-env`](./set-service-env) | Reads the fields-postgres-v2 host-local status; deploy passes the generation id |
-| [`activate`](./activate) | Runs the deploy on the host — the step that changes what is running |
-| [`health-check`](./health-check) | Polls a URL until it answers |
-| [`run-task`](./run-task) | Invokes one app-defined, host-allowlisted production task after `connect` |
-| [`preview`](./preview) | Brings a pull request's preview up, or tears it down, via the host's `komizo-box preview` primitive |
-| [`publish`](./publish) | Publishes the Build gate's recorded images to ghcr.io, registry login internalized |
-| [`setup-godot`](./setup-godot) | Installs Godot from the caller's checksum-verified archives, cache pin internalized |
-
-Reach for the primitives when you need your own steps interleaved — a database
-backup before the deploy, or a migration between the config publish and the
-restart.
-
-`activate` was briefly called `set-version`, and `health-check` was
-`healthcheck`. There are no forwarding shims for the old names: nothing has
-been released under them, and a shim is a second definition of an action's
-defaults that changes every omitted input the moment the two disagree.
-
-## Pinning
-
-**Every release is its own fixed tag; this automation never moves it.**
-Administrators can still change Git refs, and GitHub release records remain
-editable. Upgrading is a visible edit in a pull request and rolling back is
-naming the version before it.
-
-There used to be a single `v0` that each release force-moved. That made `@v0` a
-mutable ref: you could not tell which six files you were running, and a bad
-release reached every repository the moment the tag moved. It is gone.
-
-**`0.x` means there is no compatibility promise yet** — inputs may still be
-renamed or removed between releases. A `v1` will appear once the input surface
-has held still and the CLI half is public. Read the release notes before
-bumping.
-
-A commit SHA is stronger still, because a tag can in principle be deleted and
-recreated where a commit cannot:
-
-```yaml
-- uses: nicodes/komizo-actions/deploy@<sha>
-```
-
-That pin is complete: the five actions `deploy` composes are rewritten to a SHA
-at release time, so they cannot float out from under it. The reasoning — and the
-one thing to know if you work on this repo — is in
-[the reference](./docs/actions.md#pinning).
-
-Maintainers: [manual prepare and publish procedure](./docs/releases.md).
+The action does not prove that a fresh PostgreSQL cutover is safe. Use a separate host-local status command, an exact expected generation and the supported profile. Remote output is captured in mode 0600 files. The validated receipt is `deploy: scoped-generation=<expected generation>`. There is no stage, confirm, or abort. Profile-specific credentials remain on the host and must not be sent by the runner.
