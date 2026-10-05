@@ -75,6 +75,7 @@ config publish and the restart:
 | [`connect`](#connect) | Installs the key + pinned host key, defines `deploy-target` | — |
 | [`publish-config`](#publish-config) | Publishes `compose.yml` as an image | registry login |
 | [`set-secrets`](#set-secrets) | Writes secrets the host can't read back | `connect` |
+| [`set-service-env`](#set-service-env) | Reads the fields-postgres-v2 host-local status | `connect` |
 | [`activate`](#activate) | Runs the deploy on the host — the step that changes what is running | `connect` |
 | [`health-check`](#health-check) | Polls a URL until it answers | — |
 
@@ -95,13 +96,26 @@ script keeps the verifying and installing.
 - [`deploy`](#deploy) — the whole sequence in one step
 - [The `deploy-target` seam](#the-deploy-target-seam) — running your own commands on the host
 - [`connect`](#connect) · [`publish-config`](#publish-config) · [`set-secrets`](#set-secrets) · [`activate`](#activate) · [`health-check`](#health-check) — the primitives, in execution order
+- [`set-service-env`](#set-service-env) — the fields-postgres-v2 status read, not a pinned sibling
+- [`preview`](#preview) — a pull request's preview, up and down, on the deploy target
 - [`publish`](#publish) — the release half: the Build gate's images, pushed with the registry login internalized
 - [`setup-godot`](#setup-godot) — Godot from the caller's checksum-verified archives, the cache pin internalized
+- [`check-secrets`](#check-secrets) — the secret rule, refused at pull-request time rather than found on a host
 
 ## `deploy`
 
 The everyday deploy. Publishes this commit's config, sets secrets, deploys the
 tag — in the one order that is correct.
+
+It ends by pruning the host: superseded tags of this app's own image family —
+`ghcr.io/<owner>/<project>-*`, derived from `config-image` — are removed one
+by one, except the live revision, the previous revision (the rollback target),
+and every image any container, running or stopped, still uses. Nothing else on
+the host is in scope: no other products' images, no dangling images whose
+lineage cannot be proved, no volumes, and never a blanket `docker image prune
+-a`. The prune runs after the health check, and warns rather than failing the
+deploy if it errors. Deploys without a `config-image`, or whose config image
+does not follow the `-config` naming, skip the prune with a notice.
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -112,6 +126,8 @@ tag — in the one order that is correct.
 | `config-hostnames` | no | `""` | File listing the hostnames this app answers on, one per line. Goes with `config-compose`; a `komizo.yml` carries its own. |
 | `config-image` | no | `""` | Config image reference **without** a tag. Required with `config` or `config-compose`. |
 | `secrets` | no | `""` | Rarely needed — names for values passed as plain env vars. Normally the `KOMIZO_SECRET_*` env vars are the list. |
+| `service-env-profile` | no | `""` | Opt in to `fields-postgres-v2` instead of `set-secrets`. Empty keeps the legacy path, except app `fieldsofrevik`, which refuses it. Requires `expected-generation` and `health-urls`. Sends no profile value. See [fields-scoped-env-v1](fields-scoped-env-v1.md). |
+| `expected-generation` | no | `""` | 32 lowercase hex. Required with the profile. Refused when the profile is empty. Nonsecret. |
 | `registry` | no | `ghcr.io` | Registry the host authenticates against. Empty to skip. |
 | `registry-user` | no | `""` | Registry username. |
 | `registry-token` | no | `""` | Registry password. Prefer the run-scoped `GITHUB_TOKEN`. |
@@ -394,6 +410,40 @@ secrets out of all three. That is what `set-secrets` is for.
 **Outputs:** `image-ref` — the full pushed reference *including* the tag,
 unlike the `image` input, which must not carry one.
 
+## `check-secrets`
+
+Fails the build when this app's secrets do not follow
+[the secret rule](secrets.md): a secret is held in GitHub and delivered by
+komizo, or it is generated on the host and never leaves it — and there is no
+third way.
+
+Read-only and offline. No deploy key, no registry token, no server, so it
+belongs in CI beside the other static checks and runs on pull requests. The
+point is to refuse the change, not to find out later that production drifted.
+
+```yaml
+- uses: nicodes/komizo-actions/check-secrets@v0.0.1
+  with:
+    compose: deploy/compose.yml
+    workflows: |
+      .github/workflows/cd.yml
+    host-only: |
+      postgres-owner.env: postgres
+```
+
+| input | default | what it is |
+| --- | --- | --- |
+| `compose` | `deploy/compose.yml` | the compose file the host runs |
+| `workflows` | `.github/workflows/cd.yml` | newline-separated deploy workflows; list the preview one too |
+| `scoped-env-dir` | `secrets/current` | prefix marking a per-service file provisioned on the host |
+| `host-only` | — | newline-separated `path: service[,service]` — the generated credentials and who may read them |
+| `secrets-env-services` | — | comma-separated services that may read `secrets.env`; empty means at most one |
+
+It cannot see the host, which is the other half of the rule: `set-secret`
+writes and never deletes, so a name dropped from `cd.yml` stays on the box.
+`scripts/host-secret-drift.sh` is that half, run by an operator against a
+server. It reads key names only.
+
 ## `set-secrets`
 
 Pushes secret values into the host's write-only store. Requires `connect`.
@@ -444,6 +494,41 @@ if the new value must take effect immediately; Compose picks it up when the
 container is recreated.
 
 **Outputs:** `count` — how many secrets were set.
+
+## `set-service-env`
+
+Reads the host's scoped service-env status for the one approved profile,
+`fields-postgres-v2` (app `fieldsofrevik`). Requires `connect`. Most workflows
+should not call it directly: [`deploy`](#deploy)'s `service-env-profile`
+input runs this before activate and again after health, and fails the job if
+the postflight does not match.
+
+Leave `service-env-profile` empty and, for every app except `fieldsofrevik`,
+`set-secrets` is unchanged. `fieldsofrevik` refuses an empty profile. Set the
+profile and no profile value is pushed. `fields-postgres-v1` is rejected.
+`KOMIZO_SECRET_*`, `KOMIZO_SCOPED_*`, a `secrets:` list, and the eleven
+host-local names including `CLERK_SECRET_KEY` are refused. Their values are
+not logged and are not sent to set-secrets or SSH.
+
+The remote command is exactly
+`doas /usr/local/bin/scoped-env-status-fieldsofrevik`, with no arguments and
+an empty stdin. There is no stage, confirm, or abort. A failed activate or
+health check stays failed. This is not a rollback of containers, database
+role credentials, or the host-local provision. `docker compose up` may not
+recreate a service whose resolved config is unchanged.
+
+The Fields deploy command is not the pinned `activate` action. It is four
+arguments, and Actions requires `deploy: scoped-generation=<id>`. The full
+contract is [fields-scoped-env-v1](fields-scoped-env-v1.md). Remote deploy
+text is not copied into the log. It does not claim a fresh cutover is safe.
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `profile` | yes | — | Must be `fields-postgres-v2`. |
+| `app` | no | `KOMIZO_APP_NAME` | Must be `fieldsofrevik`. Not interpolated into the command. |
+| `expected-generation` | yes | — | 32 lowercase hex. Compared locally. Not a status argument. |
+
+**Outputs:** `generation` — the id the status line reported, when it matched. Not a secret.
 
 ## `activate`
 
@@ -522,6 +607,142 @@ non-sensitive allowlist selectors:
 The host wrapper remains authoritative and fixes the app directory, Compose
 service, executable, timeout, cleanup, and audit destination. Calling this
 action executes the task; merely installing or releasing it does not.
+
+## `preview`
+
+Brings a pull request's preview up on the deploy target, or tears it down —
+the CI-facing wrapper over the host's `komizo-box preview` primitive. The
+host owns everything the preview is: the per-preview database, the
+loopback-published gate, the route write and reload, the scoped TLS ask, and
+the zero-orphan teardown. This action's job is narrower: validate every value
+before it crosses the wire, connect over the same deploy-key SSH path
+[`deploy`](#deploy) uses, and fence and parse what the host says back.
+
+Run it once when the pull request's images are published, and again with
+`action: down` when the pull request closes:
+
+```yaml
+- id: preview
+  uses: nicodes/komizo-actions/preview@v0.0.16
+  env:
+    KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
+    KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
+    KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
+  with:
+    app: myapp
+    pr-number: ${{ github.event.pull_request.number }}
+    images: ghcr.io/you/myapp-api:${{ github.sha }} ghcr.io/you/myapp-web:${{ github.sha }}
+    action: up
+```
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `app` | yes | — | Product slug, e.g. `gdam` — the same slug the images publish under. Lowercase letters, digits, hyphens; a leading letter. |
+| `pr-number` | yes | — | Pull request number, a positive integer. Names the preview: `pr-<N>`. |
+| `images` | yes | — | Space-separated image refs matching the products' release naming, `ghcr.io/<owner>/<project>-<component>:<sha>`. Passed to the primitive on `up`; on `down` they are validated but stay runner-side — the host's own state records what ran under the preview. |
+| `action` | yes | — | `up` or `down`. |
+| `registry-user` | on `up` | — | Registry username for the host's ghcr login before the pull, e.g. `github.actor`. `up` pulls as root on the host, and root's docker config carries no ghcr authorization without it. Unused on `down`. |
+| `registry-token` | on `up` | — | Registry password for the same login. Prefer the run-scoped `GITHUB_TOKEN` (`packages:read`): the token travels on stdin to the host's root-owned preview wrapper — never as an argument, never echoed — and the wrapper drops the credential however the run exits. |
+| `host` | no | `$KOMIZO_SERVER_URL` | Server hostname. Supplying it makes this action connect for you; leave empty if `connect` already ran in the job. |
+| `user` | no | `komizo-<app>` | Deploy account. Only needed if you overrode it. |
+| `key` | no | `$KOMIZO_DEPLOY_KEY` | Private half of the deploy key. Pass a secret, or set the env var and leave this out. |
+| `known-hosts` | no | `$KOMIZO_KNOWN_HOSTS` | Pinned host keys, as known_hosts lines. |
+| `port` | no | `22` | SSH port. |
+| `allow-unpinned-host` | no | `false` | Discover the host key instead of pinning it. Throwaway hosts only. |
+
+**Outputs**
+
+| Output | Description |
+| --- | --- |
+| `preview-url` | The preview's public URL, `https://pr-<N>.<domain>` — the PR number cross-checked against the host's record, the domain read from the host's own preview knob (`/etc/komizo/preview`, or the box's compiled default when the knob is absent). Set by `up`. |
+| `api-url` | The preview's API URL, `https://pr-<N>-api.<domain>`, derived the same way. Set by `up`. |
+| `gate-status` | The composite's own verification of the preview's state: `up` when the host's record parsed and named this preview, `down` when the teardown was verified against the host's state. Set by both. |
+
+**The env threading is the deploy path's, unchanged.** The connection falls
+back to `KOMIZO_SERVER_URL` / `KOMIZO_DEPLOY_KEY` / `KOMIZO_KNOWN_HOSTS`
+because a composite action cannot read `secrets` itself, so the key arrives as
+an environment variable either way — see [`connect`](#connect). The key is
+read by the connect step and goes no further: never into the remote command,
+the log, or an output.
+
+**The remote invocation is fixed text plus charset-validated arguments.**
+Every input is validated on the runner before the ssh is assembled — the app
+as a slug, the number as a positive integer, each image ref against the
+`<registry>/<owner>/<project>-<component>:<tag>` release naming, the action
+against `up|down` — and then single-quoted into the argv, so a quote or a
+dollar sign in any value stops the run rather than reaching a shell on the
+host. The host's output is fenced while it streams (it is untrusted text and
+could otherwise forge workflow commands in this job), and the outputs are
+*parsed* out of it as the box binary's JSON contract — never trusted
+unparsed, and output that does not follow the contract fails the step rather
+than being passed on half-parsed.
+
+The primitive's invocation shape and output contract are the box binary's
+(komizo `main`, `cmd/komizo-box/preview.go` over `box/preview.go`). It runs
+privileged — the state root `/var/lib/komizo` is `0750 root:root`, the floors
+file is root-readable only, and docker is root's — so the invocation goes
+through doas, with `-n` so a rule that would prompt fails closed instead of
+hanging the job. The doas rule's args match exactly, so the box permits not
+the raw binary (a rule on `komizo-box` itself would allow every mode as
+root) but a root-owned wrapper, the preview entry, which enforces the mode
+(`up|down|ls|gc`) and the app lock (`--app` must name the doas caller's own
+app):
+
+```
+doas -n /usr/local/bin/komizo-preview up --app <app> --pr <N> <image...>
+doas -n /usr/local/bin/komizo-preview down --app <app> --pr <N>
+doas -n /usr/local/bin/komizo-preview ls
+```
+
+`up` prints the preview's `PreviewRecord` as **one JSON object** — fields
+`v`, `app`, `pr`, `project`, `db_name`, `gate_port`, `images`, `created_at`,
+`last_used`, `route_file` (`db_password` is `json:"-"`: a credential is never
+marshalled, and a record carrying one fails the step). The action parses it
+with `jq`, requires exactly one JSON object in the capture, cross-checks that
+it names the app and PR this run asked for (`project` must be
+`<app>-pr-<N>`), and revalidates every value it consumes before anything is
+written to the step output. A `key=value` line, prose, two objects, a record
+for another preview, or a field of the wrong shape all fail closed.
+
+The record carries no URL: the preview's hostname is `pr-<N>.<domain>` (and
+`pr-<N>-api.<domain>`) where the domain is the host's own knob,
+`/etc/komizo/preview` — key=value, `DOMAIN.<app>` the per-app key, bare
+`DOMAIN` the default for apps without one, compiled default
+`preview.gdam.dev` (`box/preview.go` `PreviewKnobPath` /
+`PreviewDomainDefault` / `PreviewHost` / `previewRoute`). The action reads
+the knob over the same fenced SSH path and walks the same chain the box's
+own `ReadPreviewKnob` walks — first `DOMAIN.<app>`, then bare `DOMAIN`,
+then the compiled default, an absent or unreadable knob reading as the
+default, an empty value falling through to the next link. The resolved
+value is validated as a plain domain before it becomes a URL, and the
+derived URLs are revalidated as https URLs.
+One divergence: the primitive runs as root through doas, so its own knob
+read sees a file this unprivileged read cannot (`/etc/komizo` is
+`0750 root:komizo_monitor`); an operator who sets `DOMAIN` in a root-only
+knob routes a different domain than this action reports. Hosts with no knob
+file — the stock layout — are unaffected, and the clean fix is the box
+reporting its effective domain in the `up` record.
+
+`down` prints an informational sentence (`preview <project> is down: project,
+database <db> and route removed.`). It is logged, **never parsed** — teardown
+is verified against the host's own state instead: `preview ls` prints the
+surviving records as a JSON array, and the preview this run named must no
+longer be in it. A missing, malformed, or still-recording state fails the
+step. `gate-status` is the composite's own verdict on that verification:
+`up` or `down`.
+
+`up` pulls the PR's images as root on the host, and root's docker config
+carries no ghcr authorization of its own — so the host logs in first. The
+credential follows deploy's precedent: the token travels on **stdin** to the
+wrapper (never as an argument — argv is visible in the host's process list),
+the wrapper logs in, pulls, and drops the credential however the run exits,
+and a failed login fails the call before any pull. The composite refuses
+runner-side when `registry-user` or `registry-token` is missing on `up`, and
+a token without a user is refused on either action.
+
+If the primitive's argv or its JSON fields change, this action's
+`preview/run.sh` and `tests/preview.test.sh` are the two places that must
+move together.
 
 ## `health-check`
 

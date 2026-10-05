@@ -10,6 +10,9 @@ historical artifacts.
 There is no published v0.0.6: its automated release candidate was refused by
 protected-main checks before any remote tag or release was created.
 
+v0.0.17/v0.0.18 deleted — broken against the doas-hardened box contract;
+v0.0.19 is the first doas-form release.
+
 Release tags are fixed by the release workflow and composed actions are pinned
 to a commit SHA. GitHub release records themselves remain editable; this project
 does not claim platform-enforced release immutability.
@@ -61,9 +64,27 @@ The host gets exactly what is written there and nothing else. Handing the action
 it would put every secret the job can see into the step's environment, including
 the ones the app has no business holding.
 
+That env block is one half of [the secret rule](docs/secrets.md): a secret is
+held in GitHub and delivered by komizo, or it is generated on the host and
+never leaves it — and there is no third way. `check-secrets` is that rule as a
+check, and it runs on pull requests rather than at deploy time, because the
+useful moment to refuse a hand-placed credential is before it reaches a server.
+
 That connects over SSH, publishes this commit's `compose.yml` as an image, sets
 any secrets, makes the tag live, and polls until the app answers — failing the
 job if it does not.
+
+One app opts out of that secret path. `service-env-profile: fields-postgres-v2`
+is approved only for `fieldsofrevik`, and that app refuses an empty profile.
+No profile value is sent. `fields-postgres-v1` is rejected, as is a runner
+`CLERK_SECRET_KEY` or any other profile-value variable; the value is not
+logged. The action reads a host-local status line and passes
+a nonsecret generation id as the fourth deploy argument. Leave the input empty
+on any other app and nothing here changes. A failed activate or health check
+stays failed; this is not a rollback of the host-local provision. `docker
+compose up` may not recreate a service whose resolved config is unchanged.
+The contract is in
+[docs/fields-scoped-env-v1.md](./docs/fields-scoped-env-v1.md).
 
 **[Full reference →](./docs/actions.md)**
 
@@ -108,9 +129,11 @@ Most workflows need only `deploy`, which composes the rest in the right order.
 | [`connect`](./connect) | Installs the key and the pinned host key |
 | [`publish-config`](./publish-config) | Ships `compose.yml` and the hostname list as an image |
 | [`set-secrets`](./set-secrets) | Writes secrets the host cannot read back |
+| [`set-service-env`](./set-service-env) | Reads the fields-postgres-v2 host-local status; deploy passes the generation id |
 | [`activate`](./activate) | Runs the deploy on the host — the step that changes what is running |
 | [`health-check`](./health-check) | Polls a URL until it answers |
 | [`run-task`](./run-task) | Invokes one app-defined, host-allowlisted production task after `connect` |
+| [`preview`](./preview) | Brings a pull request's preview up, or tears it down, via the host's `komizo-box preview` primitive |
 | [`publish`](./publish) | Publishes the Build gate's recorded images to ghcr.io, registry login internalized |
 | [`setup-godot`](./setup-godot) | Installs Godot from the caller's checksum-verified archives, cache pin internalized |
 

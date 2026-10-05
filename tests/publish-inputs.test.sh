@@ -114,7 +114,7 @@ run $V 1 "empty components are refused" PROJECT=cazper REVISION=$SHA
 # names list.
 run $V 1 "whitespace-only components are refused" \
 	PROJECT=cazper REVISION=$SHA COMPONENTS=$'   \n  '
-run $V 1 "an unknown component is refused" PROJECT=cazper REVISION=$SHA COMPONENTS='api web'
+run $V 1 "an invalid component is refused" PROJECT=cazper REVISION=$SHA COMPONENTS='api ../web'
 # The helper requires distinct components; a repeat is usually a paste error.
 run $V 1 "a repeated component is refused" \
 	PROJECT=cazper REVISION=$SHA COMPONENTS='api api'
@@ -135,6 +135,22 @@ run $V 1 "an empty registry-user is refused" \
 	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER=
 run $V 1 "a malformed registry-user is refused" \
 	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='nicodes;oops'
+# Bot logins are valid GitHub usernames: a post-merge dispatch runs as
+# github-actions[bot], so a caller passing registry-user: ${{ github.actor }}
+# hands the guard brackets. They must be admitted.
+run $V 0 "a github-actions[bot] registry-user is accepted" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='github-actions[bot]'
+run $V 0 "a dependabot[bot] registry-user is accepted" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='dependabot[bot]'
+# Brackets are the only widening: injection shapes stay refused.
+run $V 1 "a registry-user with a space is refused" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='nico des'
+# shellcheck disable=SC2016 # the backticks are a LITERAL test input
+run $V 1 "a registry-user with a backtick is refused" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='nico`des`'
+# shellcheck disable=SC2016 # the $( ) is a LITERAL test input
+run $V 1 "a registry-user with a command substitution is refused" \
+	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_USER='$(id)'
 run $V 1 "an empty registry-token is refused" \
 	PROJECT=cazper REVISION=$SHA COMPONENTS=api REGISTRY_TOKEN=
 
@@ -142,7 +158,7 @@ run $V 1 "an empty registry-token is refused" \
 # refusal. A secret that appears in a failure message is one that ends up in
 # the job log.
 run $V 1 "the token never appears in output" \
-	PROJECT=cazper REVISION=$SHA COMPONENTS='api web' REGISTRY_TOKEN=token-must-not-appear
+	PROJECT=cazper REVISION=$SHA COMPONENTS='api ../web' REGISTRY_TOKEN=token-must-not-appear
 if printf '%s' "$LAST_OUTPUT" | grep -qF 'token-must-not-appear'; then
 	fail=$((fail + 1))
 	printf 'FAIL  the registry token leaked into validate.sh output\n'
@@ -205,6 +221,13 @@ if grep -q 'REGISTRY_TOKEN' publish/run.sh; then
 else
 	pass=$((pass + 1))
 fi
+
+
+run $V 0 "caller-defined components and namespace are accepted" PROJECT=sample REVISION=$SHA COMPONENTS='renderer worker' IMAGE_BASE=ghcr.io/example/sample
+run $V 1 "namespace injection is refused before login" PROJECT=sample REVISION=$SHA COMPONENTS=renderer IMAGE_BASE='ghcr.io/example/sample;exit'
+run $R 0 "generic helper receives explicit namespace" PROJECT=sample REVISION=$SHA COMPONENTS=renderer IMAGE_BASE=ghcr.io/example/sample
+invocation_is "publish --project sample --image-base ghcr.io/example/sample --revision $SHA --components renderer"
+[ "$fail" -eq 0 ]
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
