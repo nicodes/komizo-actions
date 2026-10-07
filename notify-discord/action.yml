@@ -5,8 +5,8 @@ inputs:
     description: Discord channel webhook, supplied from secrets.DISCORD_WEBHOOK_URL.
     required: true
   app:
-    description: Application name.
-    required: true
+    description: Deprecated; the title uses the GitHub repository name.
+    required: false
   environment:
     description: production or preview.
     required: true
@@ -22,8 +22,11 @@ inputs:
   preview-url:
     description: Public preview URL after health checks pass.
     default: ''
+  deployment-url:
+    description: Public production or preview URL to visit. Preview falls back to preview-url.
+    default: ''
   details:
-    description: Job results or recovery outcome. Do not include secrets or logs.
+    description: Deprecated; compact messages contain links only.
     default: ''
 runs:
   using: composite
@@ -33,11 +36,10 @@ runs:
       shell: bash
       env:
         DISCORD_WEBHOOK_URL: ${{ inputs.webhook-url }}
-        NOTIFY_APP: ${{ inputs.app }}
         NOTIFY_ENVIRONMENT: ${{ inputs.environment }}
         NOTIFY_STATUS: ${{ inputs.status }}
         NOTIFY_REVISION: ${{ inputs.revision }}
         NOTIFY_PR: ${{ inputs.pr-number }}
         NOTIFY_PREVIEW_URL: ${{ inputs.preview-url }}
-        NOTIFY_DETAILS: ${{ inputs.details }}
+        NOTIFY_DEPLOYMENT_URL: ${{ inputs.deployment-url }}
       run: python3 "$GITHUB_ACTION_PATH/send.py"

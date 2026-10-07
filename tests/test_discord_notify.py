@@ -19,6 +19,7 @@ class DiscordNotifyTests(unittest.TestCase):
         self.env = {
             "NOTIFY_APP": "example", "NOTIFY_ENVIRONMENT": "production",
             "NOTIFY_STATUS": "failure", "NOTIFY_REVISION": "a" * 40,
+            "NOTIFY_DEPLOYMENT_URL": "https://example.com",
             "GITHUB_REPOSITORY": "owner/example", "GITHUB_RUN_ID": "123",
             "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/123/SECRET",
         }
@@ -29,13 +30,25 @@ class DiscordNotifyTests(unittest.TestCase):
 
     def test_preview_contains_navigation_and_disables_mentions(self):
         self.env.update(NOTIFY_ENVIRONMENT="preview", NOTIFY_STATUS="success",
-                        NOTIFY_PR="12", NOTIFY_PREVIEW_URL="https://pr-12.example.com")
+                        NOTIFY_DEPLOYMENT_URL="", NOTIFY_PR="12", NOTIFY_PREVIEW_URL="https://pr-12.example.com")
         body = notify.payload(self.env)
         self.assertEqual(body["allowed_mentions"], {"parse": []})
-        fields = {f["name"]: f["value"] for f in body["embeds"][0]["fields"]}
-        self.assertIn("/pull/12", fields["Pull request"])
-        self.assertEqual(fields["Preview"], "https://pr-12.example.com")
-        self.assertIn("/actions/runs/123", fields["Workflow"])
+        embed = body["embeds"][0]
+        self.assertEqual(embed["title"], "🟢 example.preview")
+        self.assertEqual(embed["description"], "[Repo](https://github.com/owner/example) · [Commit](https://github.com/owner/example/commit/" + "a" * 40 + ") · [Run](https://github.com/owner/example/actions/runs/123) · [PR #12](https://github.com/owner/example/pull/12) · [Preview](https://pr-12.example.com)")
+        self.assertNotIn("timestamp", embed)
+        self.assertNotIn("fields", embed)
+
+    def test_production_status_dots_and_site_link_without_details(self):
+        self.env["NOTIFY_DETAILS"] = "old verbose job results"
+        for status, dot in [("success", "🟢"), ("failure", "🔴")]:
+            self.env["NOTIFY_STATUS"] = status
+            embed = notify.payload(self.env)["embeds"][0]
+            self.assertEqual(embed["title"], f"{dot} example.prod")
+            self.assertTrue(embed["description"].endswith("[Prod](https://example.com)"))
+            self.assertNotIn("\n", embed["description"])
+            self.assertNotIn("timestamp", embed)
+            self.assertNotIn("old verbose", str(embed))
 
     def test_missing_webhook_skips_without_network(self):
         self.env["DISCORD_WEBHOOK_URL"] = ""
@@ -48,7 +61,7 @@ class DiscordNotifyTests(unittest.TestCase):
             def open(inner, request, timeout):
                 self.assertEqual(request.method, "POST")
                 body = json.loads(request.data)
-                self.assertIn("production · failure", body["embeds"][0]["title"])
+                self.assertEqual("🔴 example.prod", body["embeds"][0]["title"])
                 self.assertNotIn("SECRET", request.data.decode())
                 response = unittest.mock.MagicMock()
                 response.__enter__.return_value.status = 204
