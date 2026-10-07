@@ -340,7 +340,7 @@ runs:
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before anything has been published.
     - if: steps.cfg.outputs.host != ''
-      uses: nicodes/komizo-actions/connect@42e7596d7d18ad5387dce406986d5b538252e4f3
+      uses: nicodes/komizo-actions/connect@d6f186ec7924de5422819b84d5289bf53fd05fa4
       with:
         host: ${{ steps.cfg.outputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', steps.cfg.outputs.app) }}
@@ -374,7 +374,7 @@ runs:
 
     - id: config
       if: inputs.config != '' || inputs.config-compose != ''
-      uses: nicodes/komizo-actions/publish-config@42e7596d7d18ad5387dce406986d5b538252e4f3
+      uses: nicodes/komizo-actions/publish-config@d6f186ec7924de5422819b84d5289bf53fd05fa4
       with:
         config: ${{ inputs.config }}
         compose: ${{ inputs.config-compose }}
@@ -390,7 +390,7 @@ runs:
     #    ever skipped. fieldsofrevik is excluded even with an empty profile:
     #    that app has no legacy set-secrets path.
     - if: steps.cfg.outputs.has-secrets == 'true' && steps.cfg.outputs.service-env-profile == '' && steps.cfg.outputs.app != 'fieldsofrevik'
-      uses: nicodes/komizo-actions/set-secrets@42e7596d7d18ad5387dce406986d5b538252e4f3
+      uses: nicodes/komizo-actions/set-secrets@d6f186ec7924de5422819b84d5289bf53fd05fa4
       with:
         names: ${{ inputs.secrets }}
         command: doas /usr/local/bin/set-secret-${{ steps.cfg.outputs.app }}
@@ -402,7 +402,7 @@ runs:
     #    deploy: scoped-generation=<id>.
     - id: version
       if: steps.cfg.outputs.service-env-profile == ''
-      uses: nicodes/komizo-actions/activate@42e7596d7d18ad5387dce406986d5b538252e4f3
+      uses: nicodes/komizo-actions/activate@d6f186ec7924de5422819b84d5289bf53fd05fa4
       with:
         version: ${{ inputs.version }}
         registry: ${{ inputs.registry }}
@@ -426,7 +426,7 @@ runs:
     # 5. Prove it is serving. Skipped entirely when no URL is given.
     - id: health
       if: inputs.health-urls != ''
-      uses: nicodes/komizo-actions/health-check@42e7596d7d18ad5387dce406986d5b538252e4f3
+      uses: nicodes/komizo-actions/health-check@d6f186ec7924de5422819b84d5289bf53fd05fa4
       with:
         urls: ${{ inputs.health-urls }}
         attempts: ${{ inputs.health-attempts }}
