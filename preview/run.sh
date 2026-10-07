@@ -36,24 +36,10 @@
 #   doas -n /usr/local/bin/komizo-preview ls
 #       prints the surviving records as a JSON array
 #
-# The record carries no URL: the preview's hostname is pr-<N>.<domain> (and
-# pr-<N>-api.<domain>) where the domain is the host's own knob,
-# /etc/komizo/preview -- key=value, DOMAIN.<app> the per-app key, bare
-# DOMAIN the default for apps without one (box/preview.go PreviewKnobPath,
-# compiled default preview.gdam.dev). The host is the authority on its own
-# domain, so the knob is read over the same fenced SSH path; an absent or
-# unreadable knob is read as the compiled default. The resolved value is
-# validated as a plain domain before it becomes an output; anything else
-# fails closed.
-#
-# One divergence to know about: the primitive runs as ROOT (through doas),
-# so its own ReadPreviewKnob sees a knob file the unprivileged read here
-# cannot (EACCES -- /etc/komizo is 0750 root:komizo_monitor). An operator
-# who sets DOMAIN in a root-only knob routes pr-<N>.<their-domain> while
-# this action reports the compiled default. Hosts running the stock layout
-# (no knob file) are unaffected: both sides land on the default. The clean
-# fix is the box reporting its effective domain in the up record -- a
-# komizo-side change, tracked as a follow-up.
+# The privileged host reports its effective routing domain in the up record.
+# Older hosts fall back to reading /etc/komizo/preview; that legacy path requires
+# a readable knob. Hosts with private knob directories need Komizo v0.0.49 or
+# newer so the deployment account never needs access to host configuration.
 #
 # Inputs (environment):
 #   APP         the product slug
@@ -280,43 +266,52 @@ if [ "$ACTION" = "up" ]; then
 		refuse "the host's route_file is not a plain file name: '$route_file'."
 	fi
 
-	# The preview domain is the host's to say: read its knob over the same
-	# fenced path -- an absent or unreadable file is the compiled default
-	# (see the header for the one divergence that introduces), a present one
-	# is parsed for the first DOMAIN= line, an empty value is the default.
-	knob_file="$(mktemp)"
-	rc=0
-	fence="komizo-preview-$(date +%s%N)-$RANDOM"
-	echo "::stop-commands::$fence"
-	ssh deploy-target "if [ -r /etc/komizo/preview ]; then cat /etc/komizo/preview; fi" 2>&1 | tee "$knob_file" || rc=$?
-	echo "::$fence::"
-	if [ "$rc" -ne 0 ]; then
-		echo "::error::the preview domain could not be read from the host (ssh exited $rc)."
-		exit "$rc"
+	# New hosts return the effective routing domain from the privileged
+	# primitive. Never read the private knob when that authority is present.
+	if jq -e 'has("domain")' <<<"$record" >/dev/null; then
+		if ! jq -e '.domain | type == "string" and length > 0' <<<"$record" >/dev/null; then
+			refuse "the host's preview domain must be a non-empty string."
+		fi
+		domain="$(jq -r '.domain' <<<"$record")"
+	else
+		# The preview domain is the host's to say: read its knob over the same
+		# fenced path -- an absent or unreadable file is the compiled default
+		# (see the header for the one divergence that introduces), a present one
+		# is parsed for the first DOMAIN= line, an empty value is the default.
+		knob_file="$(mktemp)"
+		rc=0
+		fence="komizo-preview-$(date +%s%N)-$RANDOM"
+		echo "::stop-commands::$fence"
+		ssh deploy-target "if [ -r /etc/komizo/preview ]; then cat /etc/komizo/preview; fi" 2>&1 | tee "$knob_file" || rc=$?
+		echo "::$fence::"
+		if [ "$rc" -ne 0 ]; then
+			echo "::error::the preview domain could not be read from the host (ssh exited $rc)."
+			exit "$rc"
+		fi
+		# Per-app domains: the knob may carry DOMAIN.<app> for the calling app.
+		# The chain is DOMAIN.<app>, then the bare DOMAIN, then the compiled
+		# default -- the same chain the box's own ReadPreviewKnob walks, so the
+		# URL derived here is the route the box wrote. First occurrence of each
+		# key wins, values are trimmed like ParsePreviewKnob, and an empty value
+		# is no value: it falls through to the next link.
+		per_app="" per_app_set=""
+		bare="" bare_set=""
+		while IFS= read -r ln || [ -n "$ln" ]; do
+			case "$ln" in
+				"DOMAIN.$APP="*)
+					if [ -z "$per_app_set" ]; then per_app_set=1; per_app="${ln#DOMAIN."$APP"=}"; fi ;;
+				DOMAIN=*)
+					if [ -z "$bare_set" ]; then bare_set=1; bare="${ln#DOMAIN=}"; fi ;;
+			esac
+		done < "$knob_file"
+		per_app="${per_app#"${per_app%%[![:space:]]*}"}"
+		per_app="${per_app%"${per_app##*[![:space:]]}"}"
+		bare="${bare#"${bare%%[![:space:]]*}"}"
+		bare="${bare%"${bare##*[![:space:]]}"}"
+		domain="$per_app"
+		[ -n "$domain" ] || domain="$bare"
+		[ -n "$domain" ] || domain="preview.gdam.dev"
 	fi
-	# Per-app domains: the knob may carry DOMAIN.<app> for the calling app.
-	# The chain is DOMAIN.<app>, then the bare DOMAIN, then the compiled
-	# default -- the same chain the box's own ReadPreviewKnob walks, so the
-	# URL derived here is the route the box wrote. First occurrence of each
-	# key wins, values are trimmed like ParsePreviewKnob, and an empty value
-	# is no value: it falls through to the next link.
-	per_app="" per_app_set=""
-	bare="" bare_set=""
-	while IFS= read -r ln || [ -n "$ln" ]; do
-		case "$ln" in
-			"DOMAIN.$APP="*)
-				if [ -z "$per_app_set" ]; then per_app_set=1; per_app="${ln#DOMAIN."$APP"=}"; fi ;;
-			DOMAIN=*)
-				if [ -z "$bare_set" ]; then bare_set=1; bare="${ln#DOMAIN=}"; fi ;;
-		esac
-	done < "$knob_file"
-	per_app="${per_app#"${per_app%%[![:space:]]*}"}"
-	per_app="${per_app%"${per_app##*[![:space:]]}"}"
-	bare="${bare#"${bare%%[![:space:]]*}"}"
-	bare="${bare%"${bare##*[![:space:]]}"}"
-	domain="$per_app"
-	[ -n "$domain" ] || domain="$bare"
-	[ -n "$domain" ] || domain="preview.gdam.dev"
 	domain_re='^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$'
 	if [[ ! "$domain" =~ $domain_re ]]; then
 		refuse "the host's preview domain is not a plain domain: '$domain'."

@@ -724,5 +724,16 @@ else
 	printf 'FAIL  inputs.key is wired more than once\n'
 fi
 
+echo "== authoritative routing domain from the privileged host =="
+DOMAIN_RECORD="$(jq -c '. + {domain: "preview.revik.gg"}' <<<"$RECORD_UP")"
+run_case 0 "reported domain works even when knob read would fail" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up STUB_REMOTE_OUTPUT="$DOMAIN_RECORD" STUB_KNOB_RC=99
+outputs_contain 'preview-url=https://pr-42.preview.revik.gg'
+if grep -q 'etc/komizo/preview' "$LAST_TMP/calls"; then ok 1 "authoritative domain never reads private knob"; else ok 0 "authoritative domain never reads private knob"; fi
+for value in 'null' 'false' '42' '""' '"evil.invalid/escape"' '"preview.revik.gg\nforged=value"'; do
+ bad_record="$(jq -c --argjson domain "$value" '. + {domain: $domain}' <<<"$RECORD_UP")"
+ run_case 1 "malformed reported domain fails closed: $value" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API" ACTION=up STUB_REMOTE_OUTPUT="$bad_record"
+ no_outputs "malformed domain produces no URL"
+done
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
