@@ -44,10 +44,10 @@ description: >
   interleaved, and use this for everything else.
 
   The prune is the last step and the most conservative thing that still
-  reclaims the disk: only this app's own image family (derived from
-  config-image), never the live or the previous revision -- the rollback
-  target -- and never an image a container still uses. Its failure warns and
-  never fails the deploy, which has already succeeded by then.
+  reclaims the disk: call the app-bound maintenance command installed by
+  Komizo. The host selects its image family and trusted current/rollback
+  revisions and keeps every container reference. No Docker socket access is
+  required. Its failure warns without failing the completed deployment.
 
   It exists because the order is not obvious and two of the ways to get it
   wrong fail SILENTLY:
@@ -463,13 +463,11 @@ runs:
     #    health check does not skip it, because the precondition is the
     #    deploy succeeding, not the URLs -- except a scoped-env deploy that
     #    did not postflight, which the step above has already failed.
-    #    Its own failure warns rather than failing the deploy. See prune.sh /
-    #    prune-remote.sh, and
-    #    tests/deploy-prune.test.sh for the safety contract.
+    #    Its own failure warns rather than failing the deploy. The reviewed
+    #    host command owns retention policy; tests/deploy-prune.test.sh pins
+    #    transport, app validation, output fencing and absence of fallbacks.
     - name: Prune superseded images
       shell: bash
       env:
-        CONFIG_IMAGE: ${{ inputs.config-image }}
-        CURRENT: ${{ inputs.version }}
-        PREVIOUS: ${{ steps.version.outputs.previous-version || steps.scoped-activate.outputs.previous-version }}
+        APP: ${{ steps.cfg.outputs.app }}
       run: bash "$GITHUB_ACTION_PATH/prune.sh"
