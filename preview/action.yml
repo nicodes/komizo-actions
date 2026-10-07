@@ -49,6 +49,20 @@ description: >
   fails the step rather than being passed on half-parsed.
 
 inputs:
+  discord-webhook-url:
+    description: >
+      Optional secrets.DISCORD_WEBHOOK_URL. On up, poll the public preview
+      before announcing success. No failure or teardown messages.
+      Empty preserves the existing preview behavior.
+    required: false
+    default: ''
+  discord-health-urls:
+    description: >
+      Optional health-check URL list for announcements, including API health
+      endpoints if needed. Defaults to the derived public preview URL.
+      Ignored when discord-webhook-url is empty or action is down.
+    required: false
+    default: ''
   # --- which preview --------------------------------------------------------
   app:
     description: >
@@ -211,3 +225,23 @@ runs:
         REGISTRY_USER: ${{ inputs.registry-user }}
         REGISTRY_TOKEN: ${{ inputs.registry-token }}
       run: bash "$GITHUB_ACTION_PATH/run.sh"
+
+    - name: Verify the public preview before announcing it
+      if: inputs.action == 'up' && inputs.discord-webhook-url != ''
+      uses: nicodes/komizo-actions/health-check@db1c5a2eeb7b73b1b17abb24874db427db9b8c50
+      with:
+        urls: ${{ inputs.discord-health-urls || steps.preview.outputs.preview-url }}
+
+    - name: Announce preview success
+      continue-on-error: true
+      if: success() && inputs.action == 'up' && inputs.discord-webhook-url != ''
+      shell: bash
+      env:
+        DISCORD_WEBHOOK_URL: ${{ inputs.discord-webhook-url }}
+        NOTIFY_APP: ${{ inputs.app }}
+        NOTIFY_ENVIRONMENT: preview
+        NOTIFY_STATUS: success
+        NOTIFY_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        NOTIFY_PR: ${{ inputs.pr-number }}
+        NOTIFY_PREVIEW_URL: ${{ steps.preview.outputs.preview-url }}
+      run: python3 "$GITHUB_ACTION_PATH/../notify-discord/send.py"

@@ -1,0 +1,43 @@
+name: Notify Discord
+description: Send a deployment result without changing the deployment outcome.
+inputs:
+  webhook-url:
+    description: Discord channel webhook, supplied from secrets.DISCORD_WEBHOOK_URL.
+    required: true
+  app:
+    description: Application name.
+    required: true
+  environment:
+    description: production or preview.
+    required: true
+  status:
+    description: success or failure. Preview failure is intentionally silent.
+    required: true
+  revision:
+    description: Deployed commit SHA.
+    default: ${{ github.sha }}
+  pr-number:
+    description: Preview pull request number.
+    default: ''
+  preview-url:
+    description: Public preview URL after health checks pass.
+    default: ''
+  details:
+    description: Job results or recovery outcome. Do not include secrets or logs.
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Send deployment result
+      continue-on-error: true
+      shell: bash
+      env:
+        DISCORD_WEBHOOK_URL: ${{ inputs.webhook-url }}
+        NOTIFY_APP: ${{ inputs.app }}
+        NOTIFY_ENVIRONMENT: ${{ inputs.environment }}
+        NOTIFY_STATUS: ${{ inputs.status }}
+        NOTIFY_REVISION: ${{ inputs.revision }}
+        NOTIFY_PR: ${{ inputs.pr-number }}
+        NOTIFY_PREVIEW_URL: ${{ inputs.preview-url }}
+        NOTIFY_DETAILS: ${{ inputs.details }}
+      run: python3 "$GITHUB_ACTION_PATH/send.py"
