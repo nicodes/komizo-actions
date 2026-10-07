@@ -44,7 +44,7 @@ def payload(env):
         "allowed_mentions": {"parse": []},
         "embeds": [{
             "color": 3066993 if status == "success" else 15158332,
-            "description": f"{dot} **{repo.split('/')[-1]}** {environment}\n" + " · ".join(links),
+            "description": f"{dot} **{repo.split('/')[-1]}** {environment} · " + " · ".join(links),
         }],
     }
 
