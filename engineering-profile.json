@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "profile": "configuration",
+  "commands": {
+    "install": [
+      "make",
+      "install"
+    ],
+    "lint": [
+      "make",
+      "lint"
+    ],
+    "test": [
+      "make",
+      "test"
+    ],
+    "check": [
+      "make",
+      "check"
+    ],
+    "clean": [
+      "make",
+      "clean"
+    ],
+    "build": {
+      "unsupported": "Composite action library has no deployed application, build image or development service; make check verifies action syntax and behavior."
+    },
+    "dev": {
+      "unsupported": "Composite action library has no deployed application, build image or development service; make check verifies action syntax and behavior."
+    },
+    "stop": {
+      "unsupported": "Composite action library has no deployed application, build image or development service; make check verifies action syntax and behavior."
+    }
+  }
+}
