@@ -1,6 +1,5 @@
 """Best-effort deployment announcements; never print webhook credentials."""
 
-import datetime
 import json
 import os
 import re
@@ -21,36 +20,36 @@ def payload(env):
         raise ValueError("invalid deployment result")
     if target == "preview" and status == "failure":
         return None
-    app = env.get("NOTIFY_APP", "").strip()
     revision = env.get("NOTIFY_REVISION", "")
     repo = env.get("GITHUB_REPOSITORY", "")
     server = env.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
-    if not app or not re.fullmatch(r"[a-fA-F0-9]{40}", revision):
-        raise ValueError("application and full commit SHA required")
-    fields = [
-        {"name": "Repository", "value": repo[:1024] or "unknown"},
-        {"name": "Commit", "value": f"[{revision[:7]}]({server}/{repo}/commit/{revision})"},
-        {"name": "Workflow", "value": f"[View run]({server}/{repo}/actions/runs/{env.get('GITHUB_RUN_ID', '')})"},
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) or not re.fullmatch(r"[a-fA-F0-9]{40}", revision):
+        raise ValueError("repository and full commit SHA required")
+    links = [
+        f"[Repo]({server}/{repo})",
+        f"[Commit]({server}/{repo}/commit/{revision})",
+        f"[Run]({server}/{repo}/actions/runs/{env.get('GITHUB_RUN_ID', '')})",
     ]
+    url = env.get("NOTIFY_DEPLOYMENT_URL", "")
     if target == "preview":
         pr = env.get("NOTIFY_PR", "")
-        url = env.get("NOTIFY_PREVIEW_URL", "")
-        if not re.fullmatch(r"[1-9][0-9]*", pr) or not re.fullmatch(r"https://[a-z0-9.-]+(?::[0-9]+)?/?", url):
+        url = url or env.get("NOTIFY_PREVIEW_URL", "")
+        if not re.fullmatch(r"[1-9][0-9]*", pr) or not url:
             raise ValueError("preview PR and HTTPS URL required")
-        fields.extend([
-            {"name": "Pull request", "value": f"[#{pr}]({server}/{repo}/pull/{pr})"},
-            {"name": "Preview", "value": url[:1024]},
-        ])
-    details = env.get("NOTIFY_DETAILS", "").strip()
-    if details:
-        fields.append({"name": "Details", "value": details[:1024]})
+        links.append(f"[PR #{pr}]({server}/{repo}/pull/{pr})")
+    if url:
+        if not re.fullmatch(r"https://[a-z0-9.-]+(?::[0-9]+)?/?", url):
+            raise ValueError("HTTPS deployment URL required")
+        label = "Preview" if target == "preview" else "Prod"
+        links.append(f"[{label}]({url})")
+    dot = "🟢" if status == "success" else "🔴"
+    environment = "prod" if target == "production" else "preview"
     return {
         "allowed_mentions": {"parse": []},
         "embeds": [{
-            "title": f"{app} · {target} · {status}"[:256],
+            "title": f"{dot} {repo.split('/')[-1]}.{environment}"[:256],
             "color": 3066993 if status == "success" else 15158332,
-            "fields": fields,
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "description": " · ".join(links),
         }],
     }
 
