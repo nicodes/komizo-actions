@@ -263,7 +263,7 @@ def trusted_ci(merged):
         for job in jobs:
             for check in checks:
                 if (
-                    job["name"] == check["name"] == "ci"
+                    job["name"] == check["name"] == "Test"
                     and job["status"] == check["status"] == "completed"
                     and job["conclusion"] == check["conclusion"] == "success"
                     and job["head_sha"] == check["head_sha"] == merged
@@ -274,7 +274,7 @@ def trusted_ci(merged):
                 ):
                     return
     raise RuntimeError(
-        "no exact successful trusted main push CI run with linked ci check"
+        "no exact successful trusted main push CI run with linked Test check"
     )
 
 
