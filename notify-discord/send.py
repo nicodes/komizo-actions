@@ -25,31 +25,26 @@ def payload(env):
     server = env.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo) or not re.fullmatch(r"[a-fA-F0-9]{40}", revision):
         raise ValueError("repository and full commit SHA required")
-    links = [
-        f"[Repo]({server}/{repo})",
-        f"[Commit]({server}/{repo}/commit/{revision})",
-        f"[Run]({server}/{repo}/actions/runs/{env.get('GITHUB_RUN_ID', '')})",
-    ]
+    links = []
     url = env.get("NOTIFY_DEPLOYMENT_URL", "")
     if target == "preview":
         pr = env.get("NOTIFY_PR", "")
         url = url or env.get("NOTIFY_PREVIEW_URL", "")
         if not re.fullmatch(r"[1-9][0-9]*", pr) or not url:
             raise ValueError("preview PR and HTTPS URL required")
-        links.append(f"[PR #{pr}]({server}/{repo}/pull/{pr})")
+        links.append(f"[PR]({server}/{repo}/pull/{pr})")
     if url:
         if not re.fullmatch(r"https://[a-z0-9.-]+(?::[0-9]+)?/?", url):
             raise ValueError("HTTPS deployment URL required")
-        label = "Preview" if target == "preview" else "Prod"
-        links.append(f"[{label}]({url})")
+        links.insert(0, f"[View]({url})")
+    links.append(f"[Run]({server}/{repo}/actions/runs/{env.get('GITHUB_RUN_ID', '')})")
     dot = "🟢" if status == "success" else "🔴"
     environment = "prod" if target == "production" else "preview"
     return {
         "allowed_mentions": {"parse": []},
         "embeds": [{
-            "title": f"{dot} {repo.split('/')[-1]}.{environment}"[:256],
             "color": 3066993 if status == "success" else 15158332,
-            "description": " · ".join(links),
+            "description": f"{dot} **{repo.split('/')[-1]}** {environment}\n" + " · ".join(links),
         }],
     }
 
