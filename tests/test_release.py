@@ -111,7 +111,7 @@ class ReleaseTests(unittest.TestCase):
             "actions/runs/10/attempts/1/jobs": {
                 "jobs": [
                     {
-                        "name": "ci",
+                        "name": "Test",
                         "status": "completed",
                         "conclusion": "success",
                         "head_sha": merged,
@@ -123,7 +123,7 @@ class ReleaseTests(unittest.TestCase):
             "check-suites/20/check-runs": {
                 "check_runs": [
                     {
-                        "name": "ci",
+                        "name": "Test",
                         "status": "completed",
                         "conclusion": "success",
                         "head_sha": merged,
