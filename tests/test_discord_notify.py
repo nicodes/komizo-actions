@@ -35,7 +35,7 @@ class DiscordNotifyTests(unittest.TestCase):
         self.assertEqual(body["allowed_mentions"], {"parse": []})
         embed = body["embeds"][0]
         self.assertNotIn("title", embed)
-        self.assertEqual(embed["description"], "🟢 **example** preview\n[View](https://pr-12.example.com) · [PR](https://github.com/owner/example/pull/12) · [Run](https://github.com/owner/example/actions/runs/123)")
+        self.assertEqual(embed["description"], "🟢 **example** preview · [View](https://pr-12.example.com) · [PR](https://github.com/owner/example/pull/12) · [Run](https://github.com/owner/example/actions/runs/123)")
         self.assertNotIn("timestamp", embed)
         self.assertNotIn("fields", embed)
 
@@ -45,7 +45,7 @@ class DiscordNotifyTests(unittest.TestCase):
             self.env["NOTIFY_STATUS"] = status
             embed = notify.payload(self.env)["embeds"][0]
             self.assertNotIn("title", embed)
-            self.assertEqual(embed["description"], f"{dot} **example** prod\n[View](https://example.com) · [Run](https://github.com/owner/example/actions/runs/123)")
+            self.assertEqual(embed["description"], f"{dot} **example** prod · [View](https://example.com) · [Run](https://github.com/owner/example/actions/runs/123)")
             self.assertNotIn("timestamp", embed)
             self.assertNotIn("old verbose", str(embed))
 
@@ -60,7 +60,7 @@ class DiscordNotifyTests(unittest.TestCase):
             def open(inner, request, timeout):
                 self.assertEqual(request.method, "POST")
                 body = json.loads(request.data)
-                self.assertTrue(body["embeds"][0]["description"].startswith("🔴 **example** prod\n"))
+                self.assertTrue(body["embeds"][0]["description"].startswith("🔴 **example** prod · "))
                 self.assertNotIn("SECRET", request.data.decode())
                 response = unittest.mock.MagicMock()
                 response.__enter__.return_value.status = 204
