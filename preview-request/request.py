@@ -37,10 +37,11 @@ THE RULE, event by event:
   anything else -> nothing.
 
 GUARDS on every up: the PR's head lives in this repository (never a fork),
-the PR's author is OWNER, MEMBER or COLLABORATOR and not dependabot (a
-dependabot run is served the Dependabot secret store, so the deploy key
-would arrive empty), the PR is open and not a draft. Down requires only the
-same-repository head: a fork PR never had a preview to remove.
+the PR's author is OWNER, MEMBER or COLLABORATOR, the PR is open and not a
+draft. Down requires only the same-repository head: a fork PR never had a
+preview to remove. A dependabot PR is refused both ways: it is never
+deployed, and a run dependabot triggers (its own pushes, its own closes) is
+served the Dependabot secret store, so the deploy key would arrive empty.
 
 VALIDATION: the PR number must be a positive integer and the head sha forty
 lowercase hex characters, or the step fails rather than passing a malformed
@@ -119,9 +120,14 @@ def resolve(event, event_name, repository, label, fetch=None):
     head = pr.get("head") or {}
     if (head.get("repo") or {}).get("full_name") != repository:
         raise Refused("head is not in this repository")
+    if (pr.get("user") or {}).get("login") == DEPENDABOT:
+        # Refused for down as well as up: nothing was ever deployed for a
+        # dependabot PR, and when dependabot closes (supersedes) its own PR
+        # the run's actor is dependabot, which is served the Dependabot secret
+        # store -- the deploy key would arrive empty and the teardown job go
+        # red on every supersede.
+        raise Refused("dependabot pull requests are never previewed")
     if action == "up":
-        if (pr.get("user") or {}).get("login") == DEPENDABOT:
-            raise Refused("dependabot pull requests are never previewed")
         if pr.get("author_association") not in TRUSTED:
             raise Refused(f"pull request author is {pr.get('author_association') or 'unknown'}")
         if pr.get("draft"):

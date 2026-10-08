@@ -22,8 +22,11 @@ description: >
     OWNER, MEMBER or COLLABORATOR -> nothing
 
   Every up also requires: the head is in this repository (never a fork), the
-  PR author is OWNER, MEMBER or COLLABORATOR and not dependabot, the PR is
-  open and not a draft. Down requires only the same-repository head. The PR
+  PR author is OWNER, MEMBER or COLLABORATOR, the PR is open and not a
+  draft. Down requires only the same-repository head. A dependabot PR is
+  refused both ways: it is never deployed, and a run dependabot triggers is
+  served the Dependabot secret store, so the deploy key would arrive empty
+  and a teardown job would go red on every supersede. The PR
   number is validated as a positive integer and the head sha as forty hex
   characters; anything else fails the step rather than naming a host-side
   stack by a malformed identity.
@@ -69,7 +72,10 @@ outputs:
       a comment event carries no pull_request payload.
     value: ${{ steps.request.outputs.sha }}
   head_ref:
-    description: The pull request's head branch name when enabled, else empty.
+    description: >
+      The pull request's head branch name when enabled, else empty. A branch
+      name may contain shell metacharacters: pass it through `with:` or
+      `env:`, never interpolate it into a `run:` body.
     value: ${{ steps.request.outputs.head_ref }}
   reason:
     description: >

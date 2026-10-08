@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 31449c4e0605c75ccea467a6253ec0d4c0e49d17215213b73d3f54c564ae1a45 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 89ae9191bcd479f3087e11d64079ad443260c9bf00a316d577320f46731561c3 -->
 
 # komizo-actions
 
@@ -39,7 +39,7 @@ The rule, applied inside the jobs (the workflow keeps the full `pull_request` ty
 - `pull_request` `synchronize` or `reopened` redeploys only while the PR carries the `preview` label.
 - `pull_request` `opened` and `ready_for_review` do nothing.
 - A comment whose exact body is `/preview` deploys; `/preview down` tears down. Only comments by an OWNER, MEMBER or COLLABORATOR count, and only on pull requests.
-- Every deploy requires a same-repository head (never a fork), a trusted non-dependabot author, and an open, non-draft PR.
+- Every deploy requires a same-repository head (never a fork), a trusted author, and an open, non-draft PR. Dependabot pull requests are refused both ways: never deployed, and a run dependabot triggers is served the Dependabot secret store, so a teardown would run with an empty deploy key.
 
 ```yaml
 on:
@@ -67,15 +67,30 @@ jobs:
   preview-up:
     needs: request
     if: needs.request.outputs.enabled == 'true' && needs.request.outputs.action == 'up'
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       packages: read
     steps:
-      # ... checkout needs.request.outputs.sha, run nicodes/komizo-actions/preview with action: up ...
+      - uses: actions/checkout@<full commit sha>
+        with:
+          ref: ${{ needs.request.outputs.sha }}
+      - uses: nicodes/komizo-actions/preview@<full commit sha>
+        with:
+          app: example
+          pr-number: ${{ needs.request.outputs.pr }}
+          images: ghcr.io/example/app-gate:${{ needs.request.outputs.sha }}
+          action: up
+          registry-user: ${{ github.actor }}
+          registry-token: ${{ secrets.GITHUB_TOKEN }}
       - run: gh pr edit "$PR" --add-label preview
-        env: { GH_TOKEN: "${{ github.token }}", PR: "${{ needs.request.outputs.pr }}" }
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.request.outputs.pr }}
 ```
+
+A `preview-down` job gates on `needs.request.outputs.action == 'down'`, runs the same composite with `action: down`, then `gh pr edit "$PR" --remove-label preview`.
 
 Use the resolved `pr` and `sha` outputs rather than `github.event.pull_request.*`: a comment event carries no pull request payload. The workflow adds the label after a successful `up` and removes it after `down`; the action only reads it. A label left behind by host-side garbage collection costs one redeploy on the next push, which recreates the state. The `preview` label must exist in the repository (`gh label create preview`), and the job that flips it needs `pull-requests: write`.
 

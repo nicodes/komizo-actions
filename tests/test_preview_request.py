@@ -109,11 +109,19 @@ class PullRequestEvents(unittest.TestCase):
         self.assertEqual(result["pr"], "42")
         self.assertEqual(result["sha"], SHA)
 
-    def test_closed_tears_down_a_draft_and_a_dependabot_pr(self):
-        for overrides in [dict(draft=True), dict(user={"login": "dependabot[bot]"}, author_association="CONTRIBUTOR")]:
+    def test_closed_tears_down_a_draft_and_an_untrusted_authors_pr(self):
+        for overrides in [dict(draft=True), dict(author_association="CONTRIBUTOR")]:
             with self.subTest(overrides=overrides):
                 result = resolve(push("closed", state="closed", **overrides), "pull_request")
                 self.assertEqual(result["action"], "down")
+
+    def test_closed_dependabot_pr_is_ignored(self):
+        """A dependabot close runs as dependabot, with the Dependabot secret
+        store and no deploy key; nothing was ever deployed for it anyway."""
+        event = push("closed", state="closed", user={"login": "dependabot[bot]"}, author_association="CONTRIBUTOR")
+        with self.assertRaises(request.Refused) as refused:
+            resolve(event, "pull_request")
+        self.assertEqual(str(refused.exception), "dependabot pull requests are never previewed")
 
     def test_closed_fork_pr_is_ignored(self):
         event = push("closed", head={"sha": SHA, "ref": "x", "repo": {"full_name": "fork/product"}})
@@ -222,11 +230,13 @@ class CommentEvents(unittest.TestCase):
                     resolve(comment(), "issue_comment", Fetch(fetched))
                 self.assertEqual(str(refused.exception), reason)
 
-    def test_down_on_a_closed_pr_is_allowed_but_not_on_a_fork(self):
+    def test_down_on_a_closed_pr_is_allowed_but_not_on_a_fork_or_dependabot_pr(self):
         self.assertEqual(resolve(comment("/preview down"), "issue_comment", Fetch(pr(state="closed")))["action"], "down")
         with self.assertRaises(request.Refused):
             resolve(comment("/preview down"), "issue_comment",
                     Fetch(pr(head={"sha": SHA, "ref": "x", "repo": {"full_name": "fork/product"}})))
+        with self.assertRaises(request.Refused):
+            resolve(comment("/preview down"), "issue_comment", Fetch(pr(user={"login": "dependabot[bot]"})))
 
     def test_comment_does_not_need_the_label(self):
         self.assertEqual(resolve(comment(), "issue_comment", Fetch(pr(labels=[])))["action"], "up")
