@@ -203,7 +203,7 @@ runs:
     #    connection, so a bad key fails before the host is asked to do
     #    anything.
     - if: steps.cfg.outputs.host != ''
-      uses: nicodes/komizo-actions/connect@e6c4af3aec417925819f48368862d399807786cd
+      uses: nicodes/komizo-actions/connect@651a6bf057306a4b00844f0d87a1c2702bf85d4b
       with:
         host: ${{ steps.cfg.outputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', inputs.app) }}
@@ -229,7 +229,7 @@ runs:
 
     - name: Verify the public preview before announcing it
       if: inputs.action == 'up' && inputs.discord-webhook-url != ''
-      uses: nicodes/komizo-actions/health-check@e6c4af3aec417925819f48368862d399807786cd
+      uses: nicodes/komizo-actions/health-check@651a6bf057306a4b00844f0d87a1c2702bf85d4b
       with:
         urls: ${{ inputs.discord-health-urls || steps.preview.outputs.preview-url }}
 
