@@ -756,5 +756,18 @@ outputs_contain 'api-url='
 run_case 1 "multi-image target must report API host" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=resolve STUB_REMOTE_OUTPUT="$(jq -c '.api_host=""' <<<"$TARGET")"
 no_outputs "invalid resolve target writes no outputs"
 
+echo "== numeric preview paths =="
+PATH_RECORD="$(jq -c '. + {domain:"preview.avior.studio",host:"gdam.preview.avior.studio",api_host:"gdam-api.preview.avior.studio",base_path:"/42"}' <<<"$RECORD_UP")"
+run_case 0 "path preview URLs" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=up STUB_REMOTE_OUTPUT="$PATH_RECORD"
+outputs_contain 'preview-url=https://gdam.preview.avior.studio/42'
+outputs_contain 'api-url=https://gdam-api.preview.avior.studio/42'
+run_case 0 "resolve path preview" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=resolve REGISTRY_USER= REGISTRY_TOKEN= STUB_REMOTE_OUTPUT="$(jq -c '{app,pr,domain,host,api_host,base_path}' <<<"$PATH_RECORD")"
+outputs_contain 'preview-url=https://gdam.preview.avior.studio/42'
+for path in '/43' '/42/' '/pr/42' '/42/../43' '//evil.example' '/42?x=y'; do
+ bad_record="$(jq -c --arg path "$path" '.base_path=$path' <<<"$PATH_RECORD")"
+ run_case 1 "reject mismatched or unsafe path: $path" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=up STUB_REMOTE_OUTPUT="$bad_record"
+ no_outputs "invalid path writes no outputs"
+done
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
