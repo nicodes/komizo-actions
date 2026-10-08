@@ -217,18 +217,27 @@ reported_urls() {
 	local reported_host reported_api expected_api
 	reported_host="$(jq -r '.host' <<<"$record")"
 	reported_api="$(jq -r '.api_host' <<<"$record")"
-	if [ "$reported_host" != "pr-$PR_NUMBER.$domain" ] && [ "$reported_host" != "$APP-pr$PR_NUMBER.$domain" ]; then
-		refuse "the reported preview host does not name this app/PR under its routing domain."
+	local base_path
+	jq -e '(.base_path // "") | type == "string"' <<<"$record" >/dev/null || refuse "the reported base_path must be a string."
+	base_path="$(jq -r '.base_path // ""' <<<"$record")"
+	if [ -n "$base_path" ]; then
+		[ "$base_path" = "/$PR_NUMBER" ] || refuse "the reported preview path does not name this PR."
+		[ "$reported_host" = "$APP.$domain" ] || refuse "the reported path preview host does not name this app."
+		expected_api="$APP-api.$domain"
+	else
+		if [ "$reported_host" != "pr-$PR_NUMBER.$domain" ] && [ "$reported_host" != "$APP-pr$PR_NUMBER.$domain" ]; then
+			refuse "the reported preview host does not name this app/PR under its routing domain."
+		fi
+		expected_api="${reported_host%%.*}-api.${reported_host#*.}"
 	fi
-	expected_api="${reported_host%%.*}-api.${reported_host#*.}"
 	if [ "${#image_words[@]}" -gt 1 ]; then
 		[ "$reported_api" = "$expected_api" ] || refuse "the reported API host does not match this preview."
 	else
 		[ -z "$reported_api" ] || refuse "a gate-only preview must not report an API host."
 	fi
-	preview_url="https://$reported_host"
+	preview_url="https://$reported_host$base_path"
 	api_url=""
-	[ -z "$reported_api" ] || api_url="https://$reported_api"
+	[ -z "$reported_api" ] || api_url="https://$reported_api$base_path"
 }
 
 if [ "$ACTION" = "resolve" ]; then
