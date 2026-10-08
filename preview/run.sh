@@ -26,7 +26,7 @@
 # hanging the job. The doas rule does not permit the raw binary: its args
 # match exactly, so a rule on komizo-box itself would permit EVERY mode as
 # root. The box therefore permits a root-owned WRAPPER, the preview entry,
-# which enforces the mode (up|down|ls|gc) and the app lock (--app must name
+# which enforces the mode (up|down|resolve|ls|gc) and the app lock (--app must name
 # the doas caller's own app, via DOAS_USER):
 #
 #   doas -n /usr/local/bin/komizo-preview up --app <app> --pr <N> <image...>
@@ -45,7 +45,7 @@
 #   APP         the product slug
 #   PR_NUMBER   the pull request number
 #   IMAGES      space-separated image refs (passed to the primitive on up)
-#   ACTION      up | down
+#   ACTION      up | down | resolve
 #   REGISTRY_USER   the ghcr username the host logs in as before up's pulls
 #   REGISTRY_TOKEN  the ghcr password for that login -- rides stdin to the
 #                   wrapper, never an argument, never echoed
@@ -70,8 +70,8 @@ refuse() {
 # Metadata `required: true` does not reject a missing composite-action input,
 # so every required input is checked at runtime (see run-task/run.sh).
 case "$ACTION" in
-	up|down) ;;
-	*) refuse "action must be 'up' or 'down'; got '$ACTION'." ;;
+	up|down|resolve) ;;
+	*) refuse "action must be 'up', 'down' or 'resolve'; got '$ACTION'." ;;
 esac
 
 # The product slug. The host derives per-preview names from it -- the database,
@@ -186,6 +186,12 @@ if [ "$ACTION" = "up" ]; then
 	# shellcheck disable=SC2029 # the expansion is deliberate, and every value is charset-guarded above
 	printf '%s' "$REGISTRY_TOKEN" \
 		| ssh deploy-target "doas -n /usr/local/bin/komizo-preview up --app '$APP' --pr '$PR_NUMBER' --registry-user '$REGISTRY_USER'$quoted" 2>&1 | tee "$out_file" || rc=$?
+elif [ "$ACTION" = "resolve" ]; then
+	quoted=""
+	for ref in "${image_words[@]}"; do quoted="$quoted '$ref'"; done
+	# Read-only, no registry login or credential forwarded.
+	# shellcheck disable=SC2029 # every argument is validated and single-quoted
+	ssh deploy-target "doas -n /usr/local/bin/komizo-preview resolve --app '$APP' --pr '$PR_NUMBER'$quoted" 2>&1 | tee "$out_file" || rc=$?
 else
 	# Down names the preview; the host's own state records which images ran
 	# under it, so the refs validated above stay runner-side.
@@ -201,6 +207,41 @@ fi
 # In variables rather than inline: an unquoted regex is parsed as shell
 # tokens, and the URL class below carries parentheses and a semicolon.
 url_re='^https://[A-Za-z0-9][A-Za-z0-9._~:/?#@!$&()*+,;=%-]*$'
+
+# Host-provided names may use either supported layout; never accept an
+# arbitrary host or a name belonging to a different app/PR.
+reported_urls() {
+	if ! jq -e '(.host | type == "string" and length > 0) and (.api_host | type == "string")' <<<"$record" >/dev/null; then
+		refuse "the host must report host and api_host as strings."
+	fi
+	local reported_host reported_api expected_api
+	reported_host="$(jq -r '.host' <<<"$record")"
+	reported_api="$(jq -r '.api_host' <<<"$record")"
+	if [ "$reported_host" != "pr-$PR_NUMBER.$domain" ] && [ "$reported_host" != "$APP-pr$PR_NUMBER.$domain" ]; then
+		refuse "the reported preview host does not name this app/PR under its routing domain."
+	fi
+	expected_api="${reported_host%%.*}-api.${reported_host#*.}"
+	if [ "${#image_words[@]}" -gt 1 ]; then
+		[ "$reported_api" = "$expected_api" ] || refuse "the reported API host does not match this preview."
+	else
+		[ -z "$reported_api" ] || refuse "a gate-only preview must not report an API host."
+	fi
+	preview_url="https://$reported_host"
+	api_url=""
+	[ -z "$reported_api" ] || api_url="https://$reported_api"
+}
+
+if [ "$ACTION" = "resolve" ]; then
+	mapfile -t records < <(jq -Rc 'fromjson? | objects' "$out_file")
+	[ "${#records[@]}" -eq 1 ] || refuse "resolve must return exactly one JSON target."
+	record="${records[0]}"
+	jq -e --arg app "$APP" --argjson pr "$PR_NUMBER" '.app == $app and .pr == $pr and (.domain | type == "string") and (has("db_password") | not)' <<<"$record" >/dev/null || refuse "resolve did not return this preview target."
+	domain="$(jq -r '.domain' <<<"$record")"
+	[[ "$domain" =~ ^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$ ]] || refuse "resolve returned an invalid domain."
+	reported_urls
+	printf 'preview-url=%s\napi-url=%s\ngate-status=resolved\n' "$preview_url" "$api_url" >> "$GITHUB_OUTPUT"
+	exit 0
+fi
 
 if [ "$ACTION" = "up" ]; then
 	# The contract is ONE JSON object -- the host's PreviewRecord
@@ -317,16 +358,17 @@ if [ "$ACTION" = "up" ]; then
 		refuse "the host's preview domain is not a plain domain: '$domain'."
 	fi
 
-	# The URLs the record does not carry, derived from the verified record's
-	# own naming (pr-<N>.<domain> and pr-<N>-api.<domain> -- box/preview.go
-	# PreviewHost and previewRoute) and the host-reported domain, then
-	# revalidated like any untrusted value.
+	# Legacy hosts report only their domain. New hosts report the exact
+	# endpoints, validated against the requested app and PR.
 	preview_url="https://pr-$PR_NUMBER.$domain"
 	api_url="https://pr-$PR_NUMBER-api.$domain"
+	if jq -e 'has("host")' <<<"$record" >/dev/null; then
+		reported_urls
+	fi
 	if [[ ! "$preview_url" =~ $url_re ]]; then
 		refuse "the derived preview URL is not a plain https URL: '$preview_url'."
 	fi
-	if [[ ! "$api_url" =~ $url_re ]]; then
+	if [ -n "$api_url" ] && [[ ! "$api_url" =~ $url_re ]]; then
 		refuse "the derived api URL is not a plain https URL: '$api_url'."
 	fi
 
