@@ -43,9 +43,10 @@ description: >
   requested app and PR, every consumed value revalidated), and `down` prints
   an informational sentence that is logged, never parsed — teardown is
   verified against `preview ls` (a JSON array) instead, the preview required
-  to be gone from the host's state. The record carries no URL: preview-url
-  and api-url are derived from the verified PR number and the host's preview
-  domain as read from its knob. Output that does not follow the contract
+  to be gone from the host's state. New hosts report the routed hostnames: preview-url
+  and api-url use those names after matching the requested app, PR and domain.
+  Legacy hosts retain the existing domain-based fallback. Resolve is read-only
+  and supplies the same names before building or writing authentication settings. Output that does not follow the contract
   fails the step rather than being passed on half-parsed.
 
 inputs:
@@ -86,7 +87,7 @@ inputs:
       records which images ran under it.
     required: true
   action:
-    description: up to bring the preview up, down to tear it down.
+    description: up to deploy, down to tear down, resolve to read planned URLs without deployment.
     required: true
 
   # --- registry -------------------------------------------------------------
@@ -164,20 +165,20 @@ inputs:
 outputs:
   preview-url:
     description: >
-      The preview's public URL, https://pr-<N>.<domain> — the PR number from
+      The preview's public URL, reported by the host (legacy or shared-domain format) — the PR number from
       the host's verified record, the domain from the host's own preview
       knob (/etc/komizo/preview, or the box's compiled default when the knob
       is absent). Set by `up`.
     value: ${{ steps.preview.outputs.preview-url }}
   api-url:
     description: >
-      The preview's API URL, https://pr-<N>-api.<domain> — derived the same
+      The preview's API URL, reported by the host; empty for gate-only previews — derived the same
       way as preview-url. Set by `up`.
     value: ${{ steps.preview.outputs.api-url }}
   gate-status:
     description: >
       The composite's own verification of the preview's state: `up` when the
-      host's record parsed and named this preview, `down` when the teardown
+      host's record parsed and named this preview, `resolved` for a read-only target, `down` when the teardown
       was verified against the host's state. Set by both actions.
     value: ${{ steps.preview.outputs.gate-status }}
 
