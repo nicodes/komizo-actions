@@ -1,0 +1,89 @@
+name: Preview request
+description: >
+  Decide whether this run is a preview request, before any secret enters the
+  workflow. Previews are opt-in: a trusted person asks for one with a
+  `/preview` comment, the pull request keeps it across pushes while it carries
+  the preview label, and `/preview down` or closing the PR removes it.
+
+  Secret-free and cheap on purpose. It reads the event payload, makes at most
+  one pull request lookup (on comments, which carry no head sha) with the
+  run's own token under pull-requests: read, and publishes a decision the
+  privileged jobs gate on. A request it refuses never brings the deploy key
+  into scope.
+
+  The rule, event by event:
+
+    pull_request closed                -> down, always; teardown is idempotent
+    pull_request synchronize, reopened -> up only if the PR carries the label
+    pull_request opened, ready_for_review, other -> nothing
+    issue_comment created, exact body `/preview`      -> up
+    issue_comment created, exact body `/preview down` -> down
+    any other comment, a comment on a plain issue, or a commenter who is not
+    OWNER, MEMBER or COLLABORATOR -> nothing
+
+  Every up also requires: the head is in this repository (never a fork), the
+  PR author is OWNER, MEMBER or COLLABORATOR and not dependabot, the PR is
+  open and not a draft. Down requires only the same-repository head. The PR
+  number is validated as a positive integer and the head sha as forty hex
+  characters; anything else fails the step rather than naming a host-side
+  stack by a malformed identity.
+
+  The workflow's pr-preview.yml keeps its full pull_request type list -- the
+  fleet workflow contract requires it -- and adds issue_comment: [created];
+  the gating happens here, inside the jobs, not in the trigger.
+
+  This action reads the label; the workflow writes it. After a successful up,
+  add it (gh pr edit --add-label); after down, remove it. A label left behind
+  by host-side garbage collection costs one redeploy on the next push, which
+  recreates the state -- accepted.
+
+inputs:
+  github-token:
+    description: >
+      Token for the one pull request lookup a comment needs. The run's own
+      github.token is enough: the job must grant pull-requests: read, and
+      nothing more is used.
+    required: false
+    default: ${{ github.token }}
+  label:
+    description: >
+      The label that marks "a preview is up". A single word; the workflow adds
+      it after a successful up and removes it after down.
+    required: false
+    default: preview
+
+outputs:
+  enabled:
+    description: "`true` when this run is a preview request, else `false`."
+    value: ${{ steps.request.outputs.enabled }}
+  action:
+    description: "`up` or `down` when enabled, else empty."
+    value: ${{ steps.request.outputs.action }}
+  pr:
+    description: The pull request number when enabled, else empty.
+    value: ${{ steps.request.outputs.pr }}
+  sha:
+    description: >
+      The pull request's current head sha when enabled, else empty. Pass this,
+      not the event's pull_request fields, to checkout and to the image refs:
+      a comment event carries no pull_request payload.
+    value: ${{ steps.request.outputs.sha }}
+  head_ref:
+    description: The pull request's head branch name when enabled, else empty.
+    value: ${{ steps.request.outputs.head_ref }}
+  reason:
+    description: >
+      One short line saying why the run is or is not a preview request, for
+      the run log -- e.g. "synchronize without the preview label" or
+      "comment /preview by OWNER".
+    value: ${{ steps.request.outputs.reason }}
+
+runs:
+  using: composite
+  steps:
+    - id: request
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        LABEL: ${{ inputs.label }}
+      run: python3 "$GITHUB_ACTION_PATH/request.py"
