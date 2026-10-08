@@ -735,5 +735,26 @@ for value in 'null' 'false' '42' '""' '"evil.invalid/escape"' '"preview.revik.gg
  no_outputs "malformed domain produces no URL"
 done
 
+echo "== shared preview host contract =="
+SHARED_RECORD="$(jq -c '. + {domain:"preview.avior.studio",host:"gdam-pr42.preview.avior.studio",api_host:"gdam-pr42-api.preview.avior.studio"}' <<<"$RECORD_UP")"
+run_case 0 "shared host is authoritative" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=up STUB_REMOTE_OUTPUT="$SHARED_RECORD" STUB_KNOB_RC=99
+outputs_contain 'preview-url=https://gdam-pr42.preview.avior.studio'
+outputs_contain 'api-url=https://gdam-pr42-api.preview.avior.studio'
+TARGET="$(jq -c '{app,pr,domain,host,api_host}' <<<"$SHARED_RECORD")"
+run_case 0 "resolve needs no registry credential" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=resolve REGISTRY_USER= REGISTRY_TOKEN= STUB_REMOTE_OUTPUT="$TARGET"
+outputs_contain 'preview-url=https://gdam-pr42.preview.avior.studio'
+outputs_contain 'gate-status=resolved'
+if grep -q 'komizo-preview resolve' "$LAST_TMP/calls" && ! grep -q -- '--registry-user' "$LAST_TMP/calls"; then ok 0 "resolve is read-only and has no registry login"; else ok 1 "resolve is read-only and has no registry login"; fi
+for host in 'other-pr42.preview.avior.studio' 'gdam-pr43.preview.avior.studio' 'gdam-pr42.preview.avior.studio.evil.example' 'gdam-pr42.preview.avior.studio/path' 'gdam-pr42.preview.avior.studio\nforged=value'; do
+ bad_record="$(jq -c --arg host "$host" '.host=$host' <<<"$SHARED_RECORD")"
+ run_case 1 "reject mismatched shared host: $host" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=up STUB_REMOTE_OUTPUT="$bad_record"
+ no_outputs "invalid host writes no outputs"
+done
+STATIC_RECORD="$(jq -c '.api_host=""' <<<"$SHARED_RECORD")"
+run_case 0 "gate-only shared preview has no API URL" APP=gdam PR_NUMBER=42 IMAGES="${IMG_API%% *}" ACTION=up STUB_REMOTE_OUTPUT="$STATIC_RECORD"
+outputs_contain 'api-url='
+run_case 1 "multi-image target must report API host" APP=gdam PR_NUMBER=42 IMAGES="$IMG_API $IMG_WEB" ACTION=resolve STUB_REMOTE_OUTPUT="$(jq -c '.api_host=""' <<<"$TARGET")"
+no_outputs "invalid resolve target writes no outputs"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
