@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 89ae9191bcd479f3087e11d64079ad443260c9bf00a316d577320f46731561c3 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 8a86aa94faceeb6a1d07680d3734e9d3e20fd0f9175efd81b3f2afc4724211f2 -->
 
 # komizo-actions
 
@@ -87,10 +87,11 @@ jobs:
       - run: gh pr edit "$PR" --add-label preview
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           PR: ${{ needs.request.outputs.pr }}
 ```
 
-A `preview-down` job gates on `needs.request.outputs.action == 'down'`, runs the same composite with `action: down`, then `gh pr edit "$PR" --remove-label preview`.
+A `preview-down` job gates on `needs.request.outputs.action == 'down'`, runs the same composite with `action: down`, then `gh pr edit "$PR" --remove-label preview` with the same `GH_TOKEN`, `GH_REPO` and `PR` env: `gh` otherwise resolves the repository from a git remote, and a teardown job has no checkout.
 
 Use the resolved `pr` and `sha` outputs rather than `github.event.pull_request.*`: a comment event carries no pull request payload. The workflow adds the label after a successful `up` and removes it after `down`; the action only reads it. A label left behind by host-side garbage collection costs one redeploy on the next push, which recreates the state. The `preview` label must exist in the repository (`gh label create preview`), and the job that flips it needs `pull-requests: write`.
 
