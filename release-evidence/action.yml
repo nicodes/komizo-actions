@@ -1,0 +1,36 @@
+name: Prepare host release evidence
+description: Normalize verified publication or transferred image identities for independent host admission. Does not deploy or request an identity token.
+inputs:
+  version:
+    description: Full tested source revision.
+    required: true
+  kind:
+    description: publication, transferred-images, gate-artifact or same-job-gate. Same-job-gate must follow successful tests of those exact local images.
+    default: publication
+  source:
+    description: Verified publication or transfer manifest path.
+    default: ''
+  image-base:
+    description: Explicit image family for gate evidence.
+    default: ''
+  expected-gate-id:
+    description: Docker configuration ID emitted by the successful gate Build job.
+    default: ''
+  output:
+    description: Private normalized manifest destination.
+    default: .artifacts/komizo-release/manifest.json
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RELEASE_VERSION: ${{ inputs.version }}
+        RELEASE_KIND: ${{ inputs.kind }}
+        RELEASE_SOURCE: ${{ inputs.source }}
+        RELEASE_BASE: ${{ inputs.image-base }}
+        RELEASE_GATE_ID: ${{ inputs.expected-gate-id }}
+        RELEASE_OUTPUT: ${{ inputs.output }}
+      run: |
+        python3 "$GITHUB_ACTION_PATH/../scripts/release-proof.py" manifest \
+          --version "$RELEASE_VERSION" --kind "$RELEASE_KIND" --source "$RELEASE_SOURCE" \
+          --image-base "$RELEASE_BASE" --expected-gate-id "$RELEASE_GATE_ID" --output "$RELEASE_OUTPUT"

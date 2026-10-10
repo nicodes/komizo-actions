@@ -18,7 +18,7 @@ install:
 	.artifacts/venv/bin/python -m pip install -r requirements-tools.txt
 lint:
 	actionlint
-	shellcheck scripts/*.sh deploy/*.sh publish/*.sh preview/*.sh set-service-env/*.sh tests/*.sh
+	shellcheck scripts/*.sh activate/*.sh deploy/*.sh publish/*.sh preview/*.sh set-service-env/*.sh tests/*.sh
 	python3 scripts/lint-actions.py
 unit:
 	python3 -m unittest discover -s tests -v
