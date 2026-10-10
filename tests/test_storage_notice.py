@@ -192,7 +192,7 @@ class ActionTests(unittest.TestCase):
         )
         self.assertLess(validation, connect)
         self.assertLess(connect, self.index)
-        for fragment in ("publish-config", "set-secrets", "activate", "health-check"):
+        for fragment in ("publish-config", "set-secrets", "health-check"):
             index = next(
                 i
                 for i, s in enumerate(self.steps)
@@ -200,6 +200,8 @@ class ActionTests(unittest.TestCase):
             )
             self.assertGreater(index, self.index)
         self.assertNotIn("if", self.steps[self.index])
+        activation = next(i for i,s in enumerate(self.steps) if "activate/run.sh" in s.get("run", ""))
+        self.assertGreater(activation, self.index)
 
     def test_only_notice_is_nonblocking_and_core_pins_unchanged(self):
         self.assertIs(self.steps[self.index]["continue-on-error"], True)

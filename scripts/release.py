@@ -13,12 +13,12 @@ REPO = "nicodes/komizo-actions"
 WORKFLOW_ID = 325265928
 APP_ID = 15368
 # The primitives composed by other actions in this repository. Membership is
-# by reference, not by directory: deploy composes all five, preview composes
+# by reference, not by directory: deploy composes four; activation runs from its own checked-out bundle, preview composes
 # connect only (already a member, so preview changes nothing here), and
 # publish, setup-godot and run-task compose no siblings. A composite like
 # preview does NOT belong: nothing references nicodes/komizo-actions/preview,
 # and adding it would break canonical_tree's found == SUBACTIONS check.
-SUBACTIONS = {"connect", "publish-config", "set-secrets", "activate", "health-check"}
+SUBACTIONS = {"connect", "publish-config", "set-secrets", "health-check"}
 SHA = re.compile(r"[0-9a-f]{40}")
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 PREFIX = "Release-Candidate: "
@@ -93,7 +93,7 @@ def canonical_tree(source):
                 require(entry[0] == "100644", "composed action must be a regular file")
                 blob = git("hash-object", "-w", "--stdin", input=updated)
                 git("update-index", "--cacheinfo", f"100644,{blob},{path}", env=env)
-        require(found == SUBACTIONS, "expected all five composed siblings")
+        require(found == SUBACTIONS, "expected all four composed siblings")
         return git("write-tree", env=env)
 
 
