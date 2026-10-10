@@ -41,6 +41,24 @@ class ReleaseProofTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     proof.manifest('publication', self.save(data), '', '', self.version, self.env)
 
+    def test_stateful_contract_survives_transport_and_binds_token_audience(self):
+        data = self.publication()
+        contract = {'version': 1, 'source_revision': self.version, 'schema': {'minimum': 1, 'maximum': 1, 'write': 1},
+                    'data_revision': 'records-v1', 'credential_revision': 'restricted-runtime-v1',
+                    'migrations': [{'identity': '001.sql', 'sha256': 'b'*64}], 'recovery_action': 'forward_only'}
+        data['stateful_contract'] = contract
+        manifest = proof.manifest('publication', self.save(data), '', '', self.version, self.env)
+        self.assertEqual(manifest['stateful_contract'], contract)
+        calls = []
+        wire = proof.envelope(self.save(manifest), self.version, self.env, lambda audience, env: calls.append(audience) or 'fixture.token.signature')
+        raw = base64.b64decode(wire['manifest'])
+        self.assertEqual(json.loads(raw)['stateful_contract'], contract)
+        self.assertEqual(calls, ['komizo-release:sha256:'+hashlib.sha256(raw).hexdigest()])
+        for change in ({'source_revision': 'c'*40}, {'version': True}, {'payload': 'x'*32768}):
+            data['stateful_contract'] = contract | change
+            with self.subTest(change=next(iter(change))), self.assertRaises(ValueError):
+                proof.manifest('publication', self.save(data), '', '', self.version, self.env)
+
     def test_transfer_requires_every_loaded_image_identity(self):
         data = dict(source=self.version, images=self.images)
         proof.manifest('transferred-images', self.save(data), '', '', self.version, self.env, self.images.__getitem__)
