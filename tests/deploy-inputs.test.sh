@@ -185,13 +185,11 @@ outputs_contain "has-secrets=false"
 
 echo "== activate/action.yml: the registry-user guard =="
 
-# Deploy composes activate, whose Deploy step carries the second copy of the
-# registry-user charset inline -- a composite action has no standalone script
-# to drive, so the pattern is lifted out of the shipped YAML and run over the
-# matrix here. Bot logins must pass: a post-merge dispatch runs as
+# Deploy and activate use the same checked-out activation script. Lift its
+# registry-user guard and run it over the input matrix here. Bot logins must pass: a post-merge dispatch runs as
 # github-actions[bot], and repos pass registry-user: ${{ github.actor }}.
 # Injection shapes must not.
-guard="$(awk '/case "\$REGISTRY_USER" in/{getline; sub(/[[:space:]]*\)$/, ""); gsub(/^[[:space:]]+/, ""); print; exit}' activate/action.yml)"
+guard="$(awk '/case "\$REGISTRY_USER" in/{getline; sub(/[[:space:]]*\)$/, ""); gsub(/^[[:space:]]+/, ""); print; exit}' activate/run.sh)"
 
 activate_admits() { # <value> -- 0 when the inline guard would NOT reject it
 	# shellcheck disable=SC2254 # a glob is exactly what is wanted here
@@ -237,7 +235,7 @@ echo "== restored deployment authority =="
 if grep -q 'rollout-' deploy/action.yml || grep -q 'rollout-model' deploy/action.yml; then
 	printf 'FAIL  abandoned rollout authority remains in deploy/action.yml\n'
 	fail=$((fail + 1))
-elif grep -q 'command: doas /usr/local/bin/deploy-' deploy/action.yml; then
+elif grep -q 'DEPLOY_CMD: doas /usr/local/bin/deploy-' deploy/action.yml; then
 	pass=$((pass + 1))
 else
 	printf 'FAIL  established deploy-APP authority is not reachable\n'

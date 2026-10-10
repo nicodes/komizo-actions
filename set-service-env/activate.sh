@@ -83,16 +83,21 @@ fi
 stdout_file=$(mktemp)
 stderr_file=$(mktemp)
 chmod 600 "$stdout_file" "$stderr_file"
+proof_file=""
 cleanup() {
 	rm -f "$stdout_file" "$stderr_file"
+	[ -z "$proof_file" ] || rm -f "$proof_file"
 }
 trap cleanup EXIT
 
+# shellcheck source=activate/release-wire.sh
+source "$(dirname "$0")/../activate/release-wire.sh"
+komizo_prepare_release_wire
 echo "Deploying ${VERSION} generation=${EXPECTED_GENERATION}"
 
 rc=0
 # shellcheck disable=SC2029 # the remote command is built from charset-checked fields
-printf '%s' "$REGISTRY_TOKEN" \
+komizo_release_wire \
 	| ssh deploy-target "doas /usr/local/bin/deploy-fieldsofrevik '${VERSION}' '${reg_arg}' '${user_arg}' '${EXPECTED_GENERATION}'" \
 		>"$stdout_file" 2>"$stderr_file" || rc=$?
 
