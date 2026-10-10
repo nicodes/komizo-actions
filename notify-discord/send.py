@@ -38,13 +38,19 @@ def payload(env):
             raise ValueError("HTTPS deployment URL required")
         links.insert(0, f"[View]({url})")
     links.append(f"[Run]({server}/{repo}/actions/runs/{env.get('GITHUB_RUN_ID', '')})")
-    dot = "🟢" if status == "success" else "🔴"
-    environment = "prod" if target == "production" else "preview"
+    emoji = "❌" if status == "failure" else ("🚀" if target == "production" else "🧪")
+    actor = env.get("GITHUB_ACTOR", "")
+    if actor:
+        if not re.fullmatch(r"[A-Za-z0-9-]+(?:\[bot\])?", actor):
+            raise ValueError("invalid GitHub actor")
+        # Escape bot account brackets so Discord renders the full handle.
+        handle = actor.replace("[", "\\[").replace("]", "\\]")
+        links.insert(0, f"[@{handle}]({server}/{actor})")
     return {
         "allowed_mentions": {"parse": []},
         "embeds": [{
             "color": 3066993 if status == "success" else 15158332,
-            "description": f"{dot} **{repo.split('/')[-1]}** {environment} · " + " · ".join(links),
+            "description": f"{emoji} **{repo.split('/')[-1]}** · " + " · ".join(links),
         }],
     }
 
