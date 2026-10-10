@@ -88,7 +88,10 @@ def inspect(ref):
 def manifest(kind, source, image_base, gate_id, version, env, inspect_image=inspect):
     result = context(env, version)
     if kind == 'publication':
-        images = publication(read(source), env, version)
+        data = read(source)
+        images = publication(data, env, version)
+        if 'stateful_contract' in data:
+            result['stateful_contract'] = stateful_contract(data['stateful_contract'], version)
     elif kind == 'transferred-images':
         data = read(source)
         if data.get('source') != version:
@@ -107,6 +110,16 @@ def manifest(kind, source, image_base, gate_id, version, env, inspect_image=insp
         raise ValueError('unknown verified evidence kind')
     result['images'] = images
     return result
+
+
+def stateful_contract(value, version):
+    # Transport preserves the verified producer's contract without inventing
+    # another admission policy. Root's typed validator checks all semantics
+    # before pulls or configuration changes; this entire object is audience-bound.
+    if (not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] != 1
+            or value.get('source_revision') != version or len(json.dumps(value).encode()) > 32768):
+        raise ValueError('stateful contract has an invalid bounded source identity')
+    return value
 
 
 def token(audience, env):
@@ -129,9 +142,12 @@ def token(audience, env):
 def envelope(path, version, env, request_token=token):
     expected = context(env, version)
     data = read(path)
-    if set(data) != set(expected) | {'images'} or any(data.get(name) != value for name, value in expected.items()):
+    required = set(expected) | {'images'}
+    if not required <= set(data) <= required | {'stateful_contract'} or any(data.get(name) != value for name, value in expected.items()):
         raise ValueError('release manifest differs from this workflow context')
     image_set(data.get('images'), version)
+    if 'stateful_contract' in data:
+        stateful_contract(data['stateful_contract'], version)
     raw = json.dumps(data, sort_keys=True, separators=(',', ':')).encode()
     audience = 'komizo-release:sha256:'+hashlib.sha256(raw).hexdigest()
     return {'manifest': base64.b64encode(raw).decode(), 'token': request_token(audience, env)}
