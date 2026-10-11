@@ -400,6 +400,7 @@ runs:
       with:
         names: ${{ inputs.secrets }}
         command: doas /usr/local/bin/set-secret-${{ steps.cfg.outputs.app }}
+        release-manifest: ${{ inputs.release-manifest }}
 
     # 4. Make the tag live. Legacy apps keep the pinned activate action, whose
     #    argv is one or three arguments. The Fields profile does not use that
