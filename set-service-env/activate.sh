@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# set-service-env/activate.sh - Fields deploy argv, four positional arguments.
-#
-# Legacy activate is not this script. This runs only for fieldsofrevik with
-# fields-postgres-v2. The remote command is exactly
-#   doas /usr/local/bin/deploy-fieldsofrevik
-#     '<version>' '<registry-or-empty>' '<registry-user-or-empty>' '<32hex>'
+# Generic scoped deploy argv, with validated application suffix and four fields.
 # The registry token, if any, stays on stdin. The generation is not an
 # environment variable on the far side and is not a fifth channel.
 #
@@ -98,7 +93,7 @@ echo "Deploying ${VERSION} generation=${EXPECTED_GENERATION}"
 rc=0
 # shellcheck disable=SC2029 # the remote command is built from charset-checked fields
 komizo_release_wire \
-	| ssh deploy-target "doas /usr/local/bin/deploy-fieldsofrevik '${VERSION}' '${reg_arg}' '${user_arg}' '${EXPECTED_GENERATION}'" \
+	| ssh deploy-target "doas /usr/local/bin/deploy-${APP} '${VERSION}' '${reg_arg}' '${user_arg}' '${EXPECTED_GENERATION}'" \
 		>"$stdout_file" 2>"$stderr_file" || rc=$?
 
 secret_rc=0

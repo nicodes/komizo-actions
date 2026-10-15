@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# set-service-env/lib.sh - checks for the fields-postgres-v2 status contract.
+# Generic scoped credential status wire contract.
 #
 # Sourced, never executed. v2 carries no profile values. The only remote
 # status command is the literal
-#   doas /usr/local/bin/scoped-env-status-fieldsofrevik
+#   doas /usr/local/bin/scoped-env-status-<app>
 # with no arguments and an empty stdin. A line is accepted only when it is
 # exactly one record of the frozen grammar. ready, ok, and a 32-hex generation
 # travel together; any other pairing of those three is a protocol error and
@@ -11,66 +11,36 @@
 
 export LC_ALL=C
 
-SCOPED_PROFILE=fields-postgres-v2
-SCOPED_APP=fieldsofrevik
-
 scoped_refuse() {
 	echo "::error::$1"
 	exit 1
 }
 
+# Profile is an opaque operator-owned name; host policy decides approval.
 scoped_check_profile() {
-	case "${SERVICE_ENV_PROFILE:-}" in
-		"$SCOPED_PROFILE") ;;
-		"")
-			scoped_refuse "service-env-profile is empty. The only approved profile is ${SCOPED_PROFILE}." ;;
-		fields-postgres-v1)
-			scoped_refuse "service-env-profile fields-postgres-v1 is not approved. The only approved profile is ${SCOPED_PROFILE}." ;;
-		*)
-			scoped_refuse "service-env-profile '${SERVICE_ENV_PROFILE}' is not approved. The only approved profile is ${SCOPED_PROFILE}." ;;
-	esac
+ if [[ ! "${SERVICE_ENV_PROFILE:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$ ]]; then
+  scoped_refuse "service-env-profile must be an explicit safe profile name."
+ fi
 }
 
 scoped_check_app() {
-	if [ -z "${APP:-}" ]; then
-		APP="${KOMIZO_APP_NAME:-}"
-	fi
-	if [ "$APP" != "$SCOPED_APP" ]; then
-		scoped_refuse "profile ${SCOPED_PROFILE} is approved only for app ${SCOPED_APP}; got '${APP}'."
-	fi
+ APP="${APP:-${KOMIZO_APP_NAME:-}}"
+ if [[ ! "$APP" =~ ^[a-z][a-z0-9-]{0,62}$ ]]; then
+  scoped_refuse "app must be an explicit safe registered application name."
+ fi
 }
 
-# Fields never takes the legacy secret path. Naming the variable is the whole
-# message; the value is not.
+# Scoped transport sends metadata only. App-specific unused runner variables
+# are never enumerated, read or forwarded. Reject both secret transport paths.
 scoped_check_no_profile_values() {
-	local var
-	if [ -n "${SECRET_NAMES:-}" ] && [ -n "${SECRET_NAMES//[[:space:]]/}" ]; then
-		scoped_refuse "fields-postgres-v2 does not accept a secrets: list. Profile values are host-local and are not pushed."
-	fi
-	while IFS= read -r var; do
-		[ -z "$var" ] && continue
-		scoped_refuse "fields-postgres-v2 does not accept ${var}. Profile values are host-local and are not sent over GitHub or SSH."
-	done < <(compgen -v | grep -E '^(KOMIZO_SCOPED_|KOMIZO_SECRET_)' | sort || true)
-	# The eleven host-local names. A set variable is refused even when empty.
-	# The value is never expanded into the message or a remote command.
-	while IFS= read -r var; do
-		[ -z "$var" ] && continue
-		if [ -n "${!var+x}" ]; then
-			scoped_refuse "fields-postgres-v2 does not accept ${var}. Profile values are host-local and are not sent over GitHub or SSH."
-		fi
-	done <<'NAMES'
-POSTGRES_PASSWORD
-REVIK_MIGRATOR_PASSWORD
-REVIK_APP_PASSWORD
-REVIK_BACKUP_PASSWORD
-DATABASE_URL
-DATABASE_MIGRATION_URL
-WS_SECRET
-CLERK_ISSUER
-CLERK_JWKS_URL
-CLERK_AUTHORIZED_PARTIES
-CLERK_SECRET_KEY
-NAMES
+ local var
+ if [ -n "${SECRET_NAMES:-}" ] && [ -n "${SECRET_NAMES//[[:space:]]/}" ]; then
+  scoped_refuse "scoped profiles do not accept a secrets: list. Values remain host-local."
+ fi
+ while IFS= read -r var; do
+  [ -z "$var" ] && continue
+  scoped_refuse "scoped profiles do not accept ${var}. Values remain host-local."
+ done < <(compgen -v | grep -E '^(KOMIZO_SCOPED_|KOMIZO_SECRET_)' | sort || true)
 }
 
 scoped_check_generation() {
@@ -97,7 +67,7 @@ scoped_check_health_required() {
 # Return 2 for anything else. Never prints the file.
 scoped_parse_status_file() {
 	local file="$1"
-	python3 - "$file" <<'PY'
+	python3 - "$file" "$SERVICE_ENV_PROFILE" <<'PY'
 import re, sys
 data = open(sys.argv[1], "rb").read()
 if data.endswith(b"\n"):
@@ -109,7 +79,7 @@ try:
 except UnicodeDecodeError:
     sys.exit(2)
 pat = re.compile(
-    r"wire=v2 profile=fields-postgres-v2 source=host-local "
+    r"wire=v2 profile=" + re.escape(sys.argv[2]) + r" source=host-local "
     r"state=(ready|missing|invalid) "
     r"generation=([0-9a-f]{32}|none) "
     r"reason=(ok|no-current|bad-mode|symlink|partial|profile-mismatch)\Z"
