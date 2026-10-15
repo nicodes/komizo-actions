@@ -12,8 +12,8 @@
 # abort, or send a profile value.
 #
 # Inputs (environment):
-#   SERVICE_ENV_PROFILE   fields-postgres-v2
-#   APP                   fieldsofrevik
+#   SERVICE_ENV_PROFILE   operator-defined profile
+#   APP                   registered application
 #   EXPECTED_GENERATION   32 lowercase hex
 #   SSH_CONFIG            ssh config to look for deploy-target in
 #   GITHUB_OUTPUT         receives generation=<id> on success
@@ -49,8 +49,9 @@ trap cleanup EXIT
 
 rc=0
 # Literal argv. EXPECTED_GENERATION is compared locally and is not an argument.
-# The command is not built from APP.
-ssh deploy-target 'doas /usr/local/bin/scoped-env-status-fieldsofrevik' \
+# The executable suffix is the validated application name.
+# shellcheck disable=SC2029 # APP passed the strict application-name grammar
+ssh deploy-target "doas /usr/local/bin/scoped-env-status-${APP}" \
 	</dev/null >"$stdout_file" 2>"$stderr_file" || rc=$?
 
 if [ "$rc" -eq 75 ]; then

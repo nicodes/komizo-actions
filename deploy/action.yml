@@ -27,17 +27,9 @@ description: >
   is the property worth keeping: the rest of the job's environment, including
   every secret this step does not need, stays out of it.
 
-  service-env-profile is an opt-in that replaces that path for one approved
-  profile, fields-postgres-v2, and only for app fieldsofrevik. Leave it empty
-  on any other app and set-secrets is unchanged. App fieldsofrevik refuses an
-  empty profile. Set the profile and no profile value is sent: not
-  KOMIZO_SECRET_*, not KOMIZO_SCOPED_*, not a secrets: list. The action reads
-  a host-local status line, then deploys with a fourth argument that is the
-  expected generation id. An empty health-urls fails closed. A failed
-  activate or health check stays failed. There is no stage, confirm, or
-  abort, and no Actions rollback of the host-local provision. docker compose
-  up may not recreate a service whose resolved config is unchanged. See
-  docs/fields-scoped-env-v1.md.
+  service-env-profile selects an operator-installed scoped credential profile.
+  Its values remain on the host. The action compares a nonsecret generation
+  before and after delivery; the host checks its own policy under the app lock.
 
   This wraps connect, publish-config, set-secrets, activate and health-check.
   Those remain the primitives; reach for them when you need your own steps
@@ -188,21 +180,10 @@ inputs:
 
   service-env-profile:
     description: >
-      Opt in to the scoped service-env profile instead of set-secrets. The
-      only approved value is fields-postgres-v2, and only for app
-      fieldsofrevik. Empty (the default) keeps the legacy KOMIZO_SECRET_*
-      path exactly.
-
-      fields-postgres-v1 is rejected. When set, expected-generation and
-      health-urls are required. KOMIZO_SECRET_*, KOMIZO_SCOPED_*, a secrets:
-      list, and the eleven host-local names including CLERK_SECRET_KEY are
-      refused. Their values are not logged and are not sent to set-secrets
-      or SSH. Status is read before activate and again after
-      health. The deploy command gains a fourth argument, the same id. A
-      missing or mismatched id fails the job. There is no stage, confirm, or
-      abort. docker compose up may not recreate a service whose resolved
-      config is unchanged, so a green deploy is not proof that every
-      container restarted.
+      Opaque operator-installed scoped profile, replacing the secrets transport
+      path. Requires expected-generation and health-urls. Secret input lists
+      and KOMIZO_SECRET_/KOMIZO_SCOPED_ variables are refused. The host checks
+      the installed profile and generation under its own deployment lock.
     required: false
     default: ""
 
@@ -210,7 +191,7 @@ inputs:
     description: >
       Required with service-env-profile. Opaque generation id, exactly 32
       lowercase hex. Nonsecret. Compared to the host status line and passed
-      as the fourth argument of deploy-fieldsofrevik. Refused when the
+      as the fourth argument of the application deploy command. Refused when the
       profile is empty, so it cannot be silently dropped onto a legacy
       deploy. Not a profile value.
     required: false
@@ -336,7 +317,7 @@ runs:
         set -euo pipefail
         bash "$GITHUB_ACTION_PATH/validate.sh"
         # ALLOW_EMPTY_PROFILE keeps the legacy path a no-op here, except
-        # fieldsofrevik, which refuses an empty profile. REQUIRE_HEALTH is
+        # apps with no scoped host policy. REQUIRE_HEALTH is
         # the opt-in's fail-closed: a green deploy needs a URL to poll.
         ALLOW_EMPTY_PROFILE=1 REQUIRE_HEALTH=1 \
           bash "$GITHUB_ACTION_PATH/../set-service-env/validate.sh"
@@ -393,9 +374,8 @@ runs:
     #    Skipped when the scoped profile is set. The opt-in must not push
     #    KOMIZO_SECRET_* to the aggregate secrets.env; validate.sh has already
     #    refused the combination, and this if is the bypass if that gate is
-    #    ever skipped. fieldsofrevik is excluded even with an empty profile:
-    #    that app has no legacy set-secrets path.
-    - if: steps.cfg.outputs.has-secrets == 'true' && steps.cfg.outputs.service-env-profile == '' && steps.cfg.outputs.app != 'fieldsofrevik'
+    #    ever skipped. A scoped host refuses the aggregate secret path itself.
+    - if: steps.cfg.outputs.has-secrets == 'true' && steps.cfg.outputs.service-env-profile == ''
       uses: nicodes/komizo-actions/set-secrets@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
       with:
         names: ${{ inputs.secrets }}
@@ -403,7 +383,7 @@ runs:
         release-manifest: ${{ inputs.release-manifest }}
 
     # 4. Make the tag live. Legacy apps keep the pinned activate action, whose
-    #    argv is one or three arguments. The Fields profile does not use that
+    #    argv is one or three arguments. The scoped profile does not use that
     #    pin: the released SHA has no fourth argument, so this checkout's
     #    script is the command. It always passes four arguments and requires
     #    deploy: scoped-generation=<id>.
