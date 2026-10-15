@@ -1,8 +1,8 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 8a86aa94faceeb6a1d07680d3734e9d3e20fd0f9175efd81b3f2afc4724211f2 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 1bddb5793053d9d7a91bc712a7f6396f850bc26a42f7cb831f4715cf385efd2d -->
 
 # komizo-actions
 
-Reusable GitHub Actions for deploying Compose applications to hosts prepared by the Komizo CLI. The supported action invokes the app-scoped host deployment operation.
+Application-agnostic GitHub Actions for deploying Compose applications to hosts prepared by the Komizo CLI. The supported action invokes the app-scoped host deployment operation.
 
 The abandoned rollout model is superseded by v0.0.7 and later. Historical tags are not a recommendation to adopt the abandoned model.
 
@@ -99,6 +99,4 @@ Use the resolved `pr` and `sha` outputs rather than `github.event.pull_request.*
 
 The action does not prove that a fresh PostgreSQL cutover is safe. Use a separate host-local status command, an exact expected generation and the supported profile. Remote output is captured in mode 0600 files. The validated receipt is `deploy: scoped-generation=<expected generation>`. There is no stage, confirm, or abort. Profile-specific credentials remain on the host and must not be sent by the runner.
 
-`release-evidence` prepares a manifest from the exact tested publication or verified image transfer. Pass its output to `deploy` or `activate` as `release-manifest` and grant only the deployment job `id-token: write`. The action requests a short-lived GitHub identity whose audience hashes the exact manifest. The host independently checks its approved source identity and image IDs before activation. No permanent signing key is needed. Verified deployment requires a host version that supports the release-proof protocol and an operator-approved source policy.
-
-Evidence kinds are `publication` (matching Build and Test receipts from the current run), `transferred-images` (loaded images matching the verified transfer), `gate-artifact` (gate ID emitted by the successful verification job), and `same-job-gate` (only after this workflow has successfully tested its exact local gate). Gate-only workflows generate the config image after gate verification; the host validates that configuration separately. Previously accepted current or previous revisions use the host's protected rollback receipt instead of requesting an identity for a different source.
+Scoped profiles are opaque names explicitly installed by the host operator. The action validates the application name, invokes that app's argument-free status executable, and accepts only the exact requested profile and generation. Applications can supply different credential layouts through the same interface. Unused runner variables are never read or forwarded; `KOMIZO_SECRET_` and `KOMIZO_SCOPED_` transport variables and explicit secret lists remain refused for scoped delivery. A scoped host independently rejects aggregate secret writes and missing or changed generations. Keep privileged adapter installation outside application CI.
