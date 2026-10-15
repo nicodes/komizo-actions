@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 1bddb5793053d9d7a91bc712a7f6396f850bc26a42f7cb831f4715cf385efd2d -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: f28f9a07d432e9d3833e39d779a172749e6d1fa4a076a40b2ffe5c9875543f51 -->
 
 # komizo-actions
 
@@ -11,7 +11,7 @@ The abandoned rollout model is superseded by v0.0.7 and later. Historical tags a
 Pin a reviewed full commit SHA. Configure a deploy account, pinned SSH host keys and an app-scoped host allowlist before running this action.
 
 ```yaml
-- uses: nicodes/komizo-actions/deploy@8558c0494f00efd97d8053db43a0ffaa826da00d
+- uses: nicodes/komizo-actions/deploy@d57c15131232a84d8eda86c0a02eccd6e569d3dc
   with:
     app: example
     host: ${{ vars.DEPLOY_HOST }}
