@@ -30,6 +30,7 @@ concurrency:
 
 jobs:
   release:
+    name: "Release"
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -44,7 +45,8 @@ jobs:
       CANDIDATE_SHA: ${{ inputs.sha }}
       CANDIDATE_PR: ${{ inputs.pr }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: "Check out source"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -66,7 +68,7 @@ jobs:
           python3 .git/release-control.py validate "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
           git checkout --detach "$CANDIDATE_SHA"
 
-      - name: Test exact merged artifact
+      - name: "Test"
         if: inputs.stage == 'publish'
         uses: ./.github/actions/test
 

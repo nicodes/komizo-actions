@@ -87,7 +87,8 @@ outputs:
 runs:
   using: composite
   steps:
-    - id: request
+    - name: "Validate preview request"
+      id: request
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}

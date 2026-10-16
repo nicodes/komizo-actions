@@ -1,4 +1,4 @@
-name: Read scoped service env status
+name: "Inspect service environment"
 description: >
   Read a registered application's host-local scoped credential status.
   Sends no secret values. Requires exactly one v2 status line matching the
@@ -31,7 +31,8 @@ outputs:
 runs:
   using: composite
   steps:
-    - id: run
+    - name: "Inspect service environment"
+      id: run
       shell: bash
       env:
         SERVICE_ENV_PROFILE: ${{ inputs.profile }}

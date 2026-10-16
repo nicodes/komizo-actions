@@ -1,4 +1,4 @@
-name: Prepare host release evidence
+name: "Prepare release evidence"
 description: Normalize verified publication or transferred image identities for independent host admission. Does not deploy or request an identity token.
 inputs:
   version:
@@ -22,7 +22,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - shell: bash
+    - name: "Prepare release evidence"
+      shell: bash
       env:
         RELEASE_VERSION: ${{ inputs.version }}
         RELEASE_KIND: ${{ inputs.kind }}
