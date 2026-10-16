@@ -1,4 +1,4 @@
-name: Check the secret rule
+name: "Check secret policy"
 description: >
   Fail the build when this app's secrets do not follow the rule every app on
   these servers follows: a secret is held in GitHub and delivered by komizo, or

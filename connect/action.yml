@@ -1,4 +1,4 @@
-name: Connect to the deploy target
+name: "Connect to host"
 description: >
   Install a deploy key and a PINNED host key, then expose the server as the
   ssh alias "deploy-target". Fails closed if the host key is not pinned.

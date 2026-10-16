@@ -1,4 +1,4 @@
-name: Publish config image
+name: "Publish configuration"
 description: >
   Publish this commit's compose.yml — and optionally its reverse-proxy routes —
   as a container image the host extracts at deploy time.
