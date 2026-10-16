@@ -1,4 +1,4 @@
-name: Activate a version
+name: "Activate release"
 description: >
   Run the deploy on the host: pull the config image for this tag, unpack it,
   write APP_VERSION, and bring the stack up. This is the step that changes what

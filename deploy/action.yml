@@ -282,7 +282,8 @@ runs:
     # The KEY is deliberately not resolved here: a step output is stored with
     # the job, and a private key belongs in an environment variable that goes
     # no further than the step reading it. connect does that fallback itself.
-    - id: cfg
+    - name: "Resolve deployment target"
+      id: cfg
       shell: bash
       env:
         HOST: ${{ inputs.host }}
@@ -324,7 +325,8 @@ runs:
 
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before anything has been published.
-    - if: steps.cfg.outputs.host != ''
+    - name: "Connect to host"
+      if: steps.cfg.outputs.host != ''
       uses: nicodes/komizo-actions/connect@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
       with:
         host: ${{ steps.cfg.outputs.host }}
@@ -348,7 +350,8 @@ runs:
     #    asked to deploy this tag.
     #    A scoped profile reads status first. That call is read-only and
     #    sends no profile value. It does not replace the host's lock recheck.
-    - id: scoped-preflight
+    - name: "Inspect service environment"
+      id: scoped-preflight
       if: steps.cfg.outputs.service-env-profile != ''
       shell: bash
       env:
@@ -359,7 +362,8 @@ runs:
         RELEASE_MANIFEST: ${{ inputs.release-manifest }}
       run: bash "$GITHUB_ACTION_PATH/../set-service-env/status.sh"
 
-    - id: config
+    - name: "Publish configuration"
+      id: config
       if: inputs.config != '' || inputs.config-compose != ''
       uses: nicodes/komizo-actions/publish-config@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
       with:
@@ -375,7 +379,8 @@ runs:
     #    KOMIZO_SECRET_* to the aggregate secrets.env; validate.sh has already
     #    refused the combination, and this if is the bypass if that gate is
     #    ever skipped. A scoped host refuses the aggregate secret path itself.
-    - if: steps.cfg.outputs.has-secrets == 'true' && steps.cfg.outputs.service-env-profile == ''
+    - name: "Set secrets"
+      if: steps.cfg.outputs.has-secrets == 'true' && steps.cfg.outputs.service-env-profile == ''
       uses: nicodes/komizo-actions/set-secrets@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
       with:
         names: ${{ inputs.secrets }}
@@ -387,7 +392,8 @@ runs:
     #    pin: the released SHA has no fourth argument, so this checkout's
     #    script is the command. It always passes four arguments and requires
     #    deploy: scoped-generation=<id>.
-    - id: version
+    - name: "Activate release"
+      id: version
       if: steps.cfg.outputs.service-env-profile == ''
       shell: bash
       env:
@@ -400,7 +406,8 @@ runs:
         ACTION_LIBRARY_ROOT: ${{ github.action_path }}/..
       run: bash "$GITHUB_ACTION_PATH/../activate/run.sh"
 
-    - id: scoped-activate
+    - name: "Activate service environment"
+      id: scoped-activate
       if: steps.cfg.outputs.service-env-profile != ''
       shell: bash
       env:
@@ -416,7 +423,8 @@ runs:
       run: bash "$GITHUB_ACTION_PATH/../set-service-env/activate.sh"
 
     # 5. Prove it is serving. Skipped entirely when no URL is given.
-    - id: health
+    - name: "Check health"
+      id: health
       if: inputs.health-urls != ''
       uses: nicodes/komizo-actions/health-check@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
       with:
@@ -428,7 +436,8 @@ runs:
     # 5b. Postflight is the same status compare, after health success. A
     #     skipped health check is not a success: validate refused an empty
     #     health-urls, and this if requires the health step's outcome.
-    - id: scoped-postflight
+    - name: "Inspect service environment"
+      id: scoped-postflight
       if: steps.cfg.outputs.service-env-profile != '' && steps.health.outcome == 'success'
       shell: bash
       env:
@@ -443,7 +452,8 @@ runs:
     #     and does not roll anything back. A cancelled job, a failed health
     #     check, or a skipped postflight stays failed. Operator recovery is
     #     outside this action.
-    - id: scoped-unpinned
+    - name: "Refuse incomplete deployment"
+      id: scoped-unpinned
       if: always() && steps.cfg.outputs.service-env-profile != '' && steps.scoped-postflight.outcome != 'success'
       shell: bash
       run: |

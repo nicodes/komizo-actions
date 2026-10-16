@@ -1,4 +1,4 @@
-name: Preview up/down
+name: "Manage preview"
 description: >
   Bring a pull request's preview up, or tear it down, on the deploy target:
   connect, then ask the host's komizo-box preview primitive to do the work.
@@ -193,7 +193,8 @@ runs:
     # The KEY is deliberately not resolved here: a step output is stored with
     # the job, and a private key belongs in an environment variable that goes
     # no further than the step reading it. connect does that fallback itself.
-    - id: cfg
+    - name: "Resolve deployment target"
+      id: cfg
       shell: bash
       env:
         HOST: ${{ inputs.host }}
@@ -202,7 +203,8 @@ runs:
     # 1. Connect, unless an earlier step already did. This verifies the
     #    connection, so a bad key fails before the host is asked to do
     #    anything.
-    - if: steps.cfg.outputs.host != ''
+    - name: "Connect to host"
+      if: steps.cfg.outputs.host != ''
       uses: nicodes/komizo-actions/connect@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
       with:
         host: ${{ steps.cfg.outputs.host }}
@@ -216,7 +218,8 @@ runs:
     #    drive it over the whole input matrix -- the validation and the output
     #    parsing are the only logic in this action, and they decide whether the
     #    ssh runs at all. See tests/preview.test.sh for the safety contract.
-    - id: preview
+    - name: "Manage preview"
+      id: preview
       shell: bash
       env:
         APP: ${{ inputs.app }}
@@ -227,7 +230,7 @@ runs:
         REGISTRY_TOKEN: ${{ inputs.registry-token }}
       run: bash "$GITHUB_ACTION_PATH/run.sh"
 
-    - name: Verify the public preview before announcing it
+    - name: "Check health"
       if: inputs.action == 'up' && inputs.discord-webhook-url != ''
       uses: nicodes/komizo-actions/health-check@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
       with:

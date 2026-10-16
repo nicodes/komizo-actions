@@ -1,4 +1,4 @@
-name: Run an allowlisted production task
+name: "Run task"
 description: >
   Invoke a fixed Komizo host task after connect. This action intentionally has
   no generic command, path, service, image, executable, environment, or secret
