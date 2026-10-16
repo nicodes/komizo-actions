@@ -1,4 +1,4 @@
-name: Set secrets on the host
+name: "Set secrets"
 description: >
   Push secret values to the host's write-only secret store. Requires the
   connect action to have run first.

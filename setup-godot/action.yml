@@ -1,4 +1,4 @@
-name: Setup Godot
+name: "Set up Godot"
 description: >
   Install Godot from checksum-verified release archives — the caller's own
   vendored script doing the verifying and installing, the download cache and
@@ -62,7 +62,8 @@ runs:
     # exact-key miss forces one clean re-download (still checksum-verified)
     # rather than restoring an entry saved under a product's old local
     # composite, whose key also hashed the same two caller files.
-    - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+    - name: "Cache dependencies"
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ${{ runner.temp }}/godot-downloads
         key: godot-verified-v2-${{ runner.os }}-${{ hashFiles('tools/setup_godot.sh', 'tools/godot-release.json') }}
