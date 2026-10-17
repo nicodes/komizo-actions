@@ -205,8 +205,8 @@ echo "== the internalized pins =="
 # once for the fleet -- and the artifact fetch carries its own pin the same
 # way. If either drifts from the fleet's current SHA, this fails loudly rather
 # than silently.
-if grep -q 'docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0' publish/action.yml \
-	&& grep -q 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1' publish/action.yml; then
+if grep -q 'docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0' publish/action.yml \
+	&& grep -q 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2' publish/action.yml; then
 	pass=$((pass + 1))
 else
 	fail=$((fail + 1))
