@@ -56,7 +56,7 @@ echo "== the cache step =="
 # The internalized pin, named for its version -- the same actions/cache SHA
 # the three local composites carried.
 pins "the actions/cache pin is the fleet's SHA" \
-	"actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4"
+	"actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0"
 # Neutral path: no repository name in it. Caches are repo-scoped, so the
 # shared path cannot cross-contaminate.
 pins "the cache path is the neutral runner.temp directory" \

@@ -1,57 +1,73 @@
-# Keeps the pinned `uses:` refs in .github/workflows and .github/actions current.
-#
-# Every third-party action here is pinned to a commit SHA rather than a tag,
-# which is the point: a tag is a moving reference, and whoever can move it can
-# run code in these jobs. The cost of a SHA is that nothing tells you when it
-# has gone stale -- a tag at least reads as a version. This is the thing that
-# tells you.
-#
-# Minor and patch updates are grouped: they share the same risk profile and CI
-# can merge them without ceremony. Major updates are deliberately excluded, so
-# Dependabot opens one reviewable pull request for each breaking-change boundary.
 version: 2
 updates:
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-    groups:
-      actions-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-  # publish/action.yml pins two third-party actions by SHA, and the github-
-  # actions manager does not descend into subdirectory action metadata from
-  # `directory: /` -- the sweep there covers the workflows. The directory is
-  # named explicitly because the docker/login-action pin is the exact skew this
-  # repository internalized when it took over the publish step; nothing else
-  # would say when that pin goes stale.
-  - package-ecosystem: github-actions
-    directory: /publish
-    schedule:
-      interval: weekly
-    groups:
-      actions-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-  # setup-godot/action.yml pins third-party actions/cache by SHA, for the same
-  # reason /publish is named explicitly: the github-actions manager does not
-  # descend into subdirectory action metadata from `directory: /`, and the
-  # cache pin is the skew this repository internalized when it took the step
-  # over from the game repositories' local copies.
-  - package-ecosystem: github-actions
-    directory: /setup-godot
-    schedule:
-      interval: weekly
-    groups:
-      actions-minor-patch:
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
+- package-ecosystem: github-actions
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:10
+    timezone: Etc/UTC
+  groups:
+    routine-updates:
+      patterns:
+      - '*'
+      exclude-patterns:
+      - nicodes/tools/*
+      - nicodes/cicd/*
+      - nicodes/komizo-actions/*
+      - aviorstudio/gdam-actions/*
+      - '*clerk*'
+      - '*pocketbase*'
+      - '*crypto*'
+      - '*jsonwebtoken*'
+      - '*jose*'
+      - '*oauth*'
+      - '*openid*'
+      - '*passport*'
+      - '*bcrypt*'
+      - '*argon2*'
+      - '@noble/*'
+      - '*prisma*'
+      - '*drizzle*'
+      - '*migrate*'
+      update-types:
+      - minor
+      - patch
+    managed-releases:
+      patterns:
+      - nicodes/tools/*
+      - nicodes/cicd/*
+      - nicodes/komizo-actions/*
+      - aviorstudio/gdam-actions/*
+      update-types:
+      - minor
+      - patch
+    security-fixes:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - nicodes/tools/*
+      - nicodes/cicd/*
+      - nicodes/komizo-actions/*
+      - aviorstudio/gdam-actions/*
+      - '*clerk*'
+      - '*pocketbase*'
+      - '*crypto*'
+      - '*jsonwebtoken*'
+      - '*jose*'
+      - '*oauth*'
+      - '*openid*'
+      - '*passport*'
+      - '*bcrypt*'
+      - '*argon2*'
+      - '@noble/*'
+      - '*prisma*'
+      - '*drizzle*'
+      - '*migrate*'
+  open-pull-requests-limit: 5
+  cooldown:
+    default-days: 3
+  directories:
+  - /
+  - /publish
+  - /setup-godot
