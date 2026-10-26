@@ -205,7 +205,7 @@ runs:
     #    anything.
     - name: "Connect to host"
       if: steps.cfg.outputs.host != ''
-      uses: nicodes/komizo-actions/connect@99452f5595e06c0b9d8ed6da4ee90e703424f00b
+      uses: nicodes/komizo-actions/connect@c485f29ffaafa1adc2b065613c46d8492b060dc6
       with:
         host: ${{ steps.cfg.outputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', inputs.app) }}
@@ -232,7 +232,7 @@ runs:
 
     - name: "Check health"
       if: inputs.action == 'up' && inputs.discord-webhook-url != ''
-      uses: nicodes/komizo-actions/health-check@99452f5595e06c0b9d8ed6da4ee90e703424f00b
+      uses: nicodes/komizo-actions/health-check@c485f29ffaafa1adc2b065613c46d8492b060dc6
       with:
         urls: ${{ inputs.discord-health-urls || steps.preview.outputs.preview-url }}
 
