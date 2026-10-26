@@ -1,15 +1,14 @@
 name: Release
-
-# Both stages are explicitly manual. Merging a candidate never publishes it.
-# This workflow never moves release tags. GitHub release records remain editable.
-on:
+'on':
   workflow_dispatch:
     inputs:
       stage:
         description: Manual release stage
         required: true
         type: choice
-        options: [prepare, publish]
+        options:
+        - prepare
+        - publish
       version:
         description: Explicit version (vX.Y.Z); unchanged on retries
         required: true
@@ -22,15 +21,13 @@ on:
         description: Merged candidate PR number (publish only)
         required: false
         type: string
-
 permissions: {}
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
-
 jobs:
   release:
-    name: "Release"
+    name: Release
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -39,39 +36,51 @@ jobs:
       actions: read
       checks: read
       pull-requests: read
+      attestations: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ inputs.version }}
       CANDIDATE_SHA: ${{ inputs.sha }}
       CANDIDATE_PR: ${{ inputs.pr }}
+      MISE_GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: "Check out source"
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Identify release automation
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-      - name: Prepare candidate branch and print operator PR command
-        if: inputs.stage == 'prepare'
-        run: sh scripts/release.sh prepare "$VERSION" "$CANDIDATE_SHA" --push
-
-      # Keep the dispatch's validator, not executable code from a moving ref.
-      - name: Validate merged candidate and check out exact artifact
-        if: inputs.stage == 'publish'
-        run: |
-          set -euo pipefail
-          cp scripts/release.py .git/release-control.py
-          python3 .git/release-control.py validate "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
-          git checkout --detach "$CANDIDATE_SHA"
-
-      - name: "Test"
-        if: inputs.stage == 'publish'
-        uses: ./.github/actions/test
-
-      - name: Revalidate and publish without moving tags
-        if: inputs.stage == 'publish'
-        run: python3 .git/release-control.py publish "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Set up locked Komizo
+      uses: nicodes/komizo/setup@40086036977a5fc0119d6c4c1d5eb6ae3ab3b4b9
+      env:
+        GH_TOKEN: ${{ github.token }}
+      timeout-minutes: 5
+    - name: Identify release automation
+      run: |-
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+    - name: Prepare candidate branch and print operator PR command
+      if: inputs.stage == 'prepare'
+      run: |
+        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
+        sh scripts/release.sh prepare "$VERSION" "$CANDIDATE_SHA" --push
+        KOMIZO_COMMAND
+    - name: Validate merged candidate and check out exact artifact
+      if: inputs.stage == 'publish'
+      run: |
+        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
+        set -euo pipefail
+        cp scripts/release.py .git/release-control.py
+        python3 .git/release-control.py validate "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
+        git checkout --detach "$CANDIDATE_SHA"
+        KOMIZO_COMMAND
+    - name: Test
+      if: inputs.stage == 'publish'
+      uses: nicodes/komizo/run@40086036977a5fc0119d6c4c1d5eb6ae3ab3b4b9
+      with:
+        target: check
+    - name: Revalidate and publish without moving tags
+      if: inputs.stage == 'publish'
+      run: |
+        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
+        python3 .git/release-control.py publish "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
+        KOMIZO_COMMAND
