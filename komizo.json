@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "repository": "nicodes/komizo-actions",
+  "recipe": "configuration",
+  "tools": {
+    "python": "3.13.11",
+    "bun": "1.4.1",
+    "actionlint": "1.7.12",
+    "shellcheck": "0.11.0"
+  },
+  "validation": {
+    "workflow": {
+      "required": [
+        "ci.yml",
+        "dependency-maintenance.yml",
+        "dependency-policy.yml",
+        "security-scan.yml",
+        "release.yml"
+      ],
+      "ci_gates": [
+        "Test"
+      ]
+    }
+  },
+  "stages": {
+    "install": [
+      [
+        "bash",
+        "scripts/install.sh"
+      ]
+    ],
+    "lint": [
+      [
+        "bash",
+        "scripts/with-python.sh",
+        "bash",
+        "scripts/lint.sh"
+      ]
+    ],
+    "unit": [
+      [
+        "bash",
+        "scripts/with-python.sh",
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ]
+    ],
+    "integration": [
+      [
+        "bash",
+        "scripts/with-python.sh",
+        "bash",
+        "scripts/integration.sh"
+      ]
+    ]
+  },
+  "tasks": {
+    "dependency-maintenance": [
+      [
+        "python3",
+        "-c",
+        "import os,runpy;runpy.run_path(os.environ[\"CICD_ENGINEERING\"]+\"/helpers/watch-tools.py\",run_name=\"__main__\")"
+      ]
+    ]
+  }
+}
