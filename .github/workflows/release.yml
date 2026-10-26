@@ -54,6 +54,8 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
+    - name: Configure release Git authentication
+      run: gh auth setup-git
     - name: Identify release automation
       run: |-
         git config user.name 'github-actions[bot]'
