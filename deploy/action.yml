@@ -37,7 +37,7 @@ description: >
 
   The prune is the last step and the most conservative thing that still
   reclaims the disk: call the app-bound maintenance command installed by
-  Komizo. The host selects its image family and trusted current/rollback
+  komizo. The host selects its image family and trusted current/rollback
   revisions and keeps every container reference. No Docker socket access is
   required. Its failure warns without failing the completed deployment.
 

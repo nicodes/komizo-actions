@@ -244,7 +244,7 @@ unknown action|gdam|42|ghcr.io/you/gdam-api:abc|restart
 action with shell|gdam|42|ghcr.io/you/gdam-api:abc|up;id
 empty app||42|ghcr.io/you/gdam-api:abc|up
 app with a slash|g/dam|42|ghcr.io/you/gdam-api:abc|up
-app with uppercase|GDAM|42|ghcr.io/you/gdam-api:abc|up
+app with uppercase|EXAMPLE|42|ghcr.io/you/gdam-api:abc|up
 app with a space|g dam|42|ghcr.io/you/gdam-api:abc|up
 app with a quote|g'dam|42|ghcr.io/you/gdam-api:abc|up
 empty pr-number|gdam||ghcr.io/you/gdam-api:abc|up
