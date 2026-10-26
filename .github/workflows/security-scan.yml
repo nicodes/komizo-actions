@@ -23,7 +23,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
     - name: Security Scan
-      run: komizo run install vuln
+      run: komizo run --timeout 7200s security-scan
     permissions:
       contents: read
       attestations: read

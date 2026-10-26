@@ -66,6 +66,15 @@
         "-c",
         "import os,runpy;runpy.run_path(os.environ[\"CICD_ENGINEERING\"]+\"/helpers/watch-tools.py\",run_name=\"__main__\")"
       ]
+    ],
+    "security-scan": [
+      [
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "python3 -m venv \"$RUNNER_TEMP/fleet-security-scan\"\n\"$RUNNER_TEMP/fleet-security-scan/bin/python\" -m pip install --disable-pip-version-check pip-audit==2.10.1\n\"$RUNNER_TEMP/fleet-security-scan/bin/python\" -m pip_audit -r .github/workflow-contract-requirements.txt"
+      ]
     ]
   }
 }
