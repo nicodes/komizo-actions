@@ -15,7 +15,7 @@ case "$TASK:$MODE" in
   release-identity-backfill:dry-run|release-identity-backfill:apply|release-identity-backfill:constrain) ;;
   production-data:inspect|production-data:backup|production-data:drill|production-data:seal|production-data:reset|production-data:rollback) ;;
   *)
-    echo "::error::task and mode must name one reviewed Termcade operation."
+    echo "::error::task and mode must name one reviewed termcade operation."
     exit 64
     ;;
 esac
