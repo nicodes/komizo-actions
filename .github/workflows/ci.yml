@@ -1,84 +1,53 @@
-name: "Build & Test"
-
-# Static analysis for the composite actions and the release script, plus the
-# tests for the two things in this repository that are pure functions of their
-# inputs. There is no build to run -- these are shell embedded in YAML -- so
-# what can go wrong is workflow/action syntax, the bash inside `run:` blocks,
-# and the input handling that decides whether any of it executes.
-#
-# All of it lives in .github/actions/test, because Release runs the same checks
-# and one definition is what stops the release-side copy being trimmed until it
-# no longer matches what people trust on a pull request.
-#
-# One job. actionlint used to be a second one, on two grounds: it validates
-# workflow files, which is a property of this repository rather than of a
-# release, and it is a marketplace action with its own pinning story. The second
-# argument stopped holding once everything here was pinned by SHA, and the first
-# was not worth being the only two-job workflow in the organisation. It is a
-# step in the shared action now -- which does mean a release is gated on
-# workflow-file syntax it does not strictly depend on.
-#
-# The push trigger is filtered to main. It used to be a bare `on: push`, which
-# ran on every branch -- so a pull request branch triggered both `push` and
-# `pull_request` for the same commit and did all of this twice.
-
-on:
+name: Build & Test
+'on':
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types:
+    - opened
+    - synchronize
+    - reopened
+    - ready_for_review
   push:
-    branches: [main]
-  workflow_dispatch:
-
-# Read-only: this workflow only inspects the tree.
+    branches:
+    - main
+  workflow_dispatch: null
 permissions:
   contents: read
-
-# Third-party actions are pinned by SHA, with the tag in a trailing comment so
-# the version is still readable. This repository tells its users to pin
-# `uses:` by SHA -- scripts/release.sh exists to make that pin mean what it
-# says -- and preaching it while running floating tags was the sort of
-# inconsistency that undercuts the advice.
-
 jobs:
   ci:
     name: Test
     runs-on: ubuntu-latest
-    # Bounded, so a step that hangs fails here rather than sitting until the
-    # runner's own timeout hours later. Nothing here is slow; this is the
-    # general form of "it should not run for an hour".
     timeout-minutes: 15
     steps:
-      - name: "Check out source"
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: "Set up tools"
-        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
-        with:
-          version: 2026.9.12
-      - name: Install reviewed engineering SDK
-        timeout-minutes: 5
-        shell: bash
-        run: mise install http:cicd-engineering
-      - name: Record tested integration identity
-        if: github.event_name == 'pull_request'
-        env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-        shell: bash
-        run: |
-          ENGINEERING="$(python3 scripts/engineering-bootstrap.py)"
-          python3 "$ENGINEERING/helpers/integration-identity.py"
-      - name: "Upload artifacts"
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: github.event_name == 'pull_request'
-        with:
-          name: fleet-integration-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .artifacts/fleet-integration.json
-          if-no-files-found: error
-          retention-days: 7
-      - name: Validate unified workflow contract
-        shell: bash
-        run: |
-          python3 -m venv "$RUNNER_TEMP/fleet-workflow-contract"
-          "$RUNNER_TEMP/fleet-workflow-contract/bin/python" -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r .github/workflow-contract-requirements.txt
-          "$RUNNER_TEMP/fleet-workflow-contract/bin/python" .github/workflow_contract.py
-      - name: Test
-        uses: ./.github/actions/test
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Set up locked Komizo
+      uses: nicodes/komizo/setup@40086036977a5fc0119d6c4c1d5eb6ae3ab3b4b9
+      env:
+        GH_TOKEN: ${{ github.token }}
+      timeout-minutes: 5
+    - name: Record tested integration identity
+      if: github.event_name == 'pull_request'
+      env:
+        EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+      shell: bash
+      run: komizo exec --tools python -- python3 -c 'import os,runpy;runpy.run_path(os.environ["CICD_ENGINEERING"]+"/helpers/integration-identity.py",run_name="__main__")'
+    - name: Upload artifacts
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: github.event_name == 'pull_request'
+      with:
+        name: fleet-integration-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .artifacts/fleet-integration.json
+        if-no-files-found: error
+        retention-days: 7
+        include-hidden-files: true
+    - name: Test
+      uses: nicodes/komizo/run@40086036977a5fc0119d6c4c1d5eb6ae3ab3b4b9
+      with:
+        target: check
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      MISE_GITHUB_TOKEN: ${{ github.token }}
