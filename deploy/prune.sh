@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run only the app-bound maintenance command installed by reviewed Komizo.
+# Run only the app-bound maintenance command installed by reviewed komizo.
 # It reads trusted deployment state itself. No Docker script, image family,
 # tags or credentials are streamed to the restricted deployment account.
 set -uo pipefail
@@ -19,6 +19,6 @@ ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
 	deploy-target "doas /usr/local/bin/prune-$APP" 2>&1 || rc=$?
 echo "::$fence::"
 if [ "$rc" -ne 0 ]; then
-	echo "::warning::app-scoped image prune failed (ssh exited $rc); deployment succeeded. Update the host's Komizo app setup if the command is missing. Images remain governed by the host retention command; no Docker fallback is attempted."
+	echo "::warning::app-scoped image prune failed (ssh exited $rc); deployment succeeded. Update the host's komizo app setup if the command is missing. Images remain governed by the host retention command; no Docker fallback is attempted."
 fi
 exit 0

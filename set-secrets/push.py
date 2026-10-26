@@ -35,7 +35,7 @@ def push(env, run=subprocess.run, envelope=None):
     command = env.get('SECRET_CMD', '')
     match = re.fullmatch('doas /usr/local/bin/set-secret-([a-z][a-z0-9_-]{0,62})', command)
     if not match:
-        raise ValueError('command must name the fixed Komizo secret wrapper')
+        raise ValueError('command must name the fixed komizo secret wrapper')
     values = secret_set(env)
     manifest = env.get('RELEASE_MANIFEST', '')
     if manifest:
