@@ -24,7 +24,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
     - name: Dependency Maintenance
-      run: komizo run dependency-maintenance
+      run: komizo run --timeout 1800s dependency-maintenance
       env:
         GH_TOKEN: ${{ github.token }}
     permissions:
