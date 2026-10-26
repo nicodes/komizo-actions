@@ -5,3 +5,9 @@ __pycache__/
 
 # Local contract evidence and temporary tooling.
 /.artifacts/
+
+.artifacts/
+
+.komizo.mise*.toml
+
+.komizo.mise*.lock

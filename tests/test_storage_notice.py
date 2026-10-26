@@ -1,6 +1,7 @@
 """Read-only notice controls; SSH is mocked or replaced by owned local processes."""
 
 import contextlib
+import json
 import importlib.util
 import io
 from pathlib import Path
@@ -232,15 +233,15 @@ class ActionTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
 
     def test_shared_ci_discovers_notice_tests(self):
-        self.assertIn("python3 -m unittest discover -s tests -v", (ROOT / "Makefile").read_text())
-        self.assertTrue((ROOT / "tests/test_storage_notice.py").is_file())
-        ci = yaml.safe_load((ROOT / ".github/actions/test/action.yml").read_text())
-        self.assertTrue(
-            any(
-                "make install check" in s.get("run", "")
-                for s in ci["runs"]["steps"]
-            )
-        )
+        manifest=json.loads((ROOT/'komizo.json').read_text())
+        self.assertEqual(manifest['stages']['unit'],[['bash','scripts/with-python.sh','python3','-m','unittest','discover','-s','tests','-v']])
+        self.assertTrue((ROOT/'tests/test_storage_notice.py').is_file())
+        lock=json.loads((ROOT/'komizo.lock').read_text())
+        ci=yaml.safe_load((ROOT/'.github/workflows/ci.yml').read_text())
+        gate=next(step for step in ci['jobs']['ci']['steps'] if step.get('uses')=='nicodes/komizo/run@'+lock['platform_revision'])
+        self.assertEqual(gate['with']['target'],'check')
+        self.assertNotIn('if',gate)
+
 
 
 if __name__ == "__main__":

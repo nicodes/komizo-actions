@@ -1,102 +1,11 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: f28f9a07d432e9d3833e39d779a172749e6d1fa4a076a40b2ffe5c9875543f51 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 35c5bde580abccd8672571e5b51314b075b8750acbc3baaec8e5c05c81ee2bf5 -->
 
-# komizo-actions
+# Komizo Actions
 
-Application-agnostic GitHub Actions for deploying Compose applications to hosts prepared by the Komizo CLI. The supported action invokes the app-scoped host deployment operation.
+Reusable GitHub Actions for Komizo deployments and project maintenance. Pin actions and workflows to a reviewed full commit SHA.
 
-The abandoned rollout model is superseded by v0.0.7 and later. Historical tags are not a recommendation to adopt the abandoned model.
+Deployment actions include `connect`, `publish-config`, `publish`, `activate`, `health-check` and `preview`. Callers supply their own project metadata, server, user and authorized host profile.
 
-## Deploy
+The reusable `reusable-backup.yml`, `reusable-security-scan.yml` and `reusable-dependency-maintenance.yml` workflows use the caller’s `komizo.json` and `komizo.lock`. Callers grant `attestations: read`; backups also require `id-token: write` and the declared transport/storage secrets.
 
-Pin a reviewed full commit SHA. Configure a deploy account, pinned SSH host keys and an app-scoped host allowlist before running this action.
-
-```yaml
-- uses: nicodes/komizo-actions/deploy@d57c15131232a84d8eda86c0a02eccd6e569d3dc
-  with:
-    app: example
-    host: ${{ vars.DEPLOY_HOST }}
-    key: ${{ secrets.DEPLOY_KEY }}
-    known-hosts: ${{ vars.DEPLOY_KNOWN_HOSTS }}
-    version: ${{ github.sha }}
-    config-compose: deploy/compose.yml
-    config-image: ghcr.io/example/app-config
-    registry-user: ${{ github.actor }}
-    registry-token: ${{ secrets.GITHUB_TOKEN }}
-    health-urls: https://app.example.com/health
-```
-
-Use `KOMIZO_SECRET_<NAME>` environment variables only for secrets this application needs. Do not forward every available secret. Host-local profile values must stay on the host; the action sends only a nonsecret generation id. A failed activation or healthcheck stays failed and does not prove database rollback.
-
-See each action’s `action.yml` for its current input contract. Release refs are fixed by project policy; a full commit SHA gives an immutable action pin.
-
-## Pull request previews
-
-Previews are opt-in. `preview-request` decides, before any secret enters the workflow, whether a run is a preview request; `preview` brings the stack up or down on the host.
-
-The rule, applied inside the jobs (the workflow keeps the full `pull_request` type list the fleet workflow contract requires and adds `issue_comment: [created]`):
-
-- `pull_request` `closed` tears the preview down, always; teardown is idempotent.
-- `pull_request` `synchronize` or `reopened` redeploys only while the PR carries the `preview` label.
-- `pull_request` `opened` and `ready_for_review` do nothing.
-- A comment whose exact body is `/preview` deploys; `/preview down` tears down. Only comments by an OWNER, MEMBER or COLLABORATOR count, and only on pull requests.
-- Every deploy requires a same-repository head (never a fork), a trusted author, and an open, non-draft PR. Dependabot pull requests are refused both ways: never deployed, and a run dependabot triggers is served the Dependabot secret store, so a teardown would run with an empty deploy key.
-
-```yaml
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, closed]
-  issue_comment:
-    types: [created]
-jobs:
-  request:
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request != null
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      enabled: ${{ steps.request.outputs.enabled }}
-      action: ${{ steps.request.outputs.action }}
-      pr: ${{ steps.request.outputs.pr }}
-      sha: ${{ steps.request.outputs.sha }}
-    steps:
-      - id: request
-        uses: nicodes/komizo-actions/preview-request@<full commit sha>
-        with:
-          label: preview
-  preview-up:
-    needs: request
-    if: needs.request.outputs.enabled == 'true' && needs.request.outputs.action == 'up'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      packages: read
-    steps:
-      - uses: actions/checkout@<full commit sha>
-        with:
-          ref: ${{ needs.request.outputs.sha }}
-      - uses: nicodes/komizo-actions/preview@<full commit sha>
-        with:
-          app: example
-          pr-number: ${{ needs.request.outputs.pr }}
-          images: ghcr.io/example/app-gate:${{ needs.request.outputs.sha }}
-          action: up
-          registry-user: ${{ github.actor }}
-          registry-token: ${{ secrets.GITHUB_TOKEN }}
-      - run: gh pr edit "$PR" --add-label preview
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR: ${{ needs.request.outputs.pr }}
-```
-
-A `preview-down` job gates on `needs.request.outputs.action == 'down'`, runs the same composite with `action: down`, then `gh pr edit "$PR" --remove-label preview` with the same `GH_TOKEN`, `GH_REPO` and `PR` env: `gh` otherwise resolves the repository from a git remote, and a teardown job has no checkout.
-
-Use the resolved `pr` and `sha` outputs rather than `github.event.pull_request.*`: a comment event carries no pull request payload. The workflow adds the label after a successful `up` and removes it after `down`; the action only reads it. A label left behind by host-side garbage collection costs one redeploy on the next push, which recreates the state. The `preview` label must exist in the repository (`gh label create preview`), and the job that flips it needs `pull-requests: write`.
-
-## Host-local environment profiles
-
-The action does not prove that a fresh PostgreSQL cutover is safe. Use a separate host-local status command, an exact expected generation and the supported profile. Remote output is captured in mode 0600 files. The validated receipt is `deploy: scoped-generation=<expected generation>`. There is no stage, confirm, or abort. Profile-specific credentials remain on the host and must not be sent by the runner.
-
-Scoped profiles are opaque names explicitly installed by the host operator. The action validates the application name, invokes that app's argument-free status executable, and accepts only the exact requested profile and generation. Applications can supply different credential layouts through the same interface. Unused runner variables are never read or forwarded; `KOMIZO_SECRET_` and `KOMIZO_SCOPED_` transport variables and explicit secret lists remain refused for scoped delivery. A scoped host independently rejects aggregate secret writes and missing or changed generations. Keep privileged adapter installation outside application CI.
+For development, install the [Komizo release](https://github.com/nicodes/komizo#install) matching `komizo.lock`, then run `komizo check`.

@@ -575,20 +575,7 @@ else
 	pass=$((pass + 1))
 fi
 
-for phrase in \
-	'not prove that a fresh PostgreSQL cutover is safe' \
-	'host-local status command' \
-	'deploy: scoped-generation=' \
-	'supported profile' \
-	'mode 0600 files' \
-	'There is no stage, confirm, or abort'; do
-	if grep -qF "$phrase" README.md; then
-		pass=$((pass + 1))
-	else
-		fail=$((fail + 1))
-		printf 'FAIL  docs missing: %s\n' "$phrase"
-	fi
-done
+# Operational guidance belongs in private documentation; executable checks above remain.
 
 if grep -qE 'set-scoped-env-mailroom|eleven LF|RFC4648' README.md; then
 	fail=$((fail + 1))
