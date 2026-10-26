@@ -1,0 +1,30 @@
+name: Verify backup transport
+description: Verify an immutable backup artifact and retain nonsecret transport evidence without decrypting or restoring it.
+inputs:
+  source-run-id:
+    description: Exact completed main backup or deployment run ID
+    required: true
+  artifact-id:
+    description: Exact unexpired encrypted backup artifact ID
+    required: true
+  directory:
+    description: Caller project directory containing komizo.json and komizo.lock
+    required: false
+    default: .
+runs:
+  using: composite
+  steps:
+  - name: Set up locked Komizo
+    uses: nicodes/komizo/setup@40086036977a5fc0119d6c4c1d5eb6ae3ab3b4b9
+    with:
+      directory: ${{ inputs.directory }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+  - name: Verify immutable artifact transport
+    shell: bash
+    env:
+      PROJECT_DIRECTORY: ${{ inputs.directory }}
+      SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+      SOURCE_ARTIFACT_ID: ${{ inputs.artifact-id }}
+      GH_TOKEN: ${{ github.token }}
+    run: komizo exec --directory "$PROJECT_DIRECTORY" --tools python -- python3 "$GITHUB_ACTION_PATH/evidence.py"
