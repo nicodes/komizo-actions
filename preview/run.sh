@@ -38,7 +38,7 @@
 #
 # The privileged host reports its effective routing domain in the up record.
 # Older hosts fall back to reading /etc/komizo/preview; that legacy path requires
-# a readable knob. Hosts with private knob directories need Komizo v0.0.49 or
+# a readable knob. Hosts with private knob directories need komizo v0.0.49 or
 # newer so the deployment account never needs access to host configuration.
 #
 # Inputs (environment):
