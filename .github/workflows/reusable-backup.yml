@@ -52,12 +52,12 @@ jobs:
         persist-credentials: false
       timeout-minutes: 3
     - name: Set up locked Komizo
-      uses: nicodes/komizo/setup@40086036977a5fc0119d6c4c1d5eb6ae3ab3b4b9
+      uses: nicodes/komizo/setup@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
     - name: Connect to host
-      uses: nicodes/komizo-actions/connect@66e672f5786688a5c5fbd492d35ec0009867a250
+      uses: nicodes/komizo-actions/connect@121ed71e76aa49c2f5471da11512a35e2a9022e7
       env:
         KOMIZO_SERVER_URL: ${{ inputs.server }}
         KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
@@ -167,7 +167,7 @@ jobs:
         persist-credentials: false
       timeout-minutes: 3
     - name: Set up locked Komizo
-      uses: nicodes/komizo/setup@40086036977a5fc0119d6c4c1d5eb6ae3ab3b4b9
+      uses: nicodes/komizo/setup@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
