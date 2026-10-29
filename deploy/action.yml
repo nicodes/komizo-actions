@@ -327,7 +327,7 @@ runs:
     #    connection, so a bad key fails before anything has been published.
     - name: "Connect to host"
       if: steps.cfg.outputs.host != ''
-      uses: nicodes/komizo-actions/connect@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
+      uses: nicodes/komizo-actions/connect@d580c4239f792c534f544f75ba03b482d7223db8
       with:
         host: ${{ steps.cfg.outputs.host }}
         user: ${{ inputs.user != '' && inputs.user || format('komizo-{0}', steps.cfg.outputs.app) }}
@@ -365,7 +365,7 @@ runs:
     - name: "Publish configuration"
       id: config
       if: inputs.config != '' || inputs.config-compose != ''
-      uses: nicodes/komizo-actions/publish-config@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
+      uses: nicodes/komizo-actions/publish-config@d580c4239f792c534f544f75ba03b482d7223db8
       with:
         config: ${{ inputs.config }}
         compose: ${{ inputs.config-compose }}
@@ -381,7 +381,7 @@ runs:
     #    ever skipped. A scoped host refuses the aggregate secret path itself.
     - name: "Set secrets"
       if: steps.cfg.outputs.has-secrets == 'true' && steps.cfg.outputs.service-env-profile == ''
-      uses: nicodes/komizo-actions/set-secrets@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
+      uses: nicodes/komizo-actions/set-secrets@d580c4239f792c534f544f75ba03b482d7223db8
       with:
         names: ${{ inputs.secrets }}
         command: doas /usr/local/bin/set-secret-${{ steps.cfg.outputs.app }}
@@ -426,7 +426,7 @@ runs:
     - name: "Check health"
       id: health
       if: inputs.health-urls != ''
-      uses: nicodes/komizo-actions/health-check@14bd7d215e90a21d00324b5ad5bb6e815cf54b67
+      uses: nicodes/komizo-actions/health-check@d580c4239f792c534f544f75ba03b482d7223db8
       with:
         urls: ${{ inputs.health-urls }}
         attempts: ${{ inputs.health-attempts }}
