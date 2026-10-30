@@ -1,0 +1,14 @@
+name: Prepare routine backup proof
+description: Bind an exact scheduled main workflow to a private host operation frame without logging its token
+inputs:
+  output:
+    description: New absolute file under a protected caller-owned directory
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Prepare private audience-bound frame
+      shell: bash
+      env:
+        BACKUP_PROOF_OUTPUT: ${{ inputs.output }}
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/backup-proof.py" --output "$BACKUP_PROOF_OUTPUT"
