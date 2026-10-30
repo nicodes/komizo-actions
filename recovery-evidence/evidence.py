@@ -62,7 +62,7 @@ def recovery(root):
                 if entry.file_size > (64*1024 if name=='receipt.json' else 2*1024**3): raise ValueError('backup member exceeds bound')
                 member=tarfile.TarInfo(name);member.size=entry.file_size
                 with source.open(entry) as stream:target.addfile(member,stream)
-        helper=Path(os.environ['CICD_ENGINEERING'])/'helpers/receive-backup.py'
+        helper=Path(os.environ['TOOLS_ROOT'])/'helpers/receive-backup.py'
         spec=importlib.util.spec_from_file_location('receive_backup',helper);module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         receipt=module.receive(exported,scratch/'checked')
         report={'transport_verified':True,'repository':repo,'run_id':int(run_id),'artifact_id':int(artifact_id),

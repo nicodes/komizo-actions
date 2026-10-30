@@ -8,18 +8,14 @@ inputs:
     description: Exact unexpired encrypted backup artifact ID
     required: true
   directory:
-    description: Caller project directory containing komizo.json and komizo.lock
+    description: Caller checkout in which to retain nonsecret recovery evidence
     required: false
     default: .
 runs:
   using: composite
   steps:
-  - name: Set up locked komizo
-    uses: nicodes/komizo/setup@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
-    with:
-      directory: ${{ inputs.directory }}
-    env:
-      GH_TOKEN: ${{ github.token }}
+  - name: Select reviewed transport helpers
+    uses: nicodes/tools/helpers@0f95a6df60f740b527596ed2c7f4590e3f2d5820
   - name: Verify immutable artifact transport
     shell: bash
     env:
@@ -27,4 +23,6 @@ runs:
       SOURCE_RUN_ID: ${{ inputs.source-run-id }}
       SOURCE_ARTIFACT_ID: ${{ inputs.artifact-id }}
       GH_TOKEN: ${{ github.token }}
-    run: komizo exec --directory "$PROJECT_DIRECTORY" --tools python -- python3 "$GITHUB_ACTION_PATH/evidence.py"
+    run: |-
+      cd "$PROJECT_DIRECTORY" || exit
+      python3 "$GITHUB_ACTION_PATH/evidence.py"

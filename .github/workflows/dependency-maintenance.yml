@@ -18,13 +18,13 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - name: Set up locked komizo
-      uses: nicodes/komizo/setup@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
+    - name: Set up development tools
+      uses: nicodes/tools/setup@0f95a6df60f740b527596ed2c7f4590e3f2d5820
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
     - name: Dependency Maintenance
-      run: komizo run --timeout 1800s dependency-maintenance
+      run: mise run dependency-maintenance
       env:
         GH_TOKEN: ${{ github.token }}
     permissions:

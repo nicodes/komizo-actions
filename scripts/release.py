@@ -15,7 +15,7 @@ APP_ID = 15368
 # The primitives composed by other actions in this repository. Membership is
 # by reference, not by directory: deploy composes four; activation runs from its own checked-out bundle, preview composes
 # connect only (already a member, so preview changes nothing here), and
-# publish, setup-godot and run-task compose no siblings. A composite like
+# backup-proof and run-task compose no siblings. A composite like
 # preview does NOT belong: nothing references nicodes/komizo-actions/preview,
 # and adding it would break canonical_tree's found == SUBACTIONS check.
 SUBACTIONS = {"connect", "publish-config", "set-secrets", "health-check"}

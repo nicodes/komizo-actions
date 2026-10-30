@@ -223,7 +223,7 @@ guard_row 'nicodes;oops' 1 "a semicolon is still refused by the activate guard"
 # The two copies of this guard (deploy composes activate; publish has its own
 # in publish/validate.sh) must stay the same charset, or deploy@ and publish@
 # disagree on bot logins.
-if grep -qF "$guard" publish/validate.sh; then
+if grep -qF "$guard" "$TOOLS_ROOT/publish/validate.sh"; then
 	pass=$((pass + 1))
 else
 	fail=$((fail + 1))

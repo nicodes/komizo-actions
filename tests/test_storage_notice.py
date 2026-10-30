@@ -233,13 +233,13 @@ class ActionTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
 
     def test_shared_ci_discovers_notice_tests(self):
-        manifest=json.loads((ROOT/'komizo.json').read_text())
-        self.assertEqual(manifest['stages']['unit'],[['bash','scripts/with-python.sh','python3','-m','unittest','discover','-s','tests','-v']])
+        import tomllib
+        config=tomllib.loads((ROOT/'mise.toml').read_text())
+        self.assertIn('bash scripts/with-python.sh python3 -m unittest discover -s tests -v', config['tasks']['_unit']['run'])
         self.assertTrue((ROOT/'tests/test_storage_notice.py').is_file())
-        lock=json.loads((ROOT/'komizo.lock').read_text())
+        self.assertIn({'task':'unit'},config['tasks']['_check-stages']['run'])
         ci=yaml.safe_load((ROOT/'.github/workflows/ci.yml').read_text())
-        gate=next(step for step in ci['jobs']['ci']['steps'] if step.get('uses')=='nicodes/komizo/run@'+json.loads((ROOT/'.github/komizo-action-source.json').read_text())['action_revision'])
-        self.assertEqual(gate['with']['target'],'check')
+        gate=next(step for step in ci['jobs']['ci']['steps'] if 'mise run check' in step.get('run',''))
         self.assertNotIn('if',gate)
 
 

@@ -51,8 +51,8 @@ jobs:
       with:
         persist-credentials: false
       timeout-minutes: 3
-    - name: Set up locked komizo
-      uses: nicodes/komizo/setup@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
+    - name: Select reviewed backup helpers
+      uses: nicodes/tools/helpers@0f95a6df60f740b527596ed2c7f4590e3f2d5820
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
@@ -65,25 +65,21 @@ jobs:
       with:
         user: ${{ inputs.user }}
       timeout-minutes: 3
-    - name: Prepare bounded routine export authority
-      timeout-minutes: 2
+    - name: Prepare private routine backup directory
+      timeout-minutes: 1
       shell: bash
       run: |
-        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
         set -euo pipefail
-        engineering="$CICD_ENGINEERING"
-        printf 'CICD_BACKUP_ENGINEERING=%s\n' "$engineering" >> "$GITHUB_ENV"
         install -d -m 700 "$RUNNER_TEMP/komizo-backup-proof"
-        proof="$RUNNER_TEMP/komizo-backup-proof/operation.frame"
-        python3 "$engineering/helpers/backup-proof.py" --output "$proof"
-        printf 'KOMIZO_BACKUP_PROOF_FILE=%s\n' "$proof" >> "$GITHUB_ENV"
-        KOMIZO_COMMAND
+        printf 'KOMIZO_BACKUP_PROOF_FILE=%s\n' "$RUNNER_TEMP/komizo-backup-proof/operation.frame" >> "$GITHUB_ENV"
+    - name: Prepare bounded routine export authority
+      timeout-minutes: 2
+      uses: nicodes/komizo-actions/backup-proof@cfc08dfbc35a02780d158265f14189a0c2f702d6
+      with:
+        output: ${{ runner.temp }}/komizo-backup-proof/operation.frame
     - name: Verify and encrypt the pre-deploy snapshot
       timeout-minutes: 15
-      run: |-
-        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
-        bash scripts/export-backup.sh
-        KOMIZO_COMMAND
+      run: bash scripts/export-backup.sh
     - name: Put the encrypted snapshot in object storage
       timeout-minutes: 10
       env:
@@ -94,7 +90,6 @@ jobs:
         BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
         BACKUP_PRODUCT: ${{ inputs.product }}
       run: |-
-        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
         set -euo pipefail
         umask 077
         cms=.artifacts/backup/export/snapshot.cms
@@ -127,9 +122,8 @@ jobs:
         print(stamp.strftime('%Y%m%dT%H%M%SZ'))
         PY
         )"
-        python3 "$CICD_BACKUP_ENGINEERING/helpers/upload-backup.py" --slug "$BACKUP_PRODUCT" \
+        python3 "$TOOLS_ROOT/helpers/upload-backup.py" --slug "$BACKUP_PRODUCT" \
           --cms "$cms" --receipt "$receipt" --taken-at "$taken_at"
-        KOMIZO_COMMAND
     - name: Upload artifacts
       timeout-minutes: 10
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -143,10 +137,7 @@ jobs:
       if: always()
       timeout-minutes: 1
       shell: bash
-      run: |-
-        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
-        rm -f "$RUNNER_TEMP/komizo-backup-proof/operation.frame"
-        KOMIZO_COMMAND
+      run: rm -f "$RUNNER_TEMP/komizo-backup-proof/operation.frame"
     env:
       MISE_GITHUB_TOKEN: ${{ github.token }}
   report:
@@ -166,18 +157,16 @@ jobs:
       with:
         persist-credentials: false
       timeout-minutes: 3
-    - name: Set up locked komizo
-      uses: nicodes/komizo/setup@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
+    - name: Select reviewed backup helpers
+      uses: nicodes/tools/helpers@0f95a6df60f740b527596ed2c7f4590e3f2d5820
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
     - name: Report failure
-      run: |
-        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
+      run: |-
         set -euo pipefail
-        engineering="$CICD_ENGINEERING"
+        engineering="$TOOLS_ROOT"
         python3 "$engineering/helpers/report-failure.py"
-        KOMIZO_COMMAND
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 2

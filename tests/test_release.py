@@ -539,11 +539,11 @@ class WorkflowContracts(unittest.TestCase):
             rf"uses:\s*{r.REPO}/([^\s@]+)@", (root / "deploy/action.yml").read_text()
         )
         self.assertEqual(set(refs), r.SUBACTIONS)
-        self.assertNotIn(f"{r.REPO}/", (root / "publish/action.yml").read_text())
+        self.assertNotIn(f"{r.REPO}/", (root / "backup-proof/action.yml").read_text())
         # setup-godot is the same kind of top-level action: it composes only
         # third-party actions/cache and the caller's vendored script, so it
         # must compose no siblings either.
-        self.assertNotIn(f"{r.REPO}/", (root / "setup-godot/action.yml").read_text())
+        self.assertNotIn(f"{r.REPO}/", (root / "backup-proof/action.yml").read_text())
 
     def test_manual_stages_permissions_and_exact_sha_test_order(self):
         import yaml
@@ -566,7 +566,7 @@ class WorkflowContracts(unittest.TestCase):
             i for i, s in enumerate(steps) if " validate " in s.get("run", "")
         )
         testing = next(
-            i for i, s in enumerate(steps) if s.get("uses") == "nicodes/komizo/run@" + json.loads((root / ".github/komizo-action-source.json").read_text())["action_revision"] and s.get("with", {}).get("target") == "check"
+            i for i, s in enumerate(steps) if "mise run check" in s.get("run", "")
         )
         publication = next(
             i for i, s in enumerate(steps) if " publish " in s.get("run", "")
