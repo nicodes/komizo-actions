@@ -49,8 +49,8 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - name: Set up locked komizo
-      uses: nicodes/komizo/setup@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
+    - name: Set up development tools
+      uses: nicodes/tools/setup@0f95a6df60f740b527596ed2c7f4590e3f2d5820
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
@@ -62,27 +62,20 @@ jobs:
         git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
     - name: Prepare candidate branch and print operator PR command
       if: inputs.stage == 'prepare'
-      run: |
-        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
-        sh scripts/release.sh prepare "$VERSION" "$CANDIDATE_SHA" --push
-        KOMIZO_COMMAND
+      run: sh scripts/release.sh prepare "$VERSION" "$CANDIDATE_SHA" --push
     - name: Validate merged candidate and check out exact artifact
       if: inputs.stage == 'publish'
-      run: |
-        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
+      run: |-
         set -euo pipefail
         cp scripts/release.py .git/release-control.py
         python3 .git/release-control.py validate "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
         git checkout --detach "$CANDIDATE_SHA"
-        KOMIZO_COMMAND
     - name: Test
       if: inputs.stage == 'publish'
-      uses: nicodes/komizo/run@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
-      with:
-        target: check
+      shell: bash
+      run: |-
+        set -euo pipefail
+        mise run check
     - name: Revalidate and publish without moving tags
       if: inputs.stage == 'publish'
-      run: |
-        komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'
-        python3 .git/release-control.py publish "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
-        KOMIZO_COMMAND
+      run: python3 .git/release-control.py publish "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"

@@ -77,5 +77,4 @@ updates:
     default-days: 3
   directories:
   - /
-  - /publish
-  - /setup-godot
+  - /backup-proof

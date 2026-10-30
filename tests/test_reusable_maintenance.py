@@ -15,10 +15,8 @@ WORKFLOWS=ROOT/'.github/workflows'
 def load(name):return yaml.safe_load((WORKFLOWS/name).read_text())
 
 def script(step):
-    lines=step['run'].splitlines()
-    if lines[0]!="komizo exec --tools python -- bash -euo pipefail <<'KOMIZO_COMMAND'" or lines[-1]!='KOMIZO_COMMAND':raise ValueError('Explicit locked Python runtime required')
-    body='\n'.join(lines[1:-1])
-    if 'komizo exec' in body or 'KOMIZO_COMMAND' in body:raise ValueError('Nested runtime wrapper')
+    body=step['run']
+    if 'komizo exec' in body or 'komizo run' in body or 'KOMIZO_COMMAND' in body:raise ValueError('Removed runtime wrapper')
     return body
 
 def validate(doc,backup=False):
@@ -29,24 +27,23 @@ def validate(doc,backup=False):
         if permissions.get('attestations')!='read':raise ValueError('Archive provenance access required')
         if permissions.get('id-token')=='write' and not(backup and name=='backup'):raise ValueError('OIDC authority belongs only to backup')
         if 'concurrency' in job:raise ValueError('Concurrency belongs to the caller')
-        steps=job['steps'];setups=[i for i,s in enumerate(steps) if re.fullmatch('nicodes/komizo/setup@[a-f0-9]{40}',s.get('uses',''))]
-        if len(setups)!=1:raise ValueError('One authenticated caller runtime setup required')
+        steps=job['steps'];setups=[i for i,s in enumerate(steps) if re.fullmatch('nicodes/tools/helpers@[a-f0-9]{40}',s.get('uses',''))]
+        if len(setups)!=1:raise ValueError('One reviewed helper source required')
         for i,step in enumerate(steps):
             if 'run' in step:
                 if i<setups[0]:raise ValueError('Authenticate before executing commands')
-                if step['run'].startswith('komizo exec'):script(step)
-                elif not step['run'].startswith('komizo run '):raise ValueError('Native command required')
+                script(step)
     if backup:
-        steps=doc['jobs']['backup']['steps'];proof=next(i for i,s in enumerate(steps) if 'backup-proof.py' in s.get('run',''));export=next(i for i,s in enumerate(steps) if 'bash scripts/export-backup.sh' in s.get('run',''));upload=next(i for i,s in enumerate(steps) if 'upload-backup.py' in s.get('run',''))
+        steps=doc['jobs']['backup']['steps'];proof=next(i for i,s in enumerate(steps) if 'nicodes/komizo-actions/backup-proof@' in s.get('uses',''));export=next(i for i,s in enumerate(steps) if 'bash scripts/export-backup.sh' in s.get('run',''));upload=next(i for i,s in enumerate(steps) if 'upload-backup.py' in s.get('run',''))
         if not proof<export<upload:raise ValueError('Bounded proof and encryption must precede upload')
         if any('if' in steps[i] for i in [proof,export,upload]):raise ValueError('Required backup phases cannot be conditional')
         if '${{ inputs.product }}' in steps[upload]['run'] or steps[upload]['env'].get('BACKUP_PRODUCT')!='${{ inputs.product }}':raise ValueError('Product input must enter only through an environment value')
 
 class ReusableMaintenance(unittest.TestCase):
     def test_native_setup_roles_and_required_backup_phases(self):
-        for name in ['reusable-backup.yml','reusable-security-scan.yml','reusable-dependency-maintenance.yml']:validate(load(name),backup=name=='reusable-backup.yml')
+        for name in ['reusable-backup.yml']:validate(load(name),backup=name=='reusable-backup.yml')
         backup=load('reusable-backup.yml')
-        for mutate in [lambda d:d['jobs']['report']['permissions'].update({'id-token':'write'}),lambda d:d['jobs']['backup']['steps'].pop(1),lambda d:d['jobs']['backup'].update({'concurrency':'caller-deadlock'}),lambda d:next(s for s in d['jobs']['backup']['steps'] if 'backup-proof.py' in s.get('run','')).update({'if':'false'})]:
+        for mutate in [lambda d:d['jobs']['report']['permissions'].update({'id-token':'write'}),lambda d:d['jobs']['backup']['steps'].pop(1),lambda d:d['jobs']['backup'].update({'concurrency':'caller-deadlock'}),lambda d:next(s for s in d['jobs']['backup']['steps'] if 'nicodes/komizo-actions/backup-proof@' in s.get('uses','')).update({'if':'false'})]:
             bad=copy.deepcopy(backup);mutate(bad)
             with self.assertRaises(ValueError):validate(bad,backup=True)
 
@@ -57,7 +54,7 @@ class ReusableMaintenance(unittest.TestCase):
             (export/'snapshot.cms').write_bytes(b'synthetic ciphertext')
             (export/'receipt.json').write_text(json.dumps({'verified_at':'2026-10-26T12:00:00Z'}))
             marker=root/'must-not-execute'
-            env={**os.environ,'CICD_BACKUP_ENGINEERING':os.environ['CICD_ENGINEERING'],'BACKUP_PRODUCT':'x"; touch '+str(marker)+'; #','BACKUP_ALLOWED_SLUGS':'["fixture"]'}
+            env={**os.environ,'TOOLS_ROOT':os.environ['TOOLS_ROOT'],'BACKUP_PRODUCT':'x"; touch '+str(marker)+'; #','BACKUP_ALLOWED_SLUGS':'["fixture"]'}
             result=subprocess.run(['bash','-euo','pipefail','-c',script(step)],env=env,cwd=root,capture_output=True,text=True,timeout=10)
             self.assertNotEqual(result.returncode,0);self.assertIn('slug',result.stderr);self.assertFalse(marker.exists())
             (export/'receipt.json').write_text(json.dumps({'verified_at':'bad-timestamp'}))

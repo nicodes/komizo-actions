@@ -22,8 +22,8 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - name: Set up locked komizo
-      uses: nicodes/komizo/setup@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
+    - name: Set up development tools
+      uses: nicodes/tools/setup@0f95a6df60f740b527596ed2c7f4590e3f2d5820
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
@@ -32,7 +32,7 @@ jobs:
       env:
         EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
       shell: bash
-      run: komizo exec --tools python -- python3 -c 'import os,runpy;runpy.run_path(os.environ["CICD_ENGINEERING"]+"/helpers/integration-identity.py",run_name="__main__")'
+      run: python3 "$TOOLS_ROOT/helpers/integration-identity.py"
     - name: Upload artifacts
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: github.event_name == 'pull_request'
@@ -43,9 +43,10 @@ jobs:
         retention-days: 7
         include-hidden-files: true
     - name: Test
-      uses: nicodes/komizo/run@2ca94e2fd4bb05f41bb228e9c366e5cc733c75e6
-      with:
-        target: check
+      shell: bash
+      run: |-
+        set -euo pipefail
+        mise run check
     permissions:
       contents: read
       attestations: read
