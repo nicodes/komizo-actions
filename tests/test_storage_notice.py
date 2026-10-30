@@ -238,7 +238,7 @@ class ActionTests(unittest.TestCase):
         self.assertTrue((ROOT/'tests/test_storage_notice.py').is_file())
         lock=json.loads((ROOT/'komizo.lock').read_text())
         ci=yaml.safe_load((ROOT/'.github/workflows/ci.yml').read_text())
-        gate=next(step for step in ci['jobs']['ci']['steps'] if step.get('uses')=='nicodes/komizo/run@'+lock['platform_revision'])
+        gate=next(step for step in ci['jobs']['ci']['steps'] if step.get('uses')=='nicodes/komizo/run@'+json.loads((ROOT/'.github/komizo-action-source.json').read_text())['action_revision'])
         self.assertEqual(gate['with']['target'],'check')
         self.assertNotIn('if',gate)
 

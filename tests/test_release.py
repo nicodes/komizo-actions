@@ -566,7 +566,7 @@ class WorkflowContracts(unittest.TestCase):
             i for i, s in enumerate(steps) if " validate " in s.get("run", "")
         )
         testing = next(
-            i for i, s in enumerate(steps) if s.get("uses") == "nicodes/komizo/run@" + json.loads((root / "komizo.lock").read_text())["platform_revision"] and s.get("with", {}).get("target") == "check"
+            i for i, s in enumerate(steps) if s.get("uses") == "nicodes/komizo/run@" + json.loads((root / ".github/komizo-action-source.json").read_text())["action_revision"] and s.get("with", {}).get("target") == "check"
         )
         publication = next(
             i for i, s in enumerate(steps) if " publish " in s.get("run", "")
