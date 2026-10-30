@@ -6,7 +6,6 @@ python3 -I -m venv "$parser_directory"
 "$parser_directory/bin/python" -I -m pip --isolated install --disable-pip-version-check \
   --no-cache-dir --no-deps --require-hashes --index-url https://pypi.org/simple \
   -r "$GITHUB_ACTION_PATH/requirements.txt" >&2
-set -euo pipefail
 args=(--compose "$COMPOSE" --scoped-env-dir "$SCOPED_ENV_DIR")
 # Read the newline-separated inputs with `read -r` rather than word
 # splitting: a host-only entry contains a space after the colon, and

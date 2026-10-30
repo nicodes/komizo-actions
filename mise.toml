@@ -27,7 +27,7 @@ depends = ["install"]
 run = ["python3 \"$TOOLS_ROOT/helpers/watch-tools.py\""]
 
 [tasks."security-scan"]
-run = ["bash -euo pipefail -c 'python3 -m venv \"$RUNNER_TEMP/fleet-security-scan\"\n\"$RUNNER_TEMP/fleet-security-scan/bin/python\" -m pip install --disable-pip-version-check pip-audit==2.10.1\n\"$RUNNER_TEMP/fleet-security-scan/bin/python\" -m pip_audit -r .github/workflow-contract-requirements.txt'"]
+run = ["bash -euo pipefail -c 'python3 -m venv \"$RUNNER_TEMP/fleet-security-scan\"\n\"$RUNNER_TEMP/fleet-security-scan/bin/python\" -m pip install --disable-pip-version-check pip-audit==2.10.1\n\"$RUNNER_TEMP/fleet-security-scan/bin/python\" -m pip_audit -r check-secrets/requirements.txt'"]
 
 [tasks."_unit"]
 run = ["bash scripts/with-python.sh python3 -m unittest discover -s tests -v"]

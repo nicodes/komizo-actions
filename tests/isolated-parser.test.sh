@@ -13,6 +13,6 @@ printf 'name: Fixture\non: push\njobs: {}\n' > "$scratch/workflow.yml"
 cd "$scratch"
 PYTHONPATH="$scratch/poison" PATH="$scratch/bin:$PATH" RUNNER_TEMP="$scratch" \
   GITHUB_ACTION_PATH="$root/check-secrets" COMPOSE="$scratch/compose.yml" \
-  WORKFLOWS="$scratch/workflow.yml" SCOPED_ENV_DIR=secrets/current HOST_ONLY= \
-  SECRETS_ENV_SERVICES= bash "$root/check-secrets/run.sh"
+  WORKFLOWS="$scratch/workflow.yml" SCOPED_ENV_DIR=secrets/current HOST_ONLY="" \
+  SECRETS_ENV_SERVICES="" bash "$root/check-secrets/run.sh"
 test -z "$(find "$scratch" -maxdepth 1 -type d -name 'komizo-secret-parser.*' -print)"
