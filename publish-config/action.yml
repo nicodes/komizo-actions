@@ -187,7 +187,7 @@ runs:
           # registry token, and it used to reach out to PyPI for an unpinned
           # package -- escalating to `sudo apt-get` if that failed -- which made
           # the least verified thing in the pipeline something that ran on every
-          # deploy. GitHub-hosted runners ship PyYAML; parse-config.py says what
+          # deploy. The action owns a hash-pinned isolated PyYAML environment; parse-config.py says what
           # to do when it is genuinely missing.
           #
           # Turn komizo.yml into the flat hostnames the host reads, and hand back
@@ -196,7 +196,7 @@ runs:
           # still goes through the same validation and the host re-checks it.
           HOSTNAMES="$RUNNER_TEMP/komizo-hostnames"
           : > "$HOSTNAMES"
-          if ! COMPOSE="$(python3 "$GITHUB_ACTION_PATH/parse-config.py" "$CONFIG" "$HOSTNAMES")"; then
+          if ! COMPOSE="$(bash "$GITHUB_ACTION_PATH/../scripts/with-yaml.sh" "$GITHUB_ACTION_PATH/parse-config.py" "$CONFIG" "$HOSTNAMES")"; then
             exit 1
           fi
           HOSTNAMES_DERIVED=1

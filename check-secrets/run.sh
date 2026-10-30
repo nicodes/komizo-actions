@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-parser_directory=$(mktemp -d "$RUNNER_TEMP/komizo-secret-parser.XXXXXXXX")
-trap 'rm -rf -- "$parser_directory"' EXIT
-python3 -I -m venv "$parser_directory"
-"$parser_directory/bin/python" -I -m pip --isolated install --disable-pip-version-check \
-  --no-cache-dir --no-deps --require-hashes --index-url https://pypi.org/simple \
-  -r "$GITHUB_ACTION_PATH/requirements.txt" >&2
 args=(--compose "$COMPOSE" --scoped-env-dir "$SCOPED_ENV_DIR")
 # Read the newline-separated inputs with `read -r` rather than word
 # splitting: a host-only entry contains a space after the colon, and
@@ -21,4 +15,4 @@ done <<< "$HOST_ONLY"
 if [ -n "$SECRETS_ENV_SERVICES" ]; then
   args+=(--secrets-env-services "$SECRETS_ENV_SERVICES")
 fi
-"$parser_directory/bin/python" -I "$GITHUB_ACTION_PATH/check.py" "${args[@]}"
+bash "$GITHUB_ACTION_PATH/../scripts/with-yaml.sh" "$GITHUB_ACTION_PATH/check.py" "${args[@]}"
