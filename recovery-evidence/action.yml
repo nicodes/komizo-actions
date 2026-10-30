@@ -24,5 +24,5 @@ runs:
       SOURCE_ARTIFACT_ID: ${{ inputs.artifact-id }}
       GH_TOKEN: ${{ github.token }}
     run: |-
-      cd "$PROJECT_DIRECTORY"
+      cd "$PROJECT_DIRECTORY" || exit
       python3 "$GITHUB_ACTION_PATH/evidence.py"
