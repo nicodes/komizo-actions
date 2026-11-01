@@ -52,7 +52,7 @@ jobs:
         persist-credentials: false
       timeout-minutes: 3
     - name: Select reviewed backup helpers
-      uses: nicodes/tools/helpers@0f95a6df60f740b527596ed2c7f4590e3f2d5820
+      uses: nicodes/tools/helpers@f412061a7a3f0914db9e09d1159e69504aee8706
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
@@ -158,7 +158,7 @@ jobs:
         persist-credentials: false
       timeout-minutes: 3
     - name: Select reviewed backup helpers
-      uses: nicodes/tools/helpers@0f95a6df60f740b527596ed2c7f4590e3f2d5820
+      uses: nicodes/tools/helpers@f412061a7a3f0914db9e09d1159e69504aee8706
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
