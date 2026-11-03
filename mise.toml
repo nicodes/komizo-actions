@@ -50,3 +50,6 @@ hide = true
 
 [tasks."check"]
 run = "python3 \"$TOOLS_ROOT/helpers/verification.py\" session --test unit --test integration -- mise run _check-stages"
+
+[tasks."clean"]
+run = "python3 \"$TOOLS_ROOT/helpers/clean.py\" --path .artifacts/build --path .artifacts/venv --path target"
