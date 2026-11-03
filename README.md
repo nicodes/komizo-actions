@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 7fcb7fa2de71224ff4e98869d15194ac9c4154c92eda22a281fc9edb3a0e7564 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 3d67fc6d902beba4ce2642bda4361414d88bd69670b9ba94df0f48350eee4114 -->
 
 # komizo Actions
 
@@ -13,3 +13,7 @@ Use recovery-evidence with exact completed run and artifact IDs to verify encryp
 Generic SDK setup, Godot installation, container publication, dependency maintenance and source scanning live in [tools](https://github.com/nicodes/tools). Deployment adapters do not require a development recipe, SDK lock or hosted Komizo account.
 
 For development, install mise and check out nicodes/tools at 0f95a6df60f740b527596ed2c7f4590e3f2d5820 into .ci-tools, then run mise install and mise run check. Product-owned tasks retain all parser, secret handling, release integrity, SSH transport and workflow checks.
+
+## Contributor task interface
+
+Contributor tool versions and task entry points live in the native Mise configuration. Use `mise run lint` for source checks, `mise run test` for the applicable behavioral tests, and `mise run check` for the complete supported gate. `mise run clean` removes declared generated outputs while preserving source, credentials and retained data. This package has no application development service.
