@@ -14,12 +14,15 @@ import tarfile
 import tempfile
 import tomllib
 
+sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1]
 SHA=re.compile('[a-f0-9]{40}')
 WORKFLOWS={'backup':'backup.yml','recovery':'recovery.yml','security':'security-scan.yml','production':'production-verification.yml','paid':'production-verification.yml'}
 
 
 def capture(arguments,root=None,environment=None,timeout=30):
+    if arguments and arguments[0]=='git':
+        arguments=['git','-c','core.hooksPath='+os.devnull,'-c','core.fsmonitor=false',*arguments[1:]]
     return subprocess.check_output(arguments,cwd=root,env=environment,text=True,timeout=timeout).strip()
 
 
@@ -35,26 +38,50 @@ def tools_modules(tools):
     return operational_workflows,node_component,images
 
 
+def checked_checkout(checkout,name,commit,environment):
+    checkout=checkout.absolute()
+    if checkout.is_symlink() or any(parent.is_symlink() for parent in checkout.parents) or (checkout/'.git').is_symlink():
+        raise ValueError('operational SDK sources must not traverse links')
+    def git(*arguments):
+        return capture(['git','-c','core.hooksPath='+os.devnull,'-c','core.fsmonitor=false',
+            '-C',str(checkout),*arguments],environment=environment)
+    if Path(git('rev-parse','--show-toplevel')).resolve()!=checkout.resolve() or git('rev-parse','HEAD')!=commit:
+        raise ValueError('operational checkout differs from its reviewed pin')
+    if git('remote','get-url','origin') not in ('https://github.com/nicodes/'+name,'https://github.com/nicodes/'+name+'.git'):
+        raise ValueError('operational checkout has another source authority')
+    if git('status','--porcelain','--untracked-files=all','--ignored=matching'):
+        raise ValueError('operational SDK source contains modified or unexpected files')
+
+
+def runtime_environment(root,tools,environment):
+    return dict(environment,MISE_AUTO_INSTALL='false',MISE_EXEC_AUTO_INSTALL='false',MISE_TRUSTED_CONFIG_PATHS=str(root),
+        TOOLS_ROOT=str(tools.resolve()),KOMIZO_ACTIONS_ROOT=str(ROOT),PYTHONDONTWRITEBYTECODE='1',
+        EXPECTED_REVISION=environment['GITHUB_SHA'],APP_VERSION=environment['GITHUB_SHA'],
+        PLAYWRIGHT_BROWSERS_PATH=str(root/'.artifacts/playwright'))
+
+
 def authority(root,tools,operation,selected,environment,lookup=None):
     lookup=lookup or (lambda path:capture(['gh','api',path]))
     repository=environment.get('GITHUB_REPOSITORY','')
     revision=environment.get('GITHUB_SHA','')
-    if (not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*',repository)
+    if (operation not in WORKFLOWS or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*',repository)
             or not SHA.fullmatch(revision) or environment.get('GITHUB_REF')!='refs/heads/main'
             or environment.get('GITHUB_EVENT_NAME') not in {'workflow_dispatch','schedule'}
             or environment.get('GITHUB_WORKFLOW_SHA')!=revision
             or environment.get('GITHUB_WORKFLOW_REF')!=repository+'/.github/workflows/'+WORKFLOWS[operation]+'@refs/heads/main'
             or capture(['git','rev-parse','HEAD'],root,environment)!=revision):
         raise ValueError('operational effects require their exact trusted-main workflow source')
+    if any(not re.fullmatch('[1-9][0-9]{0,19}',environment.get(key,'')) for key in ['GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT']):
+        raise ValueError('operational effects require an identified Actions execution')
     if operation=='paid' and environment['GITHUB_EVENT_NAME']!='workflow_dispatch':raise ValueError('paid checks require explicit manual dispatch')
     if capture(['git','status','--porcelain','--untracked-files=no'],root,environment):raise ValueError('operational native source was modified')
     revisions={name:environment.get(key,'') for name,key in [('tools','TOOLS_REF'),('komizo-actions','KOMIZO_REF')]}
     for name,commit in revisions.items():
         if not SHA.fullmatch(commit):raise ValueError('operational automation requires immutable pins')
         checkout=tools if name=='tools' else ROOT
-        if capture(['git','rev-parse','HEAD'],checkout,environment)!=commit:raise ValueError('operational checkout differs from its reviewed pin')
+        checked_checkout(checkout,name,commit,environment)
         response=json.loads(lookup(f'repos/nicodes/{name}/compare/{commit}...main'))
-        if response.get('status') not in {'ahead','identical'}:raise ValueError('operational automation must first be accepted on main')
+        if not isinstance(response,dict) or response.get('status') not in {'ahead','identical'}:raise ValueError('operational automation must first be accepted on main')
     workflow,_,_=tools_modules(tools)
     config=tomllib.loads((root/'cookbook.toml').read_text())
     data=workflow.declaration(root,config)
@@ -63,8 +90,11 @@ def authority(root,tools,operation,selected,environment,lookup=None):
     record=next((item for item in data.get('paid',[]) if item['id']==selected),None) if operation=='paid' else data.get(operation)
     if record is None:raise ValueError('this operational role has no actual native implementation')
     if operation=='paid':
-        event=json.loads(Path(environment['GITHUB_EVENT_PATH']).read_text())
-        if event.get('inputs',{}).get(selected) not in {True,'true'}:raise ValueError('paid native check was not explicitly requested')
+        path=Path(environment['GITHUB_EVENT_PATH'])
+        if path.is_symlink() or not path.is_file() or path.stat().st_size>1048576:raise ValueError('paid dispatch metadata must be bounded')
+        event=json.loads(path.read_text())
+        if not isinstance(event,dict) or not isinstance(event.get('inputs',{}),dict):raise ValueError('paid dispatch metadata is invalid')
+        if event.get('inputs',{}).get(selected) not in (True,'true'):raise ValueError('paid native check was not explicitly requested')
     expected=workflow.workflow_files(root,revisions['tools'],config)
     path='.github/workflows/'+WORKFLOWS[operation]
     if (root/path).read_text()!=expected[path]:raise ValueError('operational caller differs from its canonical authority contract')
@@ -72,12 +102,16 @@ def authority(root,tools,operation,selected,environment,lookup=None):
         raise ValueError('operational runner/deadline differs from native policy')
     if environment.get('OPERATION_ENVIRONMENT','')!=record.get('environment',''):
         raise ValueError('operational approval environment differs from native policy')
+    if operation=='security' and environment.get('OPERATION_REPORT_TIMEOUT')!=str(record.get('report_timeout',5)):
+        raise ValueError('audit report deadline differs from native policy')
     if operation in {'backup','production','paid'}:
         current=json.loads(lookup(f'repos/{repository}/git/ref/heads/main')).get('object',{}).get('sha')
         if current!=revision:raise ValueError('operational source is no longer current main')
     if operation=='paid' and record.get('deployment_required'):
         runs=json.loads(lookup(f'repos/{repository}/actions/workflows/cd.yml/runs?head_sha={revision}&status=success&per_page=100'))
-        if not any(value.get('head_sha')==revision and value.get('head_branch')=='main' and value.get('conclusion')=='success' for value in runs.get('workflow_runs',[])):
+        if not any(value.get('head_sha')==revision and value.get('head_branch')=='main' and value.get('conclusion')=='success'
+                and value.get('path')=='.github/workflows/cd.yml' and value.get('event') in {'push','workflow_dispatch'}
+                and type(value.get('run_attempt')) is int and value['run_attempt']>0 for value in runs.get('workflow_runs',[])):
             raise ValueError('paid production check requires a successful deployment of this exact revision')
     return config,data,record
 
@@ -93,8 +127,8 @@ def pinned(arguments,root,environment,timeout=300):
 def native(root,record,environment,run=pinned):
     kind=record['runner'];path=record['path']
     if kind=='cargo-test':
-        arguments=['cargo','test','--locked','--manifest-path',path,'--test',record['target'],record['filter'],'--','--ignored','--exact','--nocapture']
-    elif kind=='cargo-run':arguments=['cargo','run','--locked','--manifest-path',path,'--bin',record['binary'],'--',*record.get('args',[])]
+        arguments=['cargo','test','--locked','--offline','--manifest-path',path,'--test',record['target'],record['filter'],'--','--ignored','--exact','--nocapture']
+    elif kind=='cargo-run':arguments=['cargo','run','--locked','--offline','--manifest-path',path,'--bin',record['binary'],'--',*record.get('args',[])]
     else:arguments=[{'python':'python3','node':'node','bun':'bun','bash':'bash'}[kind],path,*record.get('args',[])]
     run(arguments,root,dict(environment,**record.get('environment',{})),record.get('timeout',180))
 
@@ -102,14 +136,14 @@ def native(root,record,environment,run=pinned):
 def prepare(root,tools,config,record,operation,environment):
     _,node,images=tools_modules(tools)
     pins=tomllib.loads((root/'mise.toml').read_text())['tools']
-    prepare=record.get('prepare',{}) if operation!='paid' else {'rust':True,'native':record.get('prepare',[])}
+    prepare=record.get('prepare',{}) if operation!='paid' else {'native':record.get('prepare',[])}
     tools_needed={'python'}
     checks=[record['check']] if operation=='paid' else record.get('checks',[])
     for check in [*checks,*prepare.get('native',[])]:
         if check['runner'] in {'node','bun'}:tools_needed.add(check['runner'])
         if check['runner'].startswith('cargo-'):tools_needed.add('rust')
     if prepare.get('rust'):tools_needed.add('rust')
-    packages=config.get('node',{}).get('packages',[])
+    packages=[node.validate(value,root)[0] for value in config.get('node',{}).get('packages',[])]
     selected=[item for item in packages if item['directory'] in prepare.get('packages',[])]
     if {item['directory'] for item in selected}!=set(prepare.get('packages',[])):raise ValueError('operational dependency preparation must select real native packages')
     for package in selected:tools_needed.add('bun' if package.get('manager','npm')=='bun' else 'node')
@@ -119,10 +153,12 @@ def prepare(root,tools,config,record,operation,environment):
         tools_needed.update(adapter.required_tools(root,config,'security'))
         selected=packages
     if not tools_needed<=pins.keys():raise ValueError('operational SDKs require exact native Mise pins')
-    environment.update(MISE_AUTO_INSTALL='false',MISE_EXEC_AUTO_INSTALL='false',MISE_TRUSTED_CONFIG_PATHS=str(root),
-        TOOLS_ROOT=str(tools.resolve()),KOMIZO_ACTIONS_ROOT=str(ROOT),PYTHONDONTWRITEBYTECODE='1',
-        EXPECTED_REVISION=environment['GITHUB_SHA'],APP_VERSION=environment['GITHUB_SHA'],PLAYWRIGHT_BROWSERS_PATH=str(root/'.artifacts/playwright'))
+    environment=runtime_environment(root,tools,environment)
     execute(['mise','install',*sorted(tools_needed)],root,environment)
+    manifests=sorted({check['path'] for check in checks if check['runner'].startswith('cargo-')})
+    if manifests:
+        import rust_component
+        rust_component.setup(root,[{'manifest':manifest} for manifest in manifests],environment,pinned)
     node.install(root,selected,environment,pinned)
     if prepare.get('browser'):
         directory=root/prepare['browser']
@@ -158,6 +194,7 @@ def main():
     try:
         root=Path.cwd();environment=dict(os.environ);operation=environment['OPERATION']
         config,data,record=authority(root,args.tools,operation,environment.get('OPERATION_CHECK',''),environment)
+        environment=runtime_environment(root,args.tools,environment)
         if args.command=='plan':
             outputs({'project':data['project'],'backup':record.get('config',''),
                 'allowed-products':json.dumps([data['project']]),'evidence':'\n'.join(record.get('evidence',[]))},environment)
@@ -166,9 +203,10 @@ def main():
             execute([sys.executable,str(args.tools/'helpers/report-failure.py')],root,environment)
         elif operation=='security':
             source_security(root,args.tools,config,environment)
+            for check in record.get('checks',[]):native(root,check,environment)
             if record.get('deployed_policy'):
                 driver=module('operational_deployed_scan',ROOT/'scripts/deployed_scan.py')
-                driver.scan(root,root/record['deployed_policy'],args.tools)
+                driver.scan(root,root/record['deployed_policy'],args.tools,environment=environment)
         elif operation=='production':
             for check in record['checks']:native(root,check,environment)
         elif operation=='paid':

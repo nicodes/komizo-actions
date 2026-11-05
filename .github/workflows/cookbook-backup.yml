@@ -48,6 +48,7 @@ jobs:
       OPERATION_TIMEOUT: ${{ inputs['timeout-minutes'] }}
       OPERATION_ENVIRONMENT: ${{ inputs.environment }}
       GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: '1'
       MISE_AUTO_INSTALL: 'false'
       MISE_EXEC_AUTO_INSTALL: 'false'
       MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
@@ -72,6 +73,10 @@ jobs:
         persist-credentials: false
         fetch-depth: 0
         path: _operation_actions
+    - name: Prepare the pinned configuration parser
+      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      with:
+        tools: python
     - name: Admit exact trusted main and bounded native operational policy
       id: plan
       shell: bash
