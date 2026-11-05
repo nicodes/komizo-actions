@@ -1,0 +1,68 @@
+name: Report application delivery
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      validation:
+        type: string
+        required: true
+      publication:
+        type: string
+        required: true
+      deployment:
+        type: string
+        required: true
+      deployment-url:
+        type: string
+        required: true
+    secrets:
+      DISCORD_WEBHOOK_URL:
+        required: false
+permissions: {}
+jobs:
+  report:
+    if: inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure'
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: nicodes/tools
+          ref: ${{ inputs.tools-ref }}
+          path: _delivery_cookbook
+          persist-credentials: false
+      - name: Report failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 _delivery_cookbook/helpers/report-failure.py
+  notify:
+    if: inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure'
+    runs-on: ubuntu-slim
+    timeout-minutes: 2
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: nicodes/komizo-actions
+          ref: ${{ inputs.komizo-ref }}
+          path: _komizo
+          persist-credentials: false
+      - uses: ./_komizo/notify-discord
+        continue-on-error: true
+        timeout-minutes: 1
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          deployment-url: ${{ inputs.deployment-url }}
+          environment: production
+          status: ${{ inputs.deployment == 'success' && 'success' || 'failure' }}
+          revision: ${{ github.sha }}

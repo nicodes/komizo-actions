@@ -1,0 +1,47 @@
+name: Publish accepted application images
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      source:
+        type: string
+        required: true
+      project:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      timeout-minutes:
+        type: number
+        required: true
+permissions: {}
+jobs:
+  publish:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      attestations: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _publication_actions
+        persist-credentials: false
+    - uses: ./_publication_actions/application-publication
+      with:
+        tools-ref: ${{ inputs.tools-ref }}
+        komizo-ref: ${{ inputs.komizo-ref }}
+        source: ${{ inputs.source }}
+        project: ${{ inputs.project }}
+      env:
+        GH_TOKEN: ${{ github.token }}

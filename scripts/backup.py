@@ -91,6 +91,9 @@ def export(project, config, tools, directory, environment):
             destination.chmod(0o600)
         else:
             helper(tools, 'receive-backup').receive(archive, directory / 'export')
+        if environment.get('GITHUB_OUTPUT'):
+            with open(environment['GITHUB_OUTPUT'], 'a') as output:
+                output.write('has-export=' + str(not is_absence).lower() + '\n')
     finally:
         if incoming is not None:
             incoming.close()

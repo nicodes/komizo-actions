@@ -1,0 +1,105 @@
+name: Deliver accepted application
+description: Serialized current-main admission, encrypted backup, immutable release activation and health checks
+inputs:
+  tools-ref:
+    description: Accepted full cookbook source commit
+    required: true
+  project:
+    description: Caller-owned application slug
+    required: true
+  declaration:
+    description: Tracked native delivery declaration
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Confirm current main before any host effects
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/require-current-deployment.py"
+    - name: Require accepted cookbook authority
+      shell: bash
+      env:
+        TOOLS_REF: ${{ inputs.tools-ref }}
+      run: |
+        set -euo pipefail
+        [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+        relation="$(gh api "repos/nicodes/tools/compare/$TOOLS_REF...main" --jq .status)"
+        [[ "$relation" == ahead || "$relation" == identical ]]
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        path: _delivery_cookbook
+        persist-credentials: false
+    - name: Read bounded native delivery declaration
+      id: plan
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        DECLARATION: ${{ inputs.declaration }}
+      run: python3 "$GITHUB_ACTION_PATH/plan.py"
+    - uses: nicodes/komizo-actions/connect@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
+      with:
+        user: komizo-${{ inputs.project }}
+      timeout-minutes: 3
+    - name: Capture the verified encrypted pre-deploy snapshot
+      id: backup
+      if: steps.plan.outputs.backup != ''
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        BACKUP_CONFIG: ${{ steps.plan.outputs.backup }}
+        TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"
+      timeout-minutes: 15
+    - name: Upload the encrypted snapshot
+      if: steps.plan.outputs.upload == 'true' && steps.backup.outputs.has-export == 'true'
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        BACKUP_ALLOWED_SLUGS: ${{ steps.plan.outputs.allowed-products }}
+        TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" upload --project "$PROJECT"
+      timeout-minutes: 10
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: steps.plan.outputs.backup != ''
+      with:
+        name: backup-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .artifacts/backup/
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
+      timeout-minutes: 10
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: host-release-${{ github.sha }}
+        path: .artifacts/komizo-release
+      timeout-minutes: 5
+    - name: Deploy immutable accepted images
+      uses: nicodes/komizo-actions/deploy@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
+      with:
+        release-manifest: .artifacts/komizo-release/manifest.json
+        version: ${{ github.sha }}
+        registry-user: ${{ github.repository_owner }}
+        registry-token: ${{ env.KOMIZO_REGISTRY_TOKEN }}
+        health-urls: ${{ steps.plan.outputs.health-urls }}
+      timeout-minutes: 25
+    - name: Verify product readiness contract
+      if: steps.plan.outputs.readiness != ''
+      shell: bash
+      env:
+        READINESS: ${{ steps.plan.outputs.readiness }}
+        EXPECTED_REVISION: ${{ github.sha }}
+      run: python3 "$READINESS"
+      timeout-minutes: 3
+    - name: Record owner production acceptance status
+      shell: bash
+      run: printf '%s\n' 'Availability checks passed. Authenticated account acceptance must be recorded separately.' >> "$GITHUB_STEP_SUMMARY"
+    - name: Bounded deployment diagnostics
+      if: failure() && steps.plan.outputs.diagnostics == 'true'
+      continue-on-error: true
+      shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+      run: ssh -o BatchMode=yes -o ConnectTimeout=15 deploy-target doas "/usr/local/bin/diagnose-$PROJECT" 200
+      timeout-minutes: 3
