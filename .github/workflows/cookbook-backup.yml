@@ -11,6 +11,9 @@ name: Capture routine encrypted backup
       declaration:
         type: string
         required: true
+      step-timeouts:
+        type: string
+        required: true
       runner:
         type: string
         required: true
@@ -21,6 +24,9 @@ name: Capture routine encrypted backup
         type: string
         required: false
         default: ''
+      report-timeout:
+        type: number
+        required: true
     secrets:
       KOMIZO_DEPLOY_KEY:
         required: false
@@ -46,7 +52,9 @@ jobs:
       OPERATION_CHECK: ''
       OPERATION_RUNNER: ${{ inputs.runner }}
       OPERATION_TIMEOUT: ${{ inputs['timeout-minutes'] }}
+      OPERATION_STEP_TIMEOUTS: ${{ inputs['step-timeouts'] }}
       OPERATION_ENVIRONMENT: ${{ inputs.environment }}
+      OPERATION_REPORT_TIMEOUT: ${{ inputs['report-timeout'] }}
       GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: '1'
       MISE_AUTO_INSTALL: 'false'
@@ -55,11 +63,13 @@ jobs:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.artifacts/playwright
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
         fetch-depth: 0
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/tools
         ref: ${{ inputs.tools-ref }}
@@ -67,6 +77,7 @@ jobs:
         fetch-depth: 0
         path: _operation_cookbook
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
@@ -74,32 +85,36 @@ jobs:
         fetch-depth: 0
         path: _operation_actions
     - name: Prepare the pinned configuration parser
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
       uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
       with:
         tools: python
     - name: Admit exact trusted main and bounded native operational policy
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).plan }}
       id: plan
       shell: bash
       run: python3 _operation_actions/scripts/operational.py plan
     - uses: ./_operation_actions/connect
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).connect }}
       with:
         user: komizo-${{ steps.plan.outputs.project }}
       env:
         KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
         KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
         KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
-      timeout-minutes: 3
     - name: Prepare private routine operation frame
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).frame }}
       shell: bash
       run: |
         set -euo pipefail
         install -d -m 700 "$RUNNER_TEMP/komizo-backup-proof"
         printf 'KOMIZO_BACKUP_PROOF_FILE=%s\n' "$RUNNER_TEMP/komizo-backup-proof/operation.frame" >> "$GITHUB_ENV"
     - uses: ./_operation_actions/backup-proof
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).proof }}
       with:
         output: ${{ runner.temp }}/komizo-backup-proof/operation.frame
-      timeout-minutes: 2
     - name: Capture only verified encrypted host output
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).capture }}
       id: capture
       shell: bash
       env:
@@ -107,8 +122,8 @@ jobs:
         BACKUP_CONFIG: ${{ steps.plan.outputs.backup }}
         TOOLS_ROOT: ${{ github.workspace }}/_operation_cookbook
       run: python3 _operation_actions/scripts/backup.py export --project "$PROJECT" --config "$BACKUP_CONFIG"
-      timeout-minutes: 15
     - name: Upload only received encrypted backup
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).upload }}
       if: ${{ steps.capture.outputs.has-export == 'true' }}
       shell: bash
       env:
@@ -120,16 +135,16 @@ jobs:
         BACKUP_S3_HOSTNAME: ${{ vars.BACKUP_S3_HOSTNAME }}
         BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
       run: python3 _operation_actions/scripts/backup.py upload --project "$PROJECT"
-      timeout-minutes: 10
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
       with:
         name: backup-${{ github.run_id }}-${{ github.run_attempt }}
         path: .artifacts/backup/
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 30
-      timeout-minutes: 10
     - name: Remove private routine authority frame
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).cleanup }}
       if: always()
       shell: bash
       run: rm -f "$RUNNER_TEMP/komizo-backup-proof/operation.frame"
@@ -137,7 +152,7 @@ jobs:
     needs: backup
     if: failure()
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 5
+    timeout-minutes: ${{ inputs['report-timeout'] }}
     permissions:
       contents: read
       issues: write
@@ -145,11 +160,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
         fetch-depth: 0
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         repository: nicodes/tools
         ref: ${{ inputs.tools-ref }}
@@ -157,12 +174,19 @@ jobs:
         fetch-depth: 0
         path: _operation_cookbook
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
         persist-credentials: false
         fetch-depth: 0
         path: _operation_actions
+    - name: Prepare the pinned report parser
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_setup }}
+      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      with:
+        tools: python
     - name: Report bounded backup failure
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report }}
       shell: bash
       run: python3 _operation_cookbook/helpers/report-failure.py

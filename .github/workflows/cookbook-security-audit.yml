@@ -11,6 +11,9 @@ name: Audit source and deployed dependencies
       declaration:
         type: string
         required: true
+      step-timeouts:
+        type: string
+        required: true
       runner:
         type: string
         required: true
@@ -49,6 +52,7 @@ jobs:
       OPERATION_CHECK: ''
       OPERATION_RUNNER: ${{ inputs.runner }}
       OPERATION_TIMEOUT: ${{ inputs['timeout-minutes'] }}
+      OPERATION_STEP_TIMEOUTS: ${{ inputs['step-timeouts'] }}
       OPERATION_ENVIRONMENT: ${{ inputs.environment }}
       OPERATION_REPORT_TIMEOUT: ${{ inputs['report-timeout'] }}
       GH_TOKEN: ${{ github.token }}
@@ -59,11 +63,13 @@ jobs:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.artifacts/playwright
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
         fetch-depth: 0
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/tools
         ref: ${{ inputs.tools-ref }}
@@ -71,6 +77,7 @@ jobs:
         fetch-depth: 0
         path: _operation_cookbook
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
@@ -78,25 +85,32 @@ jobs:
         fetch-depth: 0
         path: _operation_actions
     - name: Prepare the pinned configuration parser
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
       uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
       with:
         tools: python
     - name: Admit exact trusted main and bounded native operational policy
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).plan }}
       id: plan
       shell: bash
       run: python3 _operation_actions/scripts/operational.py plan
-    - name: Prepare only declared operational SDKs and frozen dependencies
-      shell: bash
-      run: mise exec -- python3 _operation_actions/scripts/operational.py prepare
     - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).registry }}
       with:
         registry: ghcr.io
         username: ${{ github.repository_owner }}
         password: ${{ github.token }}
-    - name: Run actual source and deployed audit
+    - name: Prepare dependencies and audit declared source
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).source }}
       shell: bash
-      run: mise exec -- python3 _operation_actions/scripts/operational.py run
+      run: mise exec -- python3 _operation_actions/scripts/operational.py source
+    - name: Audit actual deployed runtime dependencies
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).deployed }}
+      if: ${{ steps.plan.outputs.deployed == 'true' }}
+      shell: bash
+      run: mise exec -- python3 _operation_actions/scripts/operational.py deployed
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
       if: ${{ always() && (steps.plan.outputs.evidence != '' || true) }}
       with:
         name: security-${{ github.run_id }}-${{ github.run_attempt }}
@@ -116,11 +130,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
         fetch-depth: 0
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         repository: nicodes/tools
         ref: ${{ inputs.tools-ref }}
@@ -128,12 +144,19 @@ jobs:
         fetch-depth: 0
         path: _operation_cookbook
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
         persist-credentials: false
         fetch-depth: 0
         path: _operation_actions
+    - name: Prepare the pinned report parser
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_setup }}
+      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      with:
+        tools: python
     - name: Report bounded audit failure
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report }}
       shell: bash
       run: python3 _operation_cookbook/helpers/report-failure.py

@@ -102,8 +102,10 @@ def authority(root,tools,operation,selected,environment,lookup=None):
         raise ValueError('operational runner/deadline differs from native policy')
     if environment.get('OPERATION_ENVIRONMENT','')!=record.get('environment',''):
         raise ValueError('operational approval environment differs from native policy')
-    if operation=='security' and environment.get('OPERATION_REPORT_TIMEOUT')!=str(record.get('report_timeout',5)):
+    if operation in {'backup','security'} and environment.get('OPERATION_REPORT_TIMEOUT')!=str(record.get('report_timeout',5)):
         raise ValueError('audit report deadline differs from native policy')
+    if json.loads(environment.get('OPERATION_STEP_TIMEOUTS','{}'))!=workflow.step_timeouts(operation,record):
+        raise ValueError('operational step deadlines differ from native policy')
     if operation in {'backup','production','paid'}:
         current=json.loads(lookup(f'repos/{repository}/git/ref/heads/main')).get('object',{}).get('sha')
         if current!=revision:raise ValueError('operational source is no longer current main')
@@ -188,7 +190,7 @@ def outputs(values,environment):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['plan','prepare','run','report'])
+    parser.add_argument('command',choices=['plan','prepare','run','source','deployed','report'])
     parser.add_argument('--tools',type=Path,default=Path('_operation_cookbook'))
     args=parser.parse_args()
     try:
@@ -197,16 +199,20 @@ def main():
         environment=runtime_environment(root,args.tools,environment)
         if args.command=='plan':
             outputs({'project':data['project'],'backup':record.get('config',''),
-                'allowed-products':json.dumps([data['project']]),'evidence':'\n'.join(record.get('evidence',[]))},environment)
+                'allowed-products':json.dumps([data['project']]),'evidence':'\n'.join(record.get('evidence',[])),
+                'deployed':str(bool(record.get('deployed_policy'))).lower()},environment)
         elif args.command=='prepare':prepare(root,args.tools,config,record,operation,environment)
         elif args.command=='report':
             execute([sys.executable,str(args.tools/'helpers/report-failure.py')],root,environment)
-        elif operation=='security':
+        elif args.command=='source':
+            if operation!='security':raise ValueError('source audits require their declared security role')
+            prepare(root,args.tools,config,record,operation,environment)
             source_security(root,args.tools,config,environment)
             for check in record.get('checks',[]):native(root,check,environment)
-            if record.get('deployed_policy'):
-                driver=module('operational_deployed_scan',ROOT/'scripts/deployed_scan.py')
-                driver.scan(root,root/record['deployed_policy'],args.tools,environment=environment)
+        elif args.command=='deployed':
+            if operation!='security' or not record.get('deployed_policy'):raise ValueError('deployed audits require their actual native image policy')
+            driver=module('operational_deployed_scan',ROOT/'scripts/deployed_scan.py')
+            driver.scan(root,root/record['deployed_policy'],args.tools,environment=environment)
         elif operation=='production':
             for check in record['checks']:native(root,check,environment)
         elif operation=='paid':

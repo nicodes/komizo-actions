@@ -11,6 +11,9 @@ name: Verify encrypted recovery transport
       declaration:
         type: string
         required: true
+      step-timeouts:
+        type: string
+        required: true
       runner:
         type: string
         required: true
@@ -45,6 +48,7 @@ jobs:
       OPERATION_CHECK: ''
       OPERATION_RUNNER: ${{ inputs.runner }}
       OPERATION_TIMEOUT: ${{ inputs['timeout-minutes'] }}
+      OPERATION_STEP_TIMEOUTS: ${{ inputs['step-timeouts'] }}
       OPERATION_ENVIRONMENT: ${{ inputs.environment }}
       GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: '1'
@@ -54,11 +58,13 @@ jobs:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.artifacts/playwright
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
         fetch-depth: 0
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/tools
         ref: ${{ inputs.tools-ref }}
@@ -66,6 +72,7 @@ jobs:
         fetch-depth: 0
         path: _operation_cookbook
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
@@ -73,19 +80,23 @@ jobs:
         fetch-depth: 0
         path: _operation_actions
     - name: Prepare the pinned configuration parser
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
       uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
       with:
         tools: python
     - name: Admit exact trusted main and bounded native operational policy
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).plan }}
       id: plan
       shell: bash
       run: python3 _operation_actions/scripts/operational.py plan
     - name: Verify exact completed encrypted transport without restoration
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).verify }}
       uses: ./_operation_actions/recovery-evidence
       with:
         source-run-id: ${{ inputs.source-run-id }}
         artifact-id: ${{ inputs.artifact-id }}
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
       with:
         name: recovery-transport-${{ github.run_id }}
         path: .artifacts/recovery/transport.json

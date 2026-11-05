@@ -1,4 +1,5 @@
 import copy
+from contextlib import chdir
 import importlib.util
 import json
 import os
@@ -6,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -56,13 +58,18 @@ class OperationalAuthority(unittest.TestCase):
                         secrets={}, variables={})
         (self.root / 'deploy/delivery.json').write_text(json.dumps(delivery))
         self.data = dict(version=1, project='demo',
-            security=dict(runner='ubuntu-24.04', timeout_minutes=110, report_timeout=5),
+            security=dict(runner='ubuntu-24.04', timeout_minutes=110, report_timeout=5,
+                          deployed_policy='deploy/deployed-scan.json'),
             production=dict(runner='ubuntu-24.04', timeout_minutes=45, environment='Production',
                             checks=[dict(runner='python', path='deploy/health.py')]),
             paid=[dict(id='model_smoke', description='Run the existing live assertion', runner='ubuntu-24.04',
                        timeout_minutes=20, environment='Production', deployment_required=True,
                        check=dict(runner='cargo-run', path='api/Cargo.toml', binary='model-smoke',
                                   args=['--live'], timeout=1200))])
+        (self.root / 'deploy/scan.json').write_text(json.dumps(dict(repository='owner/demo',
+            image_base='ghcr.io/owner/demo',components=['gate'],environment='production')))
+        (self.root / 'deploy/deployed-scan.json').write_text(json.dumps(dict(version=1,
+            deployment='deploy/scan.json',rust={},go={'gate':dict(forbidden=[])})))
         (self.root / 'deploy/operations.json').write_text(json.dumps(self.data))
         (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.json"\n[operations]\ndefinition="deploy/operations.json"\n')
         for name, text in workflows.workflow_files(self.root, tools_sha, self.config).items():
@@ -79,7 +86,8 @@ class OperationalAuthority(unittest.TestCase):
             GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/security-scan.yml@refs/heads/main',
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_PATH=str(self.event),
             TOOLS_REF=tools_sha, KOMIZO_REF=actions_sha, DECLARATION='deploy/operations.json',
-            OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='', OPERATION_REPORT_TIMEOUT='5')
+            OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='', OPERATION_REPORT_TIMEOUT='5',
+            OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('security',self.data['security'])))
 
     def lookup(self, path):
         if '/compare/' in path:
@@ -96,7 +104,8 @@ class OperationalAuthority(unittest.TestCase):
 
     def paid_environment(self):
         return self.environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/production-verification.yml@refs/heads/main',
-            OPERATION_TIMEOUT='20', OPERATION_ENVIRONMENT='Production')
+            OPERATION_TIMEOUT='20', OPERATION_ENVIRONMENT='Production',
+            OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('paid',self.data['paid'][0])))
 
     def test_actual_clean_git_sources_and_canonical_caller_are_admitted(self):
         _, data, record = self.admit()
@@ -108,7 +117,7 @@ class OperationalAuthority(unittest.TestCase):
                         dict(GITHUB_WORKFLOW_SHA='f' * 40), dict(GITHUB_EVENT_NAME='pull_request'),
                         dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/ci.yml@refs/heads/main'),
                         dict(GITHUB_RUN_ATTEMPT='0'), dict(OPERATION_RUNNER='ubuntu-22.04'),
-                        dict(OPERATION_TIMEOUT='111'), dict(OPERATION_REPORT_TIMEOUT='11'),
+                        dict(OPERATION_TIMEOUT='111'), dict(OPERATION_REPORT_TIMEOUT='11'), dict(OPERATION_STEP_TIMEOUTS='{}'),
                         dict(OPERATION_ENVIRONMENT='Production'), dict(DECLARATION='deploy/other.json'),
                         dict(TOOLS_REF='main')]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
@@ -203,6 +212,29 @@ class OperationalAuthority(unittest.TestCase):
         production = (root / 'cookbook-production-check.yml').read_text()
         preparation = production.split('    - name: Run owned production assertions')[0]
         self.assertNotIn('secrets.OPENROUTER_API_KEY', preparation)
+
+    def test_source_and_deployed_audits_have_separate_explicit_execution_phases(self):
+        effects=[]
+        deployed=SimpleNamespace(scan=lambda *args,**kwargs:effects.append('deployed'))
+        original_authority=driver.authority
+        with chdir(self.root), patch.dict(os.environ,self.environment | {'OPERATION':'security'},clear=True), \
+                patch.object(driver,'ROOT',self.actions), \
+                patch.object(driver,'authority',side_effect=lambda root,tools,operation,selected,environment:
+                    original_authority(root,tools,operation,selected,environment,self.lookup)), \
+                patch.object(driver,'tools_modules',return_value=(workflows,None,None)), \
+                patch.object(driver,'prepare',side_effect=lambda *args:effects.append('prepare')), \
+                patch.object(driver,'source_security',side_effect=lambda *args:effects.append('source')), \
+                patch.object(driver,'module',return_value=deployed):
+            with patch.object(sys,'argv',['operational.py','source','--tools',str(self.tools)]):
+                driver.main()
+            self.assertEqual(effects,['prepare','source'])
+            effects.clear()
+            with patch.object(sys,'argv',['operational.py','deployed','--tools',str(self.tools)]):
+                driver.main()
+            self.assertEqual(effects,['deployed'])
+        text=(Path(__file__).parents[1]/'.github/workflows/cookbook-security-audit.yml').read_text()
+        self.assertIn("fromJSON(inputs['step-timeouts']).source",text)
+        self.assertIn("fromJSON(inputs['step-timeouts']).deployed",text)
 
 
 if __name__ == '__main__':
