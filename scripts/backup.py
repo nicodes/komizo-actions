@@ -47,34 +47,17 @@ def declaration(path, project):
     return value
 
 
-def private_directory(path):
-    if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
-        raise ValueError('backup output must not traverse symlinks')
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    if not path.is_dir() or path.stat().st_mode & 0o077:
-        raise ValueError('backup output directory must be private')
+
+spec = importlib.util.spec_from_file_location('komizo_backup_transport', Path(__file__).with_name('backup_transport.py'))
+transport = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(transport)
 
 
 def export(project, config, tools, directory, environment):
-    private_directory(directory)
-    archive = directory / 'export.tar'
     frame = environment.get('KOMIZO_BACKUP_PROOF_FILE')
-    command = config.get('proof_exporter') if frame else None
-    command = command or config.get('exporter', f'export-{project}-backup')
-    incoming = None
-    owned_archive = False
-    try:
-        if frame and config.get('proof_exporter'):
-            path = Path(frame)
-            if not path.is_absolute() or path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o077:
-                raise ValueError('backup operation frame must be a private regular absolute file')
-            incoming = path.open('rb')
-        with archive.open('xb') as output:
-            owned_archive = True
-            archive.chmod(0o600)
-            subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
-                            'deploy-target', 'doas', '/usr/local/bin/' + command],
-                           stdin=incoming or subprocess.DEVNULL, stdout=output, check=True, timeout=900)
+    command = (config.get('proof_exporter') if frame else None) or config.get('exporter', f'export-{project}-backup')
+
+    def receive(archive, stage, descriptors):
         with archive.open('rb') as stream:
             is_absence = stream.read(1) == b'{'
         if is_absence:
@@ -85,20 +68,20 @@ def export(project, config, tools, directory, environment):
             actual = json.loads(archive.read_text())
             if actual != expected or any(type(actual[key]) is not type(value) for key, value in expected.items()):
                 raise ValueError('invalid first deployment absence proof')
-            destination = directory / 'first-deployment.json'
+            destination = stage / 'first-deployment.json'
             with destination.open('x') as output:
                 output.write(json.dumps(actual, indent=2) + '\n')
-            destination.chmod(0o600)
-        else:
-            helper(tools, 'receive-backup').receive(archive, directory / 'export')
-        if environment.get('GITHUB_OUTPUT'):
-            with open(environment['GITHUB_OUTPUT'], 'a') as output:
-                output.write('has-export=' + str(not is_absence).lower() + '\n')
-    finally:
-        if incoming is not None:
-            incoming.close()
-        if owned_archive:
-            archive.unlink(missing_ok=True)
+                os.fchmod(output.fileno(), 0o600)
+            return 'first-deployment.json'
+        helper(tools, 'receive-backup').receive(archive, stage / 'export')
+        return 'export'
+
+    with transport.signals():
+        role = transport.capture(Path.cwd(), directory, project, command, receive,
+            proof=Path(frame) if frame and config.get('proof_exporter') else None)
+    if environment.get('GITHUB_OUTPUT'):
+        with open(environment['GITHUB_OUTPUT'], 'a') as output:
+            output.write('has-export=' + str(role == 'export').lower() + '\n')
 
 
 def upload(project, tools, directory):
@@ -139,7 +122,7 @@ def main():
             subprocess.run([os.sys.executable, str(args.tools_root / 'helpers/restore-drill.py'),
                             '--project', args.project, '--config', str(args.restore_config),
                             '--key', str(key), *extra], check=True)
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+    except (OSError, RuntimeError, AttributeError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n')
 
 

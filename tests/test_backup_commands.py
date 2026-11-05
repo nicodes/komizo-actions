@@ -1,3 +1,4 @@
+from contextlib import chdir
 import importlib.util
 import json
 from datetime import datetime, timezone
@@ -30,46 +31,56 @@ class BackupCommands(unittest.TestCase):
         with self.assertRaises(ValueError):
             backup.declaration(None, '../other')
 
-    def test_failed_transport_cleans_only_its_own_file(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            with patch.object(backup.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'ssh')):
-                with self.assertRaises(subprocess.CalledProcessError):
-                    backup.export('demo', {}, directory, directory, {})
-            self.assertFalse((directory / 'export.tar').exists())
-            (directory / 'export.tar').write_bytes(b'retained')
-            with self.assertRaises(FileExistsError):
-                backup.export('demo', {}, directory, directory, {})
-            self.assertEqual((directory / 'export.tar').read_bytes(), b'retained')
+    def test_failed_transport_cleans_only_owned_stage_and_preserves_prior_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary, chdir(temporary):
+            root = Path(temporary); directory = root/'.artifacts/backup'
+            with patch.object(backup.transport, 'run', side_effect=SystemExit(23)):
+                with self.assertRaises(SystemExit) as failure:
+                    backup.export('demo', {}, root, directory, {})
+            self.assertEqual(failure.exception.code, 23)
+            self.assertEqual(list(directory.iterdir()), [])
+            (directory/'export.tar').write_bytes(b'retained')
+            with patch.object(backup.transport, 'run') as run, self.assertRaisesRegex(RuntimeError, 'preserving existing'):
+                backup.export('demo', {}, root, directory, {})
+            run.assert_not_called()
+            self.assertEqual((directory/'export.tar').read_bytes(), b'retained')
 
-    def test_exact_absence_proof_and_private_frame(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            frame = root / 'frame'
-            frame.write_bytes(b'private authority')
-            frame.chmod(0o600)
+    def test_exact_absence_proof_and_private_frame_publish_atomically(self):
+        with tempfile.TemporaryDirectory() as temporary, chdir(temporary):
+            root = Path(temporary); directory = root/'.artifacts/backup'
+            frame = root/'frame'; frame.write_bytes(b'private authority'); frame.chmod(0o600)
+            output = root/'output'
             expected = dict(version=1, project='demo', first_deployment=True, containers_absent=True)
-            def transport(command, **kwargs):
+            def capture(command, **kwargs):
                 self.assertEqual(command[-1], '/usr/local/bin/export-backup-demo')
                 self.assertEqual(kwargs['stdin'].read(), b'private authority')
                 kwargs['stdout'].write(json.dumps(expected).encode())
             config = dict(proof_exporter='export-backup-demo', first_deployment=['containers_absent'])
-            with patch.object(backup.subprocess, 'run', side_effect=transport):
-                backup.export('demo', config, root, root, dict(KOMIZO_BACKUP_PROOF_FILE=str(frame)))
-            self.assertEqual(json.loads((root / 'first-deployment.json').read_text()), expected)
-            self.assertEqual((root / 'first-deployment.json').stat().st_mode & 0o777, 0o600)
-            self.assertFalse((root / 'export.tar').exists())
+            with patch.object(backup.transport, 'run', side_effect=capture):
+                backup.export('demo', config, root, directory,
+                    dict(KOMIZO_BACKUP_PROOF_FILE=str(frame), GITHUB_OUTPUT=str(output)))
+            self.assertEqual(json.loads((directory/'first-deployment.json').read_text()), expected)
+            self.assertEqual((directory/'first-deployment.json').stat().st_mode & 0o777, 0o600)
+            self.assertEqual(output.read_text(), 'has-export=false\n')
+            self.assertEqual([p.name for p in directory.iterdir()], ['first-deployment.json'])
 
-    def test_tar_is_delegated_to_checked_ciphertext_receiver(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            receiver = Mock()
-            def transport(command, **kwargs):
+    def test_tar_is_checked_before_atomic_publication_and_output(self):
+        with tempfile.TemporaryDirectory() as temporary, chdir(temporary):
+            root = Path(temporary); directory = root/'.artifacts/backup'; receiver = Mock()
+            def capture(command, **kwargs):
                 self.assertEqual(kwargs['stdin'], subprocess.DEVNULL)
                 kwargs['stdout'].write(b'tar fixture')
-            with patch.object(backup.subprocess, 'run', side_effect=transport), patch.object(backup, 'helper', return_value=receiver):
-                backup.export('demo', {}, root, root, {})
-            receiver.receive.assert_called_once_with(root / 'export.tar', root / 'export')
+            def receive(archive, target):
+                self.assertEqual(archive.read_bytes(), b'tar fixture')
+                self.assertFalse((directory/'export').exists())
+                target.mkdir(mode=0o700)
+                (target/'snapshot.cms').write_bytes(b'validated ciphertext')
+            receiver.receive.side_effect = receive
+            with patch.object(backup.transport, 'run', side_effect=capture), patch.object(backup, 'helper', return_value=receiver):
+                backup.export('demo', {}, root, directory, {})
+            receiver.receive.assert_called_once()
+            self.assertEqual((directory/'export/snapshot.cms').read_bytes(), b'validated ciphertext')
+            self.assertEqual([p.name for p in directory.iterdir()], ['export'])
 
     def test_upload_uses_receipt_time_and_explicit_project(self):
         with tempfile.TemporaryDirectory() as temporary:
