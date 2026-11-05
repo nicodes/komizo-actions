@@ -60,7 +60,8 @@ def native_policy(root, tools, name):
     config = configuration.load(root)
     if config['recipe'] != 'react-native':
         raise ValueError('this producer requires complete native React Native acceptance')
-    definition = images.definition(root, config)
+    with preview.owning_checkout(root):
+        definition = images.definition(root, config)
     if data['project'] != definition['project']:
         raise ValueError('Preview project differs from native artifact authority')
     selected = data['components']
@@ -416,7 +417,9 @@ def publication(plan, root, source_root, tools, tools_ref, incoming, environment
             ['git', '-C', str(source_root), 'diff', '--quiet', 'HEAD', '--'], timeout=10).returncode:
         raise ValueError('Preview publisher requires the clean actual selected HEAD')
     config = configuration.load(source_root)
-    policy = plan['policy']; definition = images.definition(source_root, config)
+    policy = plan['policy']
+    with preview.owning_checkout(source_root):
+        definition = images.definition(source_root, config)
     if (hashlib.sha256(tracked(source_root, 'cookbook.toml')).hexdigest() != policy['cookbook_sha256']
             or hashlib.sha256(tracked(source_root, 'mise.toml')).hexdigest() != policy['mise_sha256']
             or definition['project'] != policy['project'] or definition['image_base'] != policy['image_base']

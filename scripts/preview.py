@@ -2,6 +2,7 @@
 """Trusted Preview controller; native application code runs only in readonly Make jobs."""
 import argparse
 import base64
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -42,6 +43,17 @@ def tools_modules(tools):
     sys.path.insert(0,str(tools.resolve()/'cookbook'))
     import preview_workflows,configuration,images
     return preview_workflows,configuration,images
+
+
+@contextmanager
+def owning_checkout(root):
+    """Read trusted SDK declarations against the Git checkout that owns them."""
+    previous=Path.cwd()
+    try:
+        os.chdir(root.resolve())
+        yield
+    finally:
+        os.chdir(previous)
 
 
 def controller(environment):
@@ -172,7 +184,9 @@ def source_policy(plan,source_root,tools):
     preview,configuration,images=tools_modules(tools)
     config=configuration.load(source_root)
     policy=plan['policy']
-    definition=images.definition(source_root,config)
+    with owning_checkout(source_root):
+        definition=images.definition(source_root,config)
+        supplied=preview.declaration(source_root,config)
     if (config['recipe']!=policy['recipe'] or definition['project']!=policy['project']
             or definition['image_base']!=policy['image_base']
             or set(images.components(definition))!=set(policy['shipping_components'])
@@ -180,7 +194,7 @@ def source_policy(plan,source_root,tools):
             or config['artifacts']['definition']!=policy['artifact_definition']
             or config['artifacts'].get('release_metadata',[])!=policy['release_metadata']):
         raise ValueError('PR source cannot change the trusted Preview publication family, components or required checks')
-    if preview.declaration(source_root,config)!=policy:
+    if supplied!=policy:
         raise ValueError('PR source cannot override trusted Preview identity, credentials, origins or runner policy')
     return config,definition
 
