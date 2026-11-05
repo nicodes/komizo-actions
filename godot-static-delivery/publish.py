@@ -78,11 +78,18 @@ def publish_gate(reference,expected,root,environment,run=execute,output=capture)
     return digest_reference(reference,root,environment)
 
 
-def admit(root,tools,source,tools_ref,incoming,environment):
-    sdk=module('static_application_admission',Path(__file__).parents[1]/'scripts/application-publication.py')
+def source_environment(source,environment):
     if (environment.get('GITHUB_REF')!='refs/heads/main' or environment.get('GITHUB_EVENT_NAME') not in {'push','workflow_dispatch'}
             or source!=environment.get('GITHUB_SHA') or not re.fullmatch('[a-f0-9]{40}',source)):
         raise ValueError('static publication requires the exact final main source')
+    if environment.get('SOURCE_COMMIT',source)!=source:
+        raise ValueError('static publication source context differs from the exact final main source')
+    return dict(environment,SOURCE_COMMIT=source)
+
+
+def admit(root,tools,source,tools_ref,incoming,environment):
+    environment=source_environment(source,environment)
+    sdk=module('static_application_admission',Path(__file__).parents[1]/'scripts/application-publication.py')
     for directory,expected in [(root,source),(tools,tools_ref)]:
         if sdk.git('-C',str(directory),'rev-parse','HEAD')!=expected:raise ValueError('static publisher source or cookbook differs from its accepted pin')
         execute(['git','-C',str(directory),'diff','--exit-code','HEAD','--'],root,environment,30)
@@ -124,6 +131,7 @@ def main():
     parser.add_argument('--source',required=True);parser.add_argument('--incoming',type=Path,default=Path('.artifacts/delivery-input'))
     args=parser.parse_args();root=Path.cwd();tools=args.tools.resolve();environment=dict(os.environ)
     try:
+        environment=source_environment(args.source,environment)
         config,declaration,selected,blueprint,public,data,static=admit(root,tools,args.source,args.tools_ref,args.incoming,environment)
         reference='ghcr.io/'+selected['repository']+'-gate:'+args.source
         expected=data['images'].get(reference)
