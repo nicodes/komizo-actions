@@ -239,7 +239,8 @@ class PreviewProducer(unittest.TestCase):
         finally:os.chdir(previous)
 
     def run_publication(self,incoming,execute):
-        return producer.publication(self.plan,self.root,self.source,self.tools,self.tools_ref,incoming,self.environment,self.lookup,execute)
+        return producer.publication(self.plan,self.root,self.source,Path(os.path.relpath(self.tools)),self.tools_ref,
+            incoming,self.environment,self.lookup,execute)
 
     def test_actual_admission_staging_and_subset_publish_are_completed_before_package_effects(self):
         incoming,manifest=self.evidence();calls=[]
@@ -250,6 +251,7 @@ class PreviewProducer(unittest.TestCase):
             if command[:2]==['docker','login']:
                 self.assertEqual(options['input'],'fixture-token\n');return
             self.assertEqual(command[2],'publish');self.assertNotIn('record',command)
+            self.assertEqual(Path(command[1]),self.tools/'helpers/release.py')
             self.assertEqual(command[command.index('--components')+1:command.index('--definition')],['gate'])
             selected=Path(command[command.index('--directory')+1]);result=json.loads((selected/'release.json').read_text())
             (selected/'publication.json').write_text(json.dumps(dict(revision=self.head,tested_commit=self.head,images=result['images'])))

@@ -310,6 +310,9 @@ def bounded(command, *, tools, deadline, cwd, env, input=None):
 
 
 def publication(plan, root, source_root, tools, tools_ref, incoming, environment, lookup=api, execute=bounded):
+    # Every helper path must survive the deliberate switch to the data-only
+    # source checkout as cwd; the standalone CLI accepts relative paths.
+    tools, source_root, incoming = tools.resolve(), source_root.resolve(), incoming.resolve()
     _, configuration, images = preview.tools_modules(tools)
     if git(source_root, 'rev-parse', 'HEAD') != plan['head'] or subprocess.run(
             ['git', '-C', str(source_root), 'diff', '--quiet', 'HEAD', '--'], timeout=10).returncode:
