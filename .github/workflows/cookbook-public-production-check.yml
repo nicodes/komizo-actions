@@ -1,0 +1,102 @@
+name: Run owned production acceptance
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      declaration:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      timeout-minutes:
+        type: number
+        required: true
+      environment:
+        type: string
+        required: false
+        default: ''
+      operation:
+        type: string
+        required: true
+      check:
+        type: string
+        required: true
+permissions: {}
+jobs:
+  verify:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs['timeout-minutes'] }}
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    env:
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      KOMIZO_REF: ${{ inputs.komizo-ref }}
+      DECLARATION: ${{ inputs.declaration }}
+      OPERATION: ${{ inputs.operation }}
+      OPERATION_CHECK: ${{ inputs.check }}
+      OPERATION_RUNNER: ${{ inputs.runner }}
+      OPERATION_TIMEOUT: ${{ inputs['timeout-minutes'] }}
+      OPERATION_ENVIRONMENT: ${{ inputs.environment }}
+      GH_TOKEN: ${{ github.token }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.artifacts/playwright
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _operation_cookbook
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _operation_actions
+    - name: Admit exact trusted main and bounded native operational policy
+      id: plan
+      shell: bash
+      run: python3 _operation_actions/scripts/operational.py plan
+    - name: Select reviewed SDK installer
+      id: mise
+      shell: bash
+      env:
+        SDK_OS: ${{ runner.os }}
+        SDK_ARCH: ${{ runner.arch }}
+      run: python3 _operation_cookbook/helpers/mise-platform.py --os "$SDK_OS" --arch "$SDK_ARCH" >> "$GITHUB_OUTPUT"
+    - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+      with:
+        version: ${{ steps.mise.outputs.version }}
+        sha256: ${{ steps.mise.outputs.sha256 }}
+        install_args: python
+    - name: Prepare only declared operational SDKs and frozen dependencies
+      shell: bash
+      run: mise exec -- python3 _operation_actions/scripts/operational.py prepare
+    - name: Run owned production assertions
+      shell: bash
+      run: mise exec -- python3 _operation_actions/scripts/operational.py run
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: ${{ always() && (steps.plan.outputs.evidence != '' || false) }}
+      with:
+        name: production-verification-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.plan.outputs.evidence }}
+        include-hidden-files: true
+        if-no-files-found: ignore
+        retention-days: 7
