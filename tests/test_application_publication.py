@@ -61,10 +61,10 @@ class ApplicationPublication(unittest.TestCase):
             root = Path(temporary)
             incoming = root / 'incoming/.artifacts/release'
             incoming.mkdir(parents=True)
-            names = ['images.tar.gz', 'images.tar.gz.sha256', 'release.json']
+            names = ['images.tar.gz', 'images.tar.gz.sha256', 'images.json', 'release.json']
             for name in names:
-                (incoming / name).write_bytes(name.encode())
-            proof = dict(artifacts={'.artifacts/release/' + name: hashlib.sha256(name.encode()).hexdigest() for name in names})
+                (incoming / name).write_bytes(b'[]' if name == 'images.json' else name.encode())
+            proof = dict(artifacts={'.artifacts/release/' + name: hashlib.sha256((incoming / name).read_bytes()).hexdigest() for name in names})
             publication.stage(root / 'incoming', proof, root / 'accepted')
             self.assertEqual({path.name for path in (root / 'accepted').iterdir()}, set(names))
             (incoming / 'images.tar.gz').write_bytes(b'changed')
@@ -80,7 +80,7 @@ class ApplicationPublication(unittest.TestCase):
             root = Path(temporary)
             source = root / 'incoming/.artifacts/release'
             source.mkdir(parents=True)
-            names = ['images.tar.gz', 'images.tar.gz.sha256', 'release.json', 'components.json']
+            names = ['images.tar.gz', 'images.tar.gz.sha256', 'images.json', 'release.json', 'components.json']
             for name in names:
                 (source / name).write_bytes(b'{}')
             proof = dict(artifacts={'.artifacts/release/' + name: hashlib.sha256(b'{}').hexdigest() for name in names})

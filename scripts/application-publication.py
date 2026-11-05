@@ -52,7 +52,7 @@ def accept(proof, config, source, tools, tree, groups, jobs, environment, workfl
 
 def stage(incoming, proof, destination, metadata=()):
     source = incoming / '.artifacts/release'
-    expected = {'images.tar.gz', 'images.tar.gz.sha256', 'release.json'}
+    expected = {'images.tar.gz', 'images.tar.gz.sha256', 'images.json', 'release.json'}
     if not isinstance(metadata, (list, tuple)) or len(metadata) > 16 or len(set(metadata)) != len(metadata):
         raise ValueError('release metadata requires a bounded distinct declaration')
     for name in metadata:
@@ -68,7 +68,7 @@ def stage(incoming, proof, destination, metadata=()):
         path = source / name
         if not path.is_file() or path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
             raise ValueError('publication payload must contain only regular files')
-        if '.artifacts/release/' + name in metadata:
+        if name == 'images.json' or '.artifacts/release/' + name in metadata:
             read(path, limit=1 << 20)
         with path.open('rb') as stream:
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
