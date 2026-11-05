@@ -83,6 +83,13 @@ def signals():
             signal.signal(sig, handler)
 
 
+def refuse_storage_credentials(environment=None):
+    environment=os.environ if environment is None else environment
+    for name in ['BACKUP_S3_ACCESS_KEY','BACKUP_S3_SECRET_KEY','BACKUP_S3_HOSTNAME','BACKUP_S3_BUCKET',
+                 'AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY']:
+        if environment.get(name):raise ValueError('refusing host export with '+name+' in environment')
+
+
 def capture(root, directory, project, exporter, receive, *, proof=None, timeout=900):
     """Receive into a private FD-anchored stage; callback returns one canonical role.
 
@@ -91,6 +98,7 @@ def capture(root, directory, project, exporter, receive, *, proof=None, timeout=
     The callback's child processes must inherit ``pass_fds`` when using stage
     paths. Only the returned role is published, using RENAME_NOREPLACE.
     """
+    refuse_storage_credentials()
     if sys.platform != 'linux':
         raise RuntimeError('backup export requires a Linux runner')
     if (not isinstance(project, str) or not re.fullmatch('[a-z][a-z0-9-]{0,62}', project)

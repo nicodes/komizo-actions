@@ -198,8 +198,8 @@ def source_security(root,tools,config,environment):
     if config.get('security',{}).get('fixtures'):arguments+=['--fixtures',config['security']['fixtures']]
     pinned(arguments,root,environment)
     node.audit(root,config.get('node',{}).get('packages',[]),environment,pinned)
-    manifests=sorted({record['manifest'] for record in config.get('components',{}).get('rust',[])})
-    if manifests:images.rust_inventory(root,manifests,environment,pinned)
+    manifests=images.rust_inventory_manifests(root,config)
+    if manifests:images.rust_inventory(root,manifests,environment,pinned,sbom=config.get('security',{}).get('rust_inventory_sbom',False))
 
 
 def outputs(values,environment):

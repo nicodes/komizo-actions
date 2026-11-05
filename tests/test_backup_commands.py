@@ -14,6 +14,21 @@ spec.loader.exec_module(backup)
 
 
 class BackupCommands(unittest.TestCase):
+    def test_storage_credentials_refuse_before_host_contact_or_staging(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);directory=root/'capture'
+            for name in ['BACKUP_S3_ACCESS_KEY','BACKUP_S3_SECRET_KEY','BACKUP_S3_HOSTNAME','BACKUP_S3_BUCKET',
+                         'AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY']:
+                with self.subTest(name=name),patch.object(backup.transport,'capture') as capture:
+                    with self.assertRaisesRegex(ValueError,name):
+                        backup.export('demo',{},root,directory,{name:'fixture-value'})
+                    capture.assert_not_called()
+                with patch.dict(backup.os.environ,{name:'fixture-value'}),patch.object(backup.transport,'run') as run:
+                    with self.assertRaisesRegex(ValueError,name):
+                        backup.transport.capture(root,directory,'demo','export-demo-backup',lambda *args:None)
+                    run.assert_not_called()
+                self.assertFalse(directory.exists())
+
     def test_timestamp_parity(self):
         for value in ['2026-09-04T12:00:33+00:00', '2026-09-04T12:00:33Z', '2026-09-04T12:00:33']:
             self.assertEqual(backup.stamp({'verified_at': value}), '20260904T120033Z')

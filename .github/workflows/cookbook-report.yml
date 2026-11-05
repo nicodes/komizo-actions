@@ -20,6 +20,9 @@ name: Report application delivery
       deployment-url:
         type: string
         required: true
+      revision:
+        type: string
+        default: ''
       notify:
         type: boolean
         default: true
@@ -102,4 +105,4 @@ jobs:
           deployment-url: ${{ inputs.deployment-url }}
           environment: ${{ inputs.environment }}
           status: ${{ inputs.deployment == 'success' && 'success' || 'failure' }}
-          revision: ${{ github.sha }}
+          revision: ${{ inputs.revision || github.sha }}

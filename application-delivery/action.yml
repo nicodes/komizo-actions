@@ -14,6 +14,9 @@ inputs:
     description: Prepare accepted artifacts and encrypted backup before separately timed host phases
     default: 'false'
 outputs:
+  has-export:
+    description: A verified encrypted pair is available for runner-only upload
+    value: ${{ steps.backup.outputs.has-export }}
   health-urls:
     description: Exact native release health assertions
     value: ${{ steps.plan.outputs.health-urls }}
@@ -60,9 +63,15 @@ runs:
         PROJECT: ${{ inputs.project }}
         BACKUP_CONFIG: ${{ steps.plan.outputs.backup }}
         TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
+        BACKUP_S3_ACCESS_KEY: ''
+        BACKUP_S3_SECRET_KEY: ''
+        BACKUP_S3_HOSTNAME: ''
+        BACKUP_S3_BUCKET: ''
+        AWS_ACCESS_KEY_ID: ''
+        AWS_SECRET_ACCESS_KEY: ''
       run: timeout --foreground --kill-after=10s 900s python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"
     - name: Upload the encrypted snapshot
-      if: steps.plan.outputs.upload == 'true' && steps.backup.outputs.has-export == 'true'
+      if: inputs.prepare-only != 'true' && steps.plan.outputs.upload == 'true' && steps.backup.outputs.has-export == 'true'
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}

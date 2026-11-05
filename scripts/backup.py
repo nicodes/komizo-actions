@@ -61,6 +61,7 @@ spec.loader.exec_module(transport)
 
 
 def export(project, config, tools, directory, environment):
+    transport.refuse_storage_credentials(environment)
     frame = environment.get('KOMIZO_BACKUP_PROOF_FILE')
     command = (config.get('proof_exporter') if frame else None) or config.get('exporter', f'export-{project}-backup')
 
