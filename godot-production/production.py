@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 
@@ -84,13 +85,17 @@ def verify(root,entry,environment,source,release,run=execute):
     values={**runtime_environment(root,environment),'EXPECTED_SOURCE_COMMIT':source,'EXPECTED_RELEASE_ID':release,
             'MISE_AUTO_INSTALL':'false','MISE_EXEC_AUTO_INSTALL':'false'}
     for key in ['GH_TOKEN','GITHUB_TOKEN','MISE_GITHUB_TOKEN']:values.pop(key,None)
-    def one(browser,probe=False):
-        command=['mise','exec','--','node',entry['entry']['path']]
-        if browser in entry.get('xvfb',[]):command=['xvfb-run','-a',*command]
-        selected={**values,'BROWSER':browser,'PUBLIC_SANDBOX_PROBE':'1' if probe else '0'}
-        run(command,root,selected,entry['entry']['timeout'])
-    if entry.get('probe'):one('chromium',True)
-    for browser in entry['browsers']:one(browser)
+    # Browser Unix sockets must fit independently of the source checkout length.
+    with tempfile.TemporaryDirectory(prefix='gp-',dir='/tmp') as temporary:
+        Path(temporary).chmod(0o700)
+        values['TMPDIR']=temporary
+        def one(browser,probe=False):
+            command=['mise','exec','--','node',entry['entry']['path']]
+            if browser in entry.get('xvfb',[]):command=['xvfb-run','-a',*command]
+            selected={**values,'BROWSER':browser,'PUBLIC_SANDBOX_PROBE':'1' if probe else '0'}
+            run(command,root,selected,entry['entry']['timeout'])
+        if entry.get('probe'):one('chromium',True)
+        for browser in entry['browsers']:one(browser)
 
 
 def main():
