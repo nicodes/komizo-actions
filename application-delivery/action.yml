@@ -90,6 +90,8 @@ runs:
         registry-user: ${{ github.repository_owner }}
         registry-token: ${{ env.KOMIZO_REGISTRY_TOKEN }}
         health-urls: ${{ steps.plan.outputs.health-urls }}
+        service-env-profile: ${{ steps.plan.outputs.service-env-profile }}
+        expected-generation: ${{ steps.plan.outputs.expected-generation }}
     - name: Verify product readiness contract
       if: inputs.prepare-only != 'true' && steps.plan.outputs.readiness != ''
       shell: bash

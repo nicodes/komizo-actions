@@ -142,7 +142,8 @@ def native(root,record,environment,run=pinned):
         arguments+=['test','--config',Path(path).name,*record.get('args',[])]
         run(arguments,root/record['cwd'],dict(environment,**record.get('environment',{})),record.get('timeout',180))
         return
-    if kind=='cargo-test':
+    if kind=='node-test':arguments=['node','--test',path,*record.get('args',[])]
+    elif kind=='cargo-test':
         arguments=['cargo','test','--locked','--offline','--manifest-path',path,'--test',record['target'],record['filter'],'--','--ignored','--exact','--nocapture']
     elif kind=='cargo-run':arguments=['cargo','run','--locked','--offline','--manifest-path',path,'--bin',record['binary'],'--',*record.get('args',[])]
     else:arguments=[{'python':'python3','node':'node','bun':'bun','bash':'bash'}[kind],path,*record.get('args',[])]
@@ -156,7 +157,7 @@ def prepare(root,tools,config,record,operation,environment):
     tools_needed={'python'}
     checks=[record['check']] if operation=='paid' else record.get('checks',[])
     for check in [*checks,*prepare.get('native',[])]:
-        if check['runner'] in {'node','bun'}:tools_needed.add(check['runner'])
+        if check['runner'] in {'node','node-test','bun'}:tools_needed.add('node' if check['runner']=='node-test' else check['runner'])
         if check['runner']=='playwright':tools_needed.add('bun' if check['manager']=='bun' else 'node')
         if check['runner'].startswith('cargo-'):tools_needed.add('rust')
     if prepare.get('rust'):tools_needed.add('rust')
@@ -167,7 +168,9 @@ def prepare(root,tools,config,record,operation,environment):
     if operation=='security':
         if config.get('components',{}).get('rust') or record.get('deployed_policy'):tools_needed.add('trivy')
         if record.get('deployed_policy'):
-            tools_needed.update(name for name in ['go','go:golang.org/x/vuln/cmd/govulncheck'] if name in pins)
+            scanner=module('operational_scan_policy',ROOT/'scripts/deployed_scan.py')
+            policy=scanner.policy(root,root/record['deployed_policy'])
+            if policy['go']:tools_needed.update(['go','go:golang.org/x/vuln/cmd/govulncheck'])
         selected=packages
         for package in selected:tools_needed.add('bun' if package.get('manager','npm')=='bun' else 'node')
     if not tools_needed<=pins.keys():raise ValueError('operational SDKs require exact native Mise pins')

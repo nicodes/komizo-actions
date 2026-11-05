@@ -32,6 +32,8 @@ def plan(root, project, path):
     return {'health-urls': '\n'.join(health), 'backup': data.get('backup', ''),
             'upload': str(data.get('upload_backup', False)).lower(), 'readiness': readiness,
             'diagnostics': str(data.get('diagnostics', False)).lower(),
+            'service-env-profile': data.get('service_env_profile',''),
+            'expected-generation': data.get('expected_generation',''),
             'allowed-products': json.dumps([project])}
 
 

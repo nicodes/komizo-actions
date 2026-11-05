@@ -227,6 +227,12 @@ class OperationalAuthority(unittest.TestCase):
         self.assertEqual(calls[0][1]['EXPECTED_REVISION'], self.revision)
         self.assertEqual(calls[0][2], 1200)
 
+    def test_native_node_test_mode_keeps_its_exact_runner_and_deadline(self):
+        calls=[]
+        driver.native(self.root,dict(runner='node-test',path='tests/automation/policy.mjs',timeout=120),
+            self.environment,lambda argv,root,env,timeout:calls.append((argv,root,timeout)))
+        self.assertEqual(calls,[(['node','--test','tests/automation/policy.mjs'],self.root,120)])
+
     def test_every_leaf_prepares_its_parser_before_admission_and_keeps_credentials_late(self):
         root = Path(__file__).parents[1] / '.github/workflows'
         for name in ['backup', 'recovery', 'security-audit', 'production-check', 'public-production-check']:
@@ -290,6 +296,22 @@ class OperationalAuthority(unittest.TestCase):
         text=(Path(__file__).parents[1]/'.github/workflows/cookbook-security-audit.yml').read_text()
         self.assertIn("fromJSON(inputs['step-timeouts']).source",text)
         self.assertIn("fromJSON(inputs['step-timeouts']).deployed",text)
+
+    def test_deployed_go_policy_prepares_real_scanners_and_refuses_missing_pins(self):
+        (self.root/'mise.toml').write_text('[tools]\npython="3.13.11"\ngo="1.27.3"\ntrivy="0.74.0"\n"go:golang.org/x/vuln/cmd/govulncheck"="1.7.0"\n')
+        node=SimpleNamespace(validate=lambda value,root:(value,None),install=lambda *args:None)
+        effects=[]
+        scanner=SimpleNamespace(policy=lambda *args:{'go':{'gate':{}}})
+        with patch.object(driver,'tools_modules',return_value=(workflows,node,None)), \
+                patch.object(driver,'module',return_value=scanner), \
+                patch.object(driver,'execute',side_effect=lambda argv,*args:effects.append(argv)):
+            driver.prepare(self.root,self.tools,self.config,self.data['security'],'security',self.environment)
+            self.assertTrue({'go','go:golang.org/x/vuln/cmd/govulncheck','trivy'}<=set(effects[0]))
+            effects.clear()
+            (self.root/'mise.toml').write_text('[tools]\npython="3.13.11"\ngo="1.27.3"\ntrivy="0.74.0"\n')
+            with self.assertRaisesRegex(ValueError,'exact native Mise pins'):
+                driver.prepare(self.root,self.tools,self.config,self.data['security'],'security',self.environment)
+            self.assertEqual(effects,[])
 
 
 if __name__ == '__main__':
