@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Trusted Preview controller; native application code runs only in readonly Make jobs."""
 import argparse
+import base64
 import hashlib
 import importlib.util
 import json
@@ -205,7 +206,7 @@ def publication(plan,root,source_root,tools,tools_ref,incoming,environment,looku
         sys.path.insert(0,str(tools.resolve()/'cookbook'))
         import godot_ci
         godot_ci.validate_acceptance(proof.get('godot_matrix'),config,jobs,plan['head'],tools_ref,environment,
-                                    proof['configuration_sha256'])
+                                    proof['configuration_sha256'],root=source_root)
     destination=source_root/'.artifacts/release'
     authority.stage(incoming,proof,destination,plan['policy']['release_metadata'])
     # Only the checked-out pinned helper runs here. No PR program, Makefile,
@@ -282,6 +283,21 @@ def publication_evidence(plan,path,environment,lookup=api):
         raise ValueError('the trusted same-source Preview publisher has not succeeded')
 
 
+def development_clerk_urls(public):
+    """Derive provider endpoints only from an explicit development public key."""
+    if not isinstance(public,str) or not re.fullmatch('pk_test_[A-Za-z0-9_-]{1,2048}',public):
+        raise ValueError('Preview Clerk endpoints require a bounded development public key')
+    encoded=public.removeprefix('pk_test_')
+    try:
+        decoded=base64.b64decode(encoded+'='*((-len(encoded))%4),altchars=b'-_',validate=True).decode('ascii')
+    except (ValueError,UnicodeError):
+        raise ValueError('Preview Clerk public key has an invalid frontend encoding') from None
+    if not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.clerk\.accounts\.dev\$',decoded):
+        raise ValueError('Preview Clerk endpoints must belong to the development provider frontend')
+    issuer='https://'+decoded[:-1]
+    return {'issuer':issuer,'jwks':issuer+'/.well-known/jwks.json'}
+
+
 def stack_environment(plan,urls,environment):
     policy=plan['policy']
     if not policy['backend']:
@@ -301,6 +317,9 @@ def stack_environment(plan,urls,environment):
     if not re.fullmatch('pk_test_[A-Za-z0-9_-]+',public):
         raise ValueError('Preview must use the development Clerk public key')
     values['CLERK_PUBLISHABLE_KEY']=public
+    if policy.get('clerk_urls'):
+        endpoints=development_clerk_urls(public)
+        for name,kind in policy['clerk_urls'].items():values[name]=endpoints[kind]
     for key,names in policy['origin_variables'].items():
         values[key]=','.join(urls[name]['origin'] for name in names)
     return ''.join(key+'='+value+'\n' for key,value in values.items())

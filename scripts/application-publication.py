@@ -114,7 +114,7 @@ def main():
             sys.path.insert(0, str(args.tools.resolve() / 'cookbook'))
             import godot_ci
             godot_ci.validate_acceptance(proof.get('godot_matrix'), config, jobs, args.source,
-                args.tools_ref, os.environ, proof['configuration_sha256'])
+                args.tools_ref, os.environ, proof['configuration_sha256'], root=Path.cwd())
         stage(args.incoming, proof, Path('.artifacts/release'), config.get('artifacts', {}).get('release_metadata', []))
         evidence = args.incoming / '.artifacts/verification'
         prefix = definition['image_base'] + '-'

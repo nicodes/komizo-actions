@@ -1,5 +1,6 @@
 """Preview event, source, publication and credential admission without host effects."""
 from contextlib import redirect_stdout
+import base64
 import copy
 import hashlib
 import importlib.util
@@ -152,6 +153,21 @@ class PreviewAuthority(unittest.TestCase):
         return dict(version=1,plan=self.plan,publication=dict(revision=self.head,tested_commit=self.head,
             archive_sha256='e'*64,build_provenance={'source_commit':self.head},test_provenance={'tested_commit':self.head},
             publisher_context=self.environment|{'GITHUB_JOB':'publish'}))
+
+    def test_declared_provider_urls_derive_only_from_the_actual_development_public_frontend(self):
+        self.policy['clerk_urls']={'CLERK_ISSUER':'issuer','CLERK_JWKS_URL':'jwks'}
+        urls=preview.targets(self.plan,'https://demo-pr42.example.test','https://demo-pr42-api.example.test')
+        def key(host):return 'pk_test_'+base64.urlsafe_b64encode(host.encode()).decode().rstrip('=')
+        environment=dict(PREVIEW_CLERK_SECRET_KEY='sk_test_fixture',
+            PREVIEW_CLERK_PUBLISHABLE_KEY=key('fixture.clerk.accounts.dev$'))
+        body=preview.stack_environment(self.plan,urls,environment)
+        self.assertIn('CLERK_ISSUER=https://fixture.clerk.accounts.dev\n',body)
+        self.assertIn('CLERK_JWKS_URL=https://fixture.clerk.accounts.dev/.well-known/jwks.json\n',body)
+        for public in [key('production.example.test$'),key('fixture.clerk.accounts.dev'),
+                key('evil.example.test/fixture.clerk.accounts.dev$'),key('-invalid.clerk.accounts.dev$'),
+                'pk_test_fixture','pk_live_'+key('fixture.clerk.accounts.dev$').removeprefix('pk_test_')]:
+            with self.subTest(public=public),self.assertRaises(ValueError):
+                preview.stack_environment(self.plan,urls,environment|{'PREVIEW_CLERK_PUBLISHABLE_KEY':public})
 
     def test_host_effects_require_actual_successful_same_attempt_publisher(self):
         evidence=self.publication_evidence();path=self.root/'publication.json'

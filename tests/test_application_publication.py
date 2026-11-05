@@ -30,6 +30,15 @@ class ApplicationPublication(unittest.TestCase):
     def test_current_complete_same_run_host_is_admitted(self):
         self.accept()
 
+    def test_preview_acceptance_cannot_publish_as_production_even_at_the_same_source_revision(self):
+        self.environment.update(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/cd.yml@refs/heads/main',
+            GITHUB_EVENT_NAME='push')
+        self.proof['execution_context'].update(
+            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/pr-preview.yml@refs/heads/main',
+            GITHUB_EVENT_NAME='issue_comment')
+        with self.assertRaisesRegex(ValueError,'another workflow execution'):
+            self.accept()
+
     def test_old_attempt_partial_or_failed_host_is_refused(self):
         for key, value in [('source_commit', 'd' * 40), ('source_tree', 'd' * 40),
                            ('cookbook_commit', 'd' * 40), ('test_groups', ['lint', 'unit']),
