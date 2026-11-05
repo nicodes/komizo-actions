@@ -11,7 +11,7 @@ printf '{"recipe":"invalid","tools":"invalid"}\n' > "$scratch/komizo.json"
 printf 'services:\n  app:\n    image: example/app:fixture\n' > "$scratch/compose.yml"
 printf 'name: Fixture\non: push\njobs: {}\n' > "$scratch/workflow.yml"
 cd "$scratch"
-PYTHONPATH="$scratch/poison" PATH="$scratch/bin:$PATH" RUNNER_TEMP="$scratch" \
+PYTHONPATH="$scratch/poison" PATH="$scratch/bin:$PATH" RUNNER_TEMP="$scratch" SOURCE_POLICY_SDK_ROOT="$root" \
   GITHUB_ACTION_PATH="$root/check-secrets" COMPOSE="$scratch/compose.yml" \
   WORKFLOWS="$scratch/workflow.yml" SCOPED_ENV_DIR=secrets/current HOST_ONLY="" \
   SECRETS_ENV_SERVICES="" bash "$root/check-secrets/run.sh"

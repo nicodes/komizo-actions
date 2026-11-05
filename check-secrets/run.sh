@@ -15,4 +15,5 @@ done <<< "$HOST_ONLY"
 if [ -n "$SECRETS_ENV_SERVICES" ]; then
   args+=(--secrets-env-services "$SECRETS_ENV_SERVICES")
 fi
-bash "$GITHUB_ACTION_PATH/../scripts/with-yaml.sh" "$GITHUB_ACTION_PATH/check.py" "${args[@]}"
+sdk_root="${SOURCE_POLICY_SDK_ROOT:-$PWD}"
+"$sdk_root/.artifacts/sdk/source-policy/bin/python" -I "${TOOLS_ROOT:?Select the reviewed Tools source}/cookbook/source_policy.py" check --sdk-root "$sdk_root" "${args[@]}"
