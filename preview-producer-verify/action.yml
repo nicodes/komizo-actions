@@ -1,0 +1,37 @@
+name: Revalidate an exact-HEAD Preview request
+description: Refuse stale source or authorization immediately before protected host effects
+inputs:
+  tools-ref:
+    description: Accepted immutable cookbook source
+    required: true
+  komizo-ref:
+    description: Accepted immutable producer source
+    required: true
+  plan:
+    description: Closed reviewed source publication plan
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        path: _preview_producer_tools
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _preview_producer_actions
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Revalidate trusted controller and current authorized source
+      shell: bash
+      env:
+        TOOLS_REF: ${{ inputs.tools-ref }}
+        KOMIZO_REF: ${{ inputs.komizo-ref }}
+        PLAN: ${{ inputs.plan }}
+        GH_TOKEN: ${{ github.token }}
+      run: python3 _preview_producer_actions/scripts/preview-producer.py verify
