@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tomllib
 
+sys.dont_write_bytecode=True
 tools = Path('_delivery_cookbook').resolve()
 sys.path.insert(0, str(tools / 'cookbook'))
 import delivery_workflows

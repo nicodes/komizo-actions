@@ -1,0 +1,23 @@
+name: Export verified encrypted application backup
+description: Credential-free fixed host capture under the caller's original deadline
+inputs:
+  project:
+    description: Native project owning the encrypted capture
+    required: true
+  config:
+    description: Admitted tracked backup declaration
+    required: true
+outputs:
+  has-export:
+    description: Verified encrypted pair is available for runner transport
+    value: ${{ steps.capture.outputs.has-export }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      id: capture
+      env:
+        PROJECT: ${{ inputs.project }}
+        BACKUP_CONFIG: ${{ inputs.config }}
+        TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"

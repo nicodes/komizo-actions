@@ -13,7 +13,16 @@ inputs:
   prepare-only:
     description: Prepare accepted artifacts and encrypted backup before separately timed host phases
     default: 'false'
+  plan-only:
+    description: Admit source data without host, capture, upload or download effects
+    default: 'false'
+  sdk-prepared:
+    description: Caller has separately prepared the exact cookbook checkout and interpreter
+    default: 'false'
 outputs:
+  backup:
+    description: Tracked native encrypted-export policy
+    value: ${{ steps.plan.outputs.backup }}
   has-export:
     description: A verified encrypted pair is available for runner-only upload
     value: ${{ steps.backup.outputs.has-export }}
@@ -36,12 +45,14 @@ runs:
         relation="$(gh api "repos/nicodes/tools/compare/$TOOLS_REF...main" --jq .status)"
         [[ "$relation" == ahead || "$relation" == identical ]]
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      if: inputs.sdk-prepared != 'true'
       with:
         repository: nicodes/tools
         ref: ${{ inputs.tools-ref }}
         path: _delivery_cookbook
         persist-credentials: false
     - name: Prepare the pinned native configuration interpreter
+      if: inputs.sdk-prepared != 'true'
       uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
       with:
         tools: python
@@ -53,11 +64,12 @@ runs:
         DECLARATION: ${{ inputs.declaration }}
       run: python3 "$GITHUB_ACTION_PATH/plan.py"
     - uses: nicodes/komizo-actions/connect@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
+      if: inputs.plan-only != 'true'
       with:
         user: komizo-${{ inputs.project }}
     - name: Capture the verified encrypted pre-deploy snapshot
       id: backup
-      if: steps.plan.outputs.backup != ''
+      if: inputs.plan-only != 'true' && steps.plan.outputs.backup != ''
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}
@@ -71,7 +83,7 @@ runs:
         AWS_SECRET_ACCESS_KEY: ''
       run: timeout --foreground --kill-after=10s 900s python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"
     - name: Upload the encrypted snapshot
-      if: inputs.prepare-only != 'true' && steps.plan.outputs.upload == 'true' && steps.backup.outputs.has-export == 'true'
+      if: inputs.plan-only != 'true' && inputs.prepare-only != 'true' && steps.plan.outputs.upload == 'true' && steps.backup.outputs.has-export == 'true'
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}
@@ -79,7 +91,7 @@ runs:
         TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
       run: timeout --foreground --kill-after=10s 600s python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" upload --project "$PROJECT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: inputs.prepare-only != 'true' && steps.plan.outputs.backup != ''
+      if: inputs.plan-only != 'true' && inputs.prepare-only != 'true' && steps.plan.outputs.backup != ''
       with:
         name: backup-${{ github.run_id }}-${{ github.run_attempt }}
         path: .artifacts/backup/
@@ -87,11 +99,12 @@ runs:
         include-hidden-files: true
         retention-days: 30
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      if: inputs.plan-only != 'true'
       with:
         name: host-release-${{ github.sha }}
         path: .artifacts/komizo-release
     - name: Deploy immutable accepted images
-      if: inputs.prepare-only != 'true'
+      if: inputs.plan-only != 'true' && inputs.prepare-only != 'true'
       uses: nicodes/komizo-actions/deploy@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
       with:
         release-manifest: .artifacts/komizo-release/manifest.json
@@ -102,18 +115,18 @@ runs:
         service-env-profile: ${{ steps.plan.outputs.service-env-profile }}
         expected-generation: ${{ steps.plan.outputs.expected-generation }}
     - name: Verify product readiness contract
-      if: inputs.prepare-only != 'true' && steps.plan.outputs.readiness != ''
+      if: inputs.plan-only != 'true' && inputs.prepare-only != 'true' && steps.plan.outputs.readiness != ''
       shell: bash
       env:
         READINESS: ${{ steps.plan.outputs.readiness }}
         EXPECTED_REVISION: ${{ github.sha }}
       run: timeout --foreground --kill-after=10s 180s python3 "$READINESS"
     - name: Record owner production acceptance status
-      if: inputs.prepare-only != 'true'
+      if: inputs.plan-only != 'true' && inputs.prepare-only != 'true'
       shell: bash
       run: printf '%s\n' 'Availability checks passed. Authenticated account acceptance must be recorded separately.' >> "$GITHUB_STEP_SUMMARY"
     - name: Bounded deployment diagnostics
-      if: failure() && inputs.prepare-only != 'true' && steps.plan.outputs.diagnostics == 'true'
+      if: failure() && inputs.plan-only != 'true' && inputs.prepare-only != 'true' && steps.plan.outputs.diagnostics == 'true'
       continue-on-error: true
       shell: bash
       env:
