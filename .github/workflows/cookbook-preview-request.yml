@@ -1,0 +1,70 @@
+name: Resolve trusted Preview request
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      declaration:
+        type: string
+        required: true
+    outputs:
+      enabled:
+        value: ${{ jobs.request.outputs.enabled }}
+      action:
+        value: ${{ jobs.request.outputs.action }}
+      pr:
+        value: ${{ jobs.request.outputs.pr }}
+      head:
+        value: ${{ jobs.request.outputs.head }}
+      base:
+        value: ${{ jobs.request.outputs.base }}
+      plan:
+        value: ${{ jobs.request.outputs.plan }}
+permissions: {}
+jobs:
+  request:
+    runs-on: ubuntu-slim
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      enabled: ${{ steps.request.outputs.enabled }}
+      action: ${{ steps.request.outputs.action }}
+      pr: ${{ steps.request.outputs.pr }}
+      head: ${{ steps.request.outputs.head }}
+      base: ${{ steps.request.outputs.base }}
+      plan: ${{ steps.request.outputs.plan }}
+    env:
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      KOMIZO_REF: ${{ inputs.komizo-ref }}
+      DECLARATION: ${{ inputs.declaration }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _preview_cookbook
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _preview_actions
+    - name: Resolve opt-in request from trusted main
+      id: request
+      shell: bash
+      run: python3 _preview_actions/scripts/preview.py request --declaration "$DECLARATION"

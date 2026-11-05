@@ -1,19 +1,33 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 3d67fc6d902beba4ce2642bda4361414d88bd69670b9ba94df0f48350eee4114 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 5775f8172a59d26026075616fcb88c97b15b979f460364ccf78fc93ef3dd0316 -->
 
 # komizo Actions
 
-Optional GitHub adapters for Komizo deployment, scoped connectivity, secrets, previews, release evidence and routine host backup. Pin actions and reusable workflows to a reviewed full commit.
+Optional GitHub adapters for Komizo deployment, scoped connectivity, previews, release evidence and encrypted backup transport. Pin actions and reusable workflows to reviewed full commits. Callers supply their own images, targets and authorized host policy; the host independently enforces admission.
 
-Deployment actions include connect, publish-config, activate, health-check and preview. Callers supply their own images, server, user and authorized host policy. The host independently enforces admission; these actions do not grant authority.
+## Accepted recipe artifacts
 
-The reusable backup workflow calls the product's export script, prepares an audience-bound OIDC operation frame, and transports the encrypted snapshot with immutable object creation. It requires explicit project/storage inputs, scoped secrets, attestations read access and id-token write access for the backup job only. Products own data capture and restore assertions. Production restoration is a separate authorized operation.
+Generated recipe callers compose read-only source validation with separate publication and host-effect jobs. `cookbook-publish.yml` and `application-publication` consume exact same-run full Make artifacts. They verify the successful validation job, source/tree, cookbook, complete native coverage and closed image archive before publishing. Publication executes no application setup or build program. Nonshipping fixture images remain outside the shipping publication set.
 
-Use recovery-evidence with exact completed run and artifact IDs to verify encrypted backup transport. It does not decrypt or restore application data. The standalone backup-proof action requires Python 3 and a new absolute output file under a protected caller-owned directory.
+`application-delivery` reads the tracked native declaration, refuses obsolete main before host effects, captures a declared encrypted backup, activates the accepted immutable manifest and runs explicit health assertions. Secret mappings remain visible in the caller. Production retains its authenticated root `cd.yml`, protected environment, serialization and declared total deadline.
 
-Generic SDK setup, Godot installation, container publication, dependency maintenance and source scanning live in [tools](https://github.com/nicodes/tools). Deployment adapters do not require a development recipe, SDK lock or hosted Komizo account.
+Static Godot delivery uses `godot-static-delivery` and its own constrained gate/configuration protocol. The trusted publisher substitutes only a verified immutable image digest into the accepted configuration blueprint. Existing release records, historical recovery and fixed-origin public verification remain explicit capabilities. Historical image verification does not issue a current-source full-validation receipt.
 
-For development, install mise and check out nicodes/tools at 0f95a6df60f740b527596ed2c7f4590e3f2d5820 into .ci-tools, then run mise install and mise run check. Product-owned tasks retain all parser, secret handling, release integrity, SSH transport and workflow checks.
+Preview automation separates trusted request decisions, read-only validation of the selected source, accepted-artifact publication and protected host effects. Cleanup has its own path. Product source checks receive no publication, host or provider credentials.
 
-## Contributor task interface
+## Explicit operations
 
-Contributor tool versions and task entry points live in the native Mise configuration. Use `mise run lint` for source checks, `mise run test` for the applicable behavioral tests, and `mise run check` for the complete supported gate. `mise run clean` removes declared generated outputs while preserving source, credentials and retained data. This package has no application development service.
+The cookbook operational workflows read bounded project-owned declarations. They retain the caller’s real runners, job and step deadlines, protected environments, schedules, evidence policy and native assertions. `cookbook-source-audit.yml` handles declared source/artifact checks; `cookbook-security-audit.yml` additionally selects an actual deployed-image policy. Reporting and deployed-registry permissions use separate workflow variants when those capabilities are absent. Artifact validation declares setup, build, security and selected assertion phases explicitly; a source-only scan does not hide a shipping build or claim complete Make acceptance.
+
+Production checks run genuine caller-owned assertions. Paid checks require explicit default-off dispatch, trusted current main, their original protected environment and deadline, and any declared successful-deployment prerequisite. An inline paid assertion shares its original production job’s total budget. Provider credentials enter only the selected paid execution step.
+
+`routine-backup` prepares an audience-bound OIDC operation frame, invokes a fixed declared exporter, validates ciphertext, uploads the immutable pair and removes its private authority file. Only the backup job receives its required OIDC scope and scoped host/storage secrets. First-deployment absence proofs are explicit data. Capture, schema and data assertions remain application-owned. The older `reusable-backup.yml` interface continues to call its caller-owned export script for independently pinned consumers.
+
+`recovery-evidence` verifies exact completed run and artifact IDs without decrypting or restoring application data. The optional legacy retention workflow checks the existing encrypted AGE pair and checksum before retaining it; it never restores data. `backup-proof` requires Python 3 and a new absolute output file under a protected caller-owned directory.
+
+The shared `scripts/backup.py` has export/upload and explicit local restore entrypoints. A named restore profile selects tracked native configuration. Local restoration requires an absolute private `BACKUP_RECOVERY_KEY_FILE`, packages only `snapshot.cms` and `receipt.json`, and validates the project, isolation, database integrity, boot/API/frontend and cleanup report before atomic retention. `--pull` explicitly selects image retrieval. The key stays local; Actions recovery remains encrypted transport verification. Production restoration is a separate authorized operation.
+
+## Independent tools and contribution
+
+Generic SDK setup, build/test recipes, fixtures, container tooling and dependency/source checks live in [tools](https://github.com/nicodes/tools). Deployment adapters also support native callers without a recipe, SDK lock or hosted Komizo account. The optional `check-secrets` compatibility action delegates its read-only policy to Tools. Setup explicitly prepares its hash-locked isolated parser; checking never installs dependencies. Configuration publication retains its independently prepared parser runtime.
+
+For this adapter repository’s native contributor gate, install Mise, prepare the exact Tools source selected by its checked-in CI and configuration, and run `mise install` followed by `mise run check`. Focused native commands remain `mise run lint`, `mise run test` and `mise run clean`. These exercise parsers, secrets, release integrity, SSH transport and workflow admission; this repository has no application development service.

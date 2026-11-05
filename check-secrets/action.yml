@@ -1,7 +1,7 @@
 name: Check secret policy
 description: "Fail the build when this app's secrets do not follow the rule every app on these servers follows: a secret is\
   \ held in GitHub and delivered by komizo, or it is generated on the host and never leaves it \u2014 and there is no third\
-  \ way.\nRead-only validation with a hash-pinned isolated YAML dependency. It needs no deploy key, no registry token and\
+  \ way.\nRead-only Tools validation with an explicitly prepared hash-pinned isolated YAML SDK. It needs no deploy key, no registry token and\
   \ no server, so it belongs in CI beside the other static checks rather than in the deploy job. Run it on pull requests:\
   \ the point is to refuse the change, not to discover afterwards that production drifted.\nWhat it checks, and the mistake\
   \ behind each one:\n\n  * Every `KOMIZO_SECRET_<NAME>` is a `secrets.NAME` expression. A literal\n    there is a committed\
@@ -51,6 +51,11 @@ inputs:
 runs:
   using: composite
   steps:
+  - name: Prepare the reviewed source-policy SDK
+    shell: bash
+    run: |
+      mise install python
+      mise exec python -- python3 -I "${TOOLS_ROOT:?Select the reviewed Tools source}/cookbook/source_policy.py" setup
   - name: Check the secret rule
     shell: bash
     env:

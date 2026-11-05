@@ -1,0 +1,14 @@
+name: Upload verified encrypted application backup
+description: Runner-only object storage transport after the separate credential-free host export
+inputs:
+  project:
+    description: Native project owning the verified encrypted pair
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PROJECT: ${{ inputs.project }}
+        TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" upload --project "$PROJECT"

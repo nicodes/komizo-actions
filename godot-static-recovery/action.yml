@@ -1,0 +1,74 @@
+name: Restore verified static Godot release
+description: Copy the exact historical config manifest and retain the established source-tag host policy
+inputs:
+  tools-ref:
+    description: Accepted cookbook source commit
+    required: true
+  proof-sha256:
+    description: Same-run verifier output hash for the exact historical acceptance packet
+    required: true
+runs:
+  using: composite
+  steps:
+  - name: Refuse obsolete recovery controllers before host effects
+    shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+    run: python3 "$GITHUB_ACTION_PATH/../scripts/require-current-deployment.py"
+  - name: Require accepted immutable recovery cookbook
+    shell: bash
+    env:
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      GH_TOKEN: ${{ github.token }}
+    run: |
+      set -euo pipefail
+      [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+      relation="$(gh api "repos/nicodes/tools/compare/$TOOLS_REF...main" --jq .status)"
+      [[ "$relation" == ahead || "$relation" == identical ]]
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    with:
+      repository: nicodes/tools
+      ref: ${{ inputs.tools-ref }}
+      path: _godot_recovery_cookbook
+      persist-credentials: false
+  - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+    with:
+      install_args: python
+      cache: true
+    env:
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_GITHUB_TOKEN: ${{ github.token }}
+  - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+    with:
+      name: rollback-verification-${{ github.run_id }}-${{ github.run_attempt }}
+      path: .artifacts/godot-recovery
+  - name: Re-admit complete historical proof and copy only its immutable config manifest
+    id: copy
+    shell: bash
+    env:
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      PROOF_SHA256: ${{ inputs.proof-sha256 }}
+      GH_TOKEN: ${{ github.token }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+    run: |
+      set -euo pipefail
+      mise exec -- python3 "$GITHUB_ACTION_PATH/recovery.py" restore --tools _godot_recovery_cookbook --tools-ref "$TOOLS_REF" --proof-sha256 "$PROOF_SHA256"
+  - name: Restore through the original admitted source-tag deployment contract
+    uses: nicodes/komizo-actions/deploy@22a128034be007614021467201be5924cfacc88b
+    with:
+      version: ${{ steps.copy.outputs.tag }}
+      registry-user: ${{ github.actor }}
+      registry-token: ${{ github.token }}
+      health-urls: ${{ steps.copy.outputs.health-url }}
+  - name: Verify original public payload and source over ordinary TLS
+    shell: bash
+    env:
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      RELEASE_MANIFEST_URL: ${{ steps.copy.outputs.manifest-url }}
+      EXPECTED_RELEASE_ID: ${{ steps.copy.outputs.release_id }}
+      EXPECTED_SOURCE_COMMIT: ${{ steps.copy.outputs.sha }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+    run: mise exec -- python3 _godot_recovery_cookbook/helpers/public_release.py

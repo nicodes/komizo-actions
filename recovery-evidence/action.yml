@@ -15,7 +15,7 @@ runs:
   using: composite
   steps:
   - name: Select reviewed transport helpers
-    uses: nicodes/tools/helpers@0f95a6df60f740b527596ed2c7f4590e3f2d5820
+    uses: nicodes/tools/helpers@d475b54c402754a5a37a44fbd65328551995025c
   - name: Verify immutable artifact transport
     shell: bash
     env:

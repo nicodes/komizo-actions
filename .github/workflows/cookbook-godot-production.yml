@@ -1,0 +1,71 @@
+name: Verify exact public Godot release
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        required: true
+        type: string
+      komizo-ref:
+        required: true
+        type: string
+      source:
+        required: true
+        type: string
+      release-id:
+        required: true
+        type: string
+      expected-source:
+        required: false
+        type: string
+        default: ''
+      runner:
+        required: true
+        type: string
+      timeout-minutes:
+        required: true
+        type: number
+permissions: {}
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+    steps:
+    - name: Require exact immutable verification source and accepted automation
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.source }}
+        KOMIZO_REF: ${{ inputs.komizo-ref }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        [[ "$SOURCE" =~ ^[a-f0-9]{40}$ && "$SOURCE" == "$GITHUB_SHA" ]]
+        [[ "$KOMIZO_REF" =~ ^[a-f0-9]{40}$ ]]
+        relation="$(gh api "repos/nicodes/komizo-actions/compare/$KOMIZO_REF...main" --jq .status)"
+        [[ "$relation" == ahead || "$relation" == identical ]]
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _godot_verification_actions
+        persist-credentials: false
+    - uses: ./_godot_verification_actions/godot-production
+      with:
+        tools-ref: ${{ inputs.tools-ref }}
+        source: ${{ inputs.source }}
+        release-id: ${{ inputs.release-id }}
+        expected-source: ${{ inputs.expected-source }}
+        runner: ${{ inputs.runner }}
+        timeout-minutes: ${{ inputs.timeout-minutes }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: always()
+      with:
+        name: production-browser-${{ inputs.source }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: release-reports/
+        retention-days: 14
+        if-no-files-found: error

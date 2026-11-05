@@ -1,0 +1,13 @@
+name: Check native application readiness
+description: Explicit operational dependency preparation and real caller-owned production assertions
+inputs:
+  declaration:
+    description: Native delivery declaration admitted before activation
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DECLARATION: ${{ inputs.declaration }}
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/application_readiness.py"

@@ -1,0 +1,108 @@
+name: Report application delivery
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      validation:
+        type: string
+        required: true
+      publication:
+        type: string
+        required: true
+      deployment:
+        type: string
+        required: true
+      deployment-url:
+        type: string
+        required: true
+      revision:
+        type: string
+        default: ''
+      notify:
+        type: boolean
+        default: true
+      environment:
+        type: string
+        default: production
+      report-runner:
+        type: string
+        default: ubuntu-slim
+      report-timeout:
+        type: number
+        default: 10
+      report-step-timeouts:
+        type: string
+        default: '{"checkout":10,"setup":5,"report":10}'
+      notify-runner:
+        type: string
+        default: ubuntu-slim
+      notify-timeout:
+        type: number
+        default: 2
+      notify-step-timeouts:
+        type: string
+        default: '{"checkout":2,"notify":1}'
+    secrets:
+      DISCORD_WEBHOOK_URL:
+        required: false
+permissions: {}
+jobs:
+  report:
+    if: inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure'
+    runs-on: ${{ inputs.report-runner }}
+    timeout-minutes: ${{ inputs.report-timeout }}
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
+        with:
+          repository: nicodes/tools
+          ref: ${{ inputs.tools-ref }}
+          path: _delivery_cookbook
+          persist-credentials: false
+      - name: Prepare the pinned report interpreter
+        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).setup }}
+        uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
+        with:
+          tools: python
+      - name: Report failure
+        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).report }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 _delivery_cookbook/helpers/report-failure.py
+  notify:
+    if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure')
+    runs-on: ${{ inputs.notify-runner }}
+    timeout-minutes: ${{ inputs.notify-timeout }}
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).checkout }}
+        with:
+          repository: nicodes/komizo-actions
+          ref: ${{ inputs.komizo-ref }}
+          path: _komizo
+          persist-credentials: false
+      - uses: ./_komizo/notify-discord
+        continue-on-error: true
+        timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).notify }}
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          deployment-url: ${{ inputs.deployment-url }}
+          environment: ${{ inputs.environment }}
+          status: ${{ inputs.deployment == 'success' && 'success' || 'failure' }}
+          revision: ${{ inputs.revision || github.sha }}

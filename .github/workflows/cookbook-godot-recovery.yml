@@ -1,0 +1,128 @@
+name: Verify historical static Godot release
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        required: true
+        type: string
+      komizo-ref:
+        required: true
+        type: string
+      source-run-id:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+    outputs:
+      proof-sha256:
+        value: ${{ jobs.verify.outputs.proof-sha256 }}
+permissions: {}
+jobs:
+  verify:
+    name: Verify historical static release
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+      attestations: read
+    outputs:
+      proof-sha256: ${{ steps.verify.outputs.proof_sha256 }}
+    steps:
+    - name: Require accepted immutable recovery automation
+      shell: bash
+      env:
+        TOOLS_REF: ${{ inputs.tools-ref }}
+        KOMIZO_REF: ${{ inputs.komizo-ref }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ && "$KOMIZO_REF" =~ ^[a-f0-9]{40}$ ]]
+        for pair in "tools:$TOOLS_REF" "komizo-actions:$KOMIZO_REF"; do
+          repository="${pair%%:*}"; revision="${pair#*:}"
+          relation="$(gh api "repos/nicodes/$repository/compare/$revision...main" --jq .status)"
+          [[ "$relation" == ahead || "$relation" == identical ]]
+        done
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        path: _godot_recovery_cookbook
+        persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _godot_recovery_actions
+        persist-credentials: false
+    - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+      with:
+        install_args: python
+        cache: true
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_GITHUB_TOKEN: ${{ github.token }}
+    - name: Admit only a successful original main CD source run
+      id: source
+      shell: bash
+      env:
+        SOURCE_RUN: ${{ inputs.source-run-id }}
+        TOOLS_REF: ${{ inputs.tools-ref }}
+        GH_TOKEN: ${{ github.token }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+      run: mise exec -- python3 _godot_recovery_actions/godot-static-recovery/recovery.py source --tools _godot_recovery_cookbook --tools-ref "$TOOLS_REF" --source-run "$SOURCE_RUN"
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: release-record-${{ steps.source.outputs.sha }}
+        path: rollback-record
+        run-id: ${{ inputs.source-run-id }}
+        github-token: ${{ github.token }}
+    - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    - name: Explicitly prepare only native recovery SDK capabilities
+      shell: bash
+      env:
+        TOOLS_REF: ${{ inputs.tools-ref }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+      run: mise exec -- python3 _godot_recovery_actions/godot-static-recovery/recovery.py setup --tools _godot_recovery_cookbook --tools-ref "$TOOLS_REF"
+    - name: Recheck exact historical configuration, native delivery, gameplay and current advisories
+      id: verify
+      shell: bash
+      env:
+        SOURCE_RUN: ${{ inputs.source-run-id }}
+        TOOLS_REF: ${{ inputs.tools-ref }}
+        GH_TOKEN: ${{ github.token }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+      run: mise exec -- python3 _godot_recovery_actions/godot-static-recovery/recovery.py verify --tools _godot_recovery_cookbook --tools-ref "$TOOLS_REF" --source-run "$SOURCE_RUN"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: always()
+      with:
+        name: rollback-verification-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .artifacts/godot-recovery/acceptance.json
+        include-hidden-files: true
+        retention-days: 90
+        if-no-files-found: warn
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: always()
+      with:
+        name: rollback-reports-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          release-reports/
+          .artifacts/reports/security/
+        include-hidden-files: true
+        retention-days: 90
+        if-no-files-found: warn

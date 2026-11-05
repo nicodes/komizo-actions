@@ -1,0 +1,99 @@
+name: Deliver accepted static Godot release
+description: Preserve immutable gate and config images, original host admission and rollback records
+inputs:
+  tools-ref:
+    description: Accepted cookbook source commit
+    required: true
+  source:
+    description: Exact final main source commit
+    required: true
+outputs:
+  release-id:
+    description: Exact ordinary public payload identity
+    value: ${{ steps.publication.outputs.release-id }}
+  gate-ref:
+    description: Verified immutable game image
+    value: ${{ steps.publication.outputs.gate-ref }}
+  config-ref:
+    description: Verified immutable static host configuration
+    value: ${{ steps.publication.outputs.config-ref }}
+runs:
+  using: composite
+  steps:
+  - name: Refuse obsolete deployment before registry or host effects
+    shell: bash
+    run: python3 "$GITHUB_ACTION_PATH/../scripts/require-current-deployment.py"
+    env:
+      GH_TOKEN: ${{ github.token }}
+  - name: Require accepted immutable static delivery inputs
+    shell: bash
+    env:
+      SOURCE: ${{ inputs.source }}
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      GH_TOKEN: ${{ github.token }}
+    run: |
+      set -euo pipefail
+      [[ "$SOURCE" =~ ^[a-f0-9]{40}$ && "$SOURCE" == "$GITHUB_SHA" && "$GITHUB_REF" == refs/heads/main ]]
+      [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+      relation="$(gh api "repos/nicodes/tools/compare/$TOOLS_REF...main" --jq .status)"
+      [[ "$relation" == ahead || "$relation" == identical ]]
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    with:
+      repository: nicodes/tools
+      ref: ${{ inputs.tools-ref }}
+      path: _godot_static_cookbook
+      persist-credentials: false
+  - uses: ./_godot_static_cookbook/setup
+    with:
+      tools: python
+    env:
+      MISE_GITHUB_TOKEN: ${{ github.token }}
+  - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+    with:
+      name: cookbook-full-${{ inputs.source }}-${{ github.run_id }}-${{ github.run_attempt }}
+      path: .artifacts/delivery-input
+  - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+    with:
+      registry: ghcr.io
+      username: ${{ github.actor }}
+      password: ${{ github.token }}
+  - name: Publish verified game and exact static host configuration
+    id: publication
+    shell: bash
+    env:
+      SOURCE: ${{ inputs.source }}
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      GH_TOKEN: ${{ github.token }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+    run: |
+      set -euo pipefail
+      mise exec -- python3 "$GITHUB_ACTION_PATH/publish.py" --tools _godot_static_cookbook --tools-ref "$TOOLS_REF" --source "$SOURCE"
+  - name: Normalize the original static gate artifact identity
+    uses: nicodes/komizo-actions/release-evidence@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
+    with:
+      version: ${{ inputs.source }}
+      kind: gate-artifact
+      image-base: ghcr.io/${{ github.repository }}
+      expected-gate-id: ${{ steps.publication.outputs.gate-id }}
+  - name: Recheck current main before host activation
+    shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+    run: python3 "$GITHUB_ACTION_PATH/../scripts/require-current-deployment.py"
+  - name: Activate the accepted source through the existing host policy
+    uses: nicodes/komizo-actions/deploy@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
+    with:
+      release-manifest: .artifacts/komizo-release/manifest.json
+      version: ${{ inputs.source }}
+      registry-user: ${{ github.actor }}
+      registry-token: ${{ github.token }}
+      health-urls: ${{ steps.publication.outputs.health-urls }}
+  - name: Retain the original successful-CD immutable release record
+    if: steps.publication.outputs.record == 'true'
+    uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+    with:
+      name: release-record-${{ inputs.source }}
+      path: release-record.json
+      retention-days: 90
+      if-no-files-found: error
