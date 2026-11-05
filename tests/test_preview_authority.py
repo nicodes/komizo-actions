@@ -177,14 +177,14 @@ class PreviewAuthority(unittest.TestCase):
     def test_publisher_admits_real_same_run_proof_and_stages_only_its_closed_archive(self):
         source=self.root/'source';source.mkdir();(source/'cookbook.toml').write_text('recipe = "react-native"\n')
         incoming=self.root/'incoming';archive=incoming/'.artifacts/release';archive.mkdir(parents=True)
-        names=['images.tar.gz','images.tar.gz.sha256','release.json']
-        for name in names:(archive/name).write_bytes(name.encode())
+        names=['images.tar.gz','images.tar.gz.sha256','images.json','release.json']
+        for name in names:(archive/name).write_bytes(b'[]' if name=='images.json' else name.encode())
         proof=dict(version=1,source_commit=self.head,source_tree=self.tree,cookbook_commit='d'*40,
             recipe='react-native',status='passed',tracked_source_clean=True,build_verified=True,tests_verified=True,
             test_groups=self.policy['test_groups'],head=self.head,base=self.base,
             configuration_sha256=hashlib.sha256((source/'cookbook.toml').read_bytes()).hexdigest(),
             execution_context=self.environment|{'GITHUB_JOB':'validate'},
-            artifacts={'.artifacts/release/'+name:hashlib.sha256(name.encode()).hexdigest() for name in names})
+            artifacts={'.artifacts/release/'+name:hashlib.sha256((archive/name).read_bytes()).hexdigest() for name in names})
         proof_path=incoming/'.artifacts/cookbook-validation.json'
         jobs=dict(total_count=1,jobs=[dict(name='full / Full source checks / Make full',conclusion='success',
             head_sha=self.base,labels=['ubuntu-24.04'])])
