@@ -75,6 +75,24 @@ class ApplicationPublication(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'closed validated'):
                 publication.stage(root / 'incoming', proof, root / 'refused')
 
+    def test_only_declared_bounded_json_metadata_can_accompany_images(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / 'incoming/.artifacts/release'
+            source.mkdir(parents=True)
+            names = ['images.tar.gz', 'images.tar.gz.sha256', 'release.json', 'components.json']
+            for name in names:
+                (source / name).write_bytes(b'{}')
+            proof = dict(artifacts={'.artifacts/release/' + name: hashlib.sha256(b'{}').hexdigest() for name in names})
+            with self.assertRaises(ValueError):
+                publication.stage(root / 'incoming', proof, root / 'refused')
+            publication.stage(root / 'incoming', proof, root / 'accepted', ['.artifacts/release/components.json'])
+            self.assertEqual((root / 'accepted/components.json').read_bytes(), b'{}')
+            for metadata in [['../components.json'], ['.artifacts/release/unsafe.py'], ['.artifacts/release/release.json']]:
+                with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                    publication.stage(root / 'incoming', proof, root / 'refused', metadata)
+            self.assertFalse((root / 'refused').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

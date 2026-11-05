@@ -50,15 +50,26 @@ def accept(proof, config, source, tools, tree, groups, jobs, environment):
         raise ValueError('Godot publication requires complete build, shard and capability acceptance')
 
 
-def stage(incoming, proof, destination):
+def stage(incoming, proof, destination, metadata=()):
     source = incoming / '.artifacts/release'
     expected = {'images.tar.gz', 'images.tar.gz.sha256', 'release.json'}
+    if not isinstance(metadata, (list, tuple)) or len(metadata) > 16 or len(set(metadata)) != len(metadata):
+        raise ValueError('release metadata requires a bounded distinct declaration')
+    for name in metadata:
+        if not isinstance(name, str) or not re.fullmatch(r'\.artifacts/release/[A-Za-z0-9][A-Za-z0-9_.-]*\.json', name):
+            raise ValueError('release metadata must name a flat JSON artifact')
+        filename = Path(name).name
+        if filename in expected:
+            raise ValueError('release metadata cannot replace the core release artifacts')
+        expected.add(filename)
     if not source.is_dir() or {path.name for path in source.iterdir()} != expected:
         raise ValueError('publication requires the closed validated release archive')
     for name in expected:
         path = source / name
         if not path.is_file() or path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
             raise ValueError('publication payload must contain only regular files')
+        if '.artifacts/release/' + name in metadata:
+            read(path, limit=1 << 20)
         with path.open('rb') as stream:
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
         if proof.get('artifacts', {}).get('.artifacts/release/' + name) != digest:
@@ -104,7 +115,7 @@ def main():
             import godot_ci
             godot_ci.validate_acceptance(proof.get('godot_matrix'), config, jobs, args.source,
                 args.tools_ref, os.environ, proof['configuration_sha256'])
-        stage(args.incoming, proof, Path('.artifacts/release'))
+        stage(args.incoming, proof, Path('.artifacts/release'), config.get('artifacts', {}).get('release_metadata', []))
         evidence = args.incoming / '.artifacts/verification'
         prefix = definition['image_base'] + '-'
         references = definition['inputs']['images']
