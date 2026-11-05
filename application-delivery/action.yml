@@ -10,6 +10,13 @@ inputs:
   declaration:
     description: Tracked native delivery declaration
     required: true
+  prepare-only:
+    description: Prepare accepted artifacts and encrypted backup before separately timed host phases
+    default: 'false'
+outputs:
+  health-urls:
+    description: Exact native release health assertions
+    value: ${{ steps.plan.outputs.health-urls }}
 runs:
   using: composite
   steps:
@@ -59,7 +66,7 @@ runs:
         TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
       run: timeout --foreground --kill-after=10s 600s python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" upload --project "$PROJECT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: steps.plan.outputs.backup != ''
+      if: inputs.prepare-only != 'true' && steps.plan.outputs.backup != ''
       with:
         name: backup-${{ github.run_id }}-${{ github.run_attempt }}
         path: .artifacts/backup/
@@ -71,6 +78,7 @@ runs:
         name: host-release-${{ github.sha }}
         path: .artifacts/komizo-release
     - name: Deploy immutable accepted images
+      if: inputs.prepare-only != 'true'
       uses: nicodes/komizo-actions/deploy@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
       with:
         release-manifest: .artifacts/komizo-release/manifest.json
@@ -79,17 +87,18 @@ runs:
         registry-token: ${{ env.KOMIZO_REGISTRY_TOKEN }}
         health-urls: ${{ steps.plan.outputs.health-urls }}
     - name: Verify product readiness contract
-      if: steps.plan.outputs.readiness != ''
+      if: inputs.prepare-only != 'true' && steps.plan.outputs.readiness != ''
       shell: bash
       env:
         READINESS: ${{ steps.plan.outputs.readiness }}
         EXPECTED_REVISION: ${{ github.sha }}
       run: timeout --foreground --kill-after=10s 180s python3 "$READINESS"
     - name: Record owner production acceptance status
+      if: inputs.prepare-only != 'true'
       shell: bash
       run: printf '%s\n' 'Availability checks passed. Authenticated account acceptance must be recorded separately.' >> "$GITHUB_STEP_SUMMARY"
     - name: Bounded deployment diagnostics
-      if: failure() && steps.plan.outputs.diagnostics == 'true'
+      if: failure() && inputs.prepare-only != 'true' && steps.plan.outputs.diagnostics == 'true'
       continue-on-error: true
       shell: bash
       env:

@@ -1,0 +1,7 @@
+name: Select optional host tokens
+description: Omit absent tokens and admit bounded opaque values before the pinned host transport
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/select.py"

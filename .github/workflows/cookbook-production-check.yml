@@ -30,6 +30,12 @@ name: Run owned production acceptance
       check:
         type: string
         required: true
+      inline-paid:
+        type: boolean
+        default: false
+      inline-step-timeouts:
+        type: string
+        default: '{}'
     secrets:
       OPENROUTER_API_KEY:
         required: false
@@ -102,12 +108,29 @@ jobs:
       run: mise exec -- python3 _operation_actions/scripts/operational.py run
       env:
         OPENROUTER_API_KEY: ${{ inputs.operation == 'paid' && secrets.OPENROUTER_API_KEY || '' }}
+    - name: Prepare the original inline paid assertion only after explicit opt-in
+      if: ${{ inputs.operation == 'production' && inputs.inline-paid }}
+      timeout-minutes: ${{ fromJSON(inputs.inline-step-timeouts).prepare }}
+      shell: bash
+      env:
+        OPERATION: paid
+        OPERATION_STEP_TIMEOUTS: ${{ inputs.inline-step-timeouts }}
+      run: mise exec -- python3 _operation_actions/scripts/operational.py prepare
+    - name: Run the original inline paid assertion within this same production job
+      if: ${{ inputs.operation == 'production' && inputs.inline-paid }}
+      timeout-minutes: ${{ fromJSON(inputs.inline-step-timeouts).run }}
+      shell: bash
+      env:
+        OPERATION: paid
+        OPERATION_STEP_TIMEOUTS: ${{ inputs.inline-step-timeouts }}
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      run: mise exec -- python3 _operation_actions/scripts/operational.py run
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
       if: ${{ always() && (steps.plan.outputs.evidence != '' || false) }}
       with:
-        name: production-verification-${{ github.run_id }}-${{ github.run_attempt }}
+        name: ${{ steps.plan.outputs['artifact-name'] }}
         path: ${{ steps.plan.outputs.evidence }}
         include-hidden-files: true
-        if-no-files-found: ignore
+        if-no-files-found: ${{ steps.plan.outputs['evidence-missing'] || 'error' }}
         retention-days: 7

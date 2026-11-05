@@ -185,6 +185,32 @@ class OperationalAuthority(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'current main'):
             self.admit(environment, 'paid', 'model_smoke', old_main)
 
+    def test_legacy_retention_requires_exact_manual_selection_and_immutable_ids(self):
+        legacy = dict(runner='ubuntu-22.04', timeout_minutes=10,
+                      environment='production', format='age-pb-v1')
+        self.data['recovery'] = dict(runner='ubuntu-24.04', timeout_minutes=45,
+                                    environment='production', legacy_retention=legacy)
+        (self.root / 'deploy/operations.json').write_text(json.dumps(self.data))
+        for name, text in workflows.workflow_files(self.root, self.environment['TOOLS_REF'], self.config).items():
+            (self.root / name).write_text(text)
+        self.git(self.root, 'add', '.')
+        self.git(self.root, 'commit', '-qm', 'Legacy retention policy')
+        self.revision = self.git(self.root, 'rev-parse', 'HEAD')
+        environment = self.environment | dict(GITHUB_SHA=self.revision, GITHUB_WORKFLOW_SHA=self.revision,
+            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/recovery.yml@refs/heads/main',
+            OPERATION_RUNNER='ubuntu-22.04', OPERATION_TIMEOUT='10', OPERATION_ENVIRONMENT='production',
+            OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('retention', legacy)))
+        valid = dict(operation='retain-legacy', **{'artifact-id': '456', 'run-id': '789'})
+        self.event.write_text(json.dumps(dict(inputs=valid)))
+        self.admit(environment, 'retention')
+        for changes in [dict(operation='verify-transport'), {'artifact-id': '../escape'}, {'run-id': '0'}]:
+            self.event.write_text(json.dumps(dict(inputs=valid | changes)))
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.admit(environment, 'retention')
+        self.event.write_text(json.dumps(dict(inputs=valid)))
+        with self.assertRaisesRegex(ValueError, 'manual dispatch'):
+            self.admit(environment | dict(GITHUB_EVENT_NAME='schedule'), 'retention')
+
     def test_prepare_and_execution_derive_the_same_pinned_environment(self):
         original = self.environment | dict(TOOLS_ROOT='wrong', EXPECTED_REVISION='wrong', MISE_AUTO_INSTALL='true')
         first = driver.runtime_environment(self.root, self.tools, original)
@@ -212,6 +238,35 @@ class OperationalAuthority(unittest.TestCase):
         production = (root / 'cookbook-production-check.yml').read_text()
         preparation = production.split('    - name: Run owned production assertions')[0]
         self.assertNotIn('secrets.OPENROUTER_API_KEY', preparation)
+
+    def test_inline_paid_steps_keep_credentials_late_inside_the_same_job(self):
+        text = (Path(__file__).parents[1] / '.github/workflows/cookbook-production-check.yml').read_text()
+        ordinary, inline = text.split('    - name: Prepare the original inline paid assertion', 1)
+        prepare, run = inline.split('    - name: Run the original inline paid assertion', 1)
+        self.assertNotIn('secrets.OPENROUTER_API_KEY', prepare)
+        self.assertIn("inputs.operation == 'paid' && secrets.OPENROUTER_API_KEY || ''", ordinary)
+        self.assertIn("inputs.operation == 'production' && inputs.inline-paid", prepare)
+        self.assertIn("inputs.operation == 'production' && inputs.inline-paid", run)
+        self.assertIn('OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}', run)
+        self.assertIn('OPERATION: paid', run)
+        self.assertIn('fromJSON(inputs.inline-step-timeouts).run', run)
+        self.assertEqual(text.count('    runs-on:'), 1)
+
+    def test_browser_preparation_preserves_full_chromium_unless_shell_was_declared(self):
+        calls = []
+        node = SimpleNamespace(validate=lambda value, root: (value, None), install=lambda *args: None)
+        (self.root / 'mise.toml').write_text('[tools]\npython="3.13.5"\nbun="1.2.0"\n')
+        (self.root / 'tests/e2e').mkdir(parents=True)
+        config = self.config | {'node': {'packages': [{'directory': 'tests/e2e', 'manager': 'bun'}]}}
+        record = {'checks': [], 'prepare': {'packages': ['tests/e2e'], 'browser': 'tests/e2e'}}
+        with patch.object(driver, 'tools_modules', return_value=(workflows, node, None)), \
+                patch.object(driver, 'execute'), \
+                patch.object(driver, 'pinned', side_effect=lambda argv, *args: calls.append(argv)):
+            driver.prepare(self.root, self.tools, config, record, 'production', self.environment)
+            self.assertEqual(calls[-1], ['bun', 'x', '--no-install', 'playwright', 'install', '--with-deps', 'chromium'])
+            record['prepare']['browser_only_shell'] = True
+            driver.prepare(self.root, self.tools, config, record, 'production', self.environment)
+            self.assertIn('--only-shell', calls[-1])
 
     def test_source_and_deployed_audits_have_separate_explicit_execution_phases(self):
         effects=[]

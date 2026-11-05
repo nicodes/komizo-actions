@@ -89,7 +89,7 @@ def policy(root, path):
         if not isinstance(record, dict) or set(record) - {'expected_go', 'upstream', 'forbidden'}:
             raise ValueError('Go inspection selects only its native compiler, upstream paths and markers')
         if 'expected_go' in record and (not isinstance(record['expected_go'], str)
-                or not re.fullmatch('[0-9]+\\.[0-9]+\\.[0-9]+', record['expected_go'])):
+                or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', record['expected_go'])):
             raise ValueError('Go compiler selection must be an exact native version')
         upstream = record.get('upstream', [])
         if not isinstance(upstream, list) or len(upstream) > 16:

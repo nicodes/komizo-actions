@@ -1,0 +1,170 @@
+name: Audit explicit source and artifact dependencies and report failures
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      declaration:
+        type: string
+        required: true
+      step-timeouts:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      timeout-minutes:
+        type: number
+        required: true
+      environment:
+        type: string
+        required: false
+        default: ''
+      operation:
+        type: string
+        required: true
+      check:
+        type: string
+        required: true
+      report-timeout:
+        type: number
+        required: true
+permissions: {}
+jobs:
+  verify:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs['timeout-minutes'] }}
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    env:
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      KOMIZO_REF: ${{ inputs.komizo-ref }}
+      DECLARATION: ${{ inputs.declaration }}
+      OPERATION: security
+      OPERATION_CHECK: ''
+      OPERATION_RUNNER: ${{ inputs.runner }}
+      OPERATION_TIMEOUT: ${{ inputs['timeout-minutes'] }}
+      OPERATION_STEP_TIMEOUTS: ${{ inputs['step-timeouts'] }}
+      OPERATION_ENVIRONMENT: ${{ inputs.environment }}
+      OPERATION_REPORT_TIMEOUT: ${{ inputs['report-timeout'] }}
+      GH_TOKEN: ${{ github.token }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.artifacts/playwright
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _operation_cookbook
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _operation_actions
+    - name: Prepare the pinned configuration parser
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
+      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      with:
+        tools: python
+    - name: Admit exact trusted main and bounded native operational policy
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).plan }}
+      id: plan
+      shell: bash
+      run: python3 _operation_actions/scripts/operational.py plan
+    - name: Prepare dependencies and audit declared source
+      if: ${{ steps.plan.outputs['artifact-validation'] != 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).source }}
+      shell: bash
+      run: mise exec -- python3 _operation_actions/scripts/operational.py source
+    - name: Prepare frozen native artifact SDKs and dependencies
+      if: ${{ steps.plan.outputs['artifact-validation'] == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).prepare }}
+      shell: bash
+      run: mise exec -- python3 _operation_actions/scripts/operational.py setup-artifacts
+    - name: Build and validate the explicitly requested native artifacts
+      if: ${{ steps.plan.outputs['artifact-validation'] == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).build }}
+      shell: bash
+      run: mise exec -- python3 _operation_actions/scripts/operational.py build-artifacts
+    - name: Audit the prepared native artifacts
+      if: ${{ steps.plan.outputs['artifact-validation'] == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).source }}
+      shell: bash
+      run: mise exec -- python3 _operation_actions/scripts/operational.py audit-artifacts
+    - name: Run the original selected artifact assertions
+      if: ${{ steps.plan.outputs['artifact-validation'] == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checks }}
+      shell: bash
+      run: mise exec -- python3 _operation_actions/scripts/operational.py check-artifacts
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
+      if: ${{ always() && steps.plan.outputs.evidence != '' }}
+      with:
+        name: ${{ steps.plan.outputs['artifact-name'] }}
+        path: ${{ steps.plan.outputs.evidence }}
+        include-hidden-files: true
+        if-no-files-found: ${{ steps.plan.outputs['evidence-missing'] || 'error' }}
+        retention-days: 7
+  report:
+    needs: verify
+    if: failure()
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs['report-timeout'] }}
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _operation_cookbook
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _operation_actions
+    - name: Prepare the pinned report parser
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_setup }}
+      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      with:
+        tools: python
+    - name: Report bounded audit failure
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report }}
+      shell: bash
+      run: python3 _operation_cookbook/helpers/report-failure.py

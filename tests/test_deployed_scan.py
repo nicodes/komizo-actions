@@ -138,8 +138,10 @@ class DeployedDependencies(unittest.TestCase):
             self.assertFalse(any(args[:2] == ['docker', 'create'] for args in self.calls))
 
     def test_policy_paths_component_capabilities_and_links_fail_closed(self):
+        self.data['go']['gate']['expected_go'] = '1.27.3'
         self.write()
         self.assertEqual(scanner.policy(self.root, self.path)['rust']['api']['binaries'], self.contract['binaries'])
+        self.assertEqual(scanner.policy(self.root, self.path)['go']['gate']['expected_go'], '1.27.3')
         original = copy.deepcopy(self.data)
         mutations = [
             lambda d: d.update(version=True),

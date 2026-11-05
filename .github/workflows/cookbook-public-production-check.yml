@@ -100,8 +100,8 @@ jobs:
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
       if: ${{ always() && (steps.plan.outputs.evidence != '' || false) }}
       with:
-        name: production-verification-${{ github.run_id }}-${{ github.run_attempt }}
+        name: ${{ steps.plan.outputs['artifact-name'] }}
         path: ${{ steps.plan.outputs.evidence }}
         include-hidden-files: true
-        if-no-files-found: ignore
+        if-no-files-found: ${{ steps.plan.outputs['evidence-missing'] || 'error' }}
         retention-days: 7
