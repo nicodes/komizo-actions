@@ -1,0 +1,135 @@
+name: Publish selected exact-HEAD Preview images
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      plan:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      timeout-minutes:
+        type: number
+        required: true
+      publication-timeout-minutes:
+        type: number
+        required: true
+permissions: {}
+jobs:
+  publish:
+    name: Publish selected Preview images
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs['timeout-minutes'] }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      packages: write
+    env:
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      KOMIZO_REF: ${{ inputs.komizo-ref }}
+      PLAN: ${{ inputs.plan }}
+      PRODUCER_RUNNER: ${{ inputs.runner }}
+      PRODUCER_TIMEOUT: ${{ inputs['timeout-minutes'] }}
+      PUBLICATION_TIMEOUT: ${{ inputs['publication-timeout-minutes'] }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - name: Retrieve, admit and publish within the original producer deadline
+      id: producer
+      shell: bash
+      run: |
+        python3 - <<'PYTHON'
+        import base64,hashlib,importlib.util,json,math,os,re,signal,subprocess,sys,tempfile
+        from datetime import datetime,timedelta,timezone
+        from pathlib import Path
+        from urllib.request import Request,urlopen
+
+        environment=dict(os.environ)
+        repository=environment['GITHUB_REPOSITORY'];controller=environment['GITHUB_SHA']
+        if (not re.fullmatch('[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repository)
+                or environment.get('GITHUB_REF')!='refs/heads/main'
+                or environment.get('GITHUB_WORKFLOW_SHA')!=controller
+                or environment.get('GITHUB_WORKFLOW_REF')!=repository+'/.github/workflows/pr-preview.yml@refs/heads/main'
+                or environment.get('GITHUB_EVENT_NAME') not in {'pull_request_target','issue_comment'}
+                or environment.get('GITHUB_JOB')!='publish'
+                or any(not re.fullmatch('[a-f0-9]{40}',environment.get(k,'')) for k in ['GITHUB_SHA','TOOLS_REF','KOMIZO_REF'])
+                or any(not re.fullmatch('[1-9][0-9]{0,19}',environment.get(k,'')) for k in ['GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'])
+                or len(environment.get('PLAN','').encode())>131072):
+            raise ValueError('producer bootstrap requires its immutable trusted-main controller')
+        plan=json.loads(environment['PLAN']);total=plan['policy']['producer_timeout_minutes']
+        if type(total) is not int or not 1<=total<=180 or str(total)!=environment['PRODUCER_TIMEOUT']:
+            raise ValueError('producer bootstrap must preserve its declared job ceiling')
+        deadline=None
+
+        def fetch(path):
+            seconds=30 if deadline is None else min(30,math.floor((deadline-datetime.now(timezone.utc)).total_seconds()))
+            if seconds<=0:raise ValueError('original producer deadline expired during bootstrap')
+            request=Request('https://api.github.com/'+path,headers={'Authorization':'Bearer '+environment['GH_TOKEN'],
+                'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+            def expired(*_):raise TimeoutError('original producer deadline expired during metadata retrieval')
+            previous=signal.signal(signal.SIGALRM,expired);signal.setitimer(signal.ITIMER_REAL,seconds)
+            try:
+                with urlopen(request,timeout=seconds) as response:
+                    raw=response.read(4*1024*1024+1)
+            finally:
+                signal.setitimer(signal.ITIMER_REAL,0);signal.signal(signal.SIGALRM,previous)
+            if len(raw)>4*1024*1024:raise ValueError('producer bootstrap metadata exceeds its bound')
+            return json.loads(raw)
+
+        jobs=fetch(f"repos/{repository}/actions/runs/{environment['GITHUB_RUN_ID']}/attempts/{environment['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")
+        hosts=[j for j in jobs.get('jobs',[]) if j.get('name','').endswith('/ Make full')]
+        if jobs.get('total_count')!=len(jobs.get('jobs',[])) or len(hosts)!=1 or hosts[0].get('conclusion')!='success' or hosts[0].get('head_sha')!=controller:
+            raise ValueError('producer bootstrap needs the sole successful actual source job')
+        started=datetime.fromisoformat(hosts[0]['started_at'].replace('Z','+00:00'))
+        if started.tzinfo is None or started>datetime.now(timezone.utc)+timedelta(seconds=5):raise ValueError('invalid source job timing')
+        deadline=started+timedelta(minutes=total)
+        environment['PREVIEW_PRODUCER_DEADLINE']=deadline.isoformat()
+        for name,key in [('tools','TOOLS_REF'),('komizo-actions','KOMIZO_REF')]:
+            if fetch('repos/nicodes/'+name+'/compare/'+environment[key]+'...main').get('status') not in {'ahead','identical'}:
+                raise ValueError('producer execution source is not accepted on main')
+        record=fetch('repos/nicodes/tools/contents/helpers/dev.py?ref='+environment['TOOLS_REF'])
+        if record.get('encoding')!='base64' or record.get('type')!='file' or record.get('size',1<<21)>1<<20:
+            raise ValueError('producer ownership helper must be a bounded immutable SDK file')
+        body=base64.b64decode(record['content'],validate=False)
+        if len(body)!=record['size'] or len(body)>1<<20 or hashlib.sha1(b'blob '+str(len(body)).encode()+b'\0'+body).hexdigest()!=record.get('sha'):
+            raise ValueError('producer ownership helper differs from its immutable Git blob')
+        with tempfile.TemporaryDirectory(prefix='trusted-preview-producer-',dir=environment['RUNNER_TEMP']) as directory:
+            directory=Path(directory);helper=directory/'process.py';helper.write_bytes(body);helper.chmod(0o600)
+            spec=importlib.util.spec_from_file_location('preview_process_ownership',helper)
+            processes=importlib.util.module_from_spec(spec);spec.loader.exec_module(processes);processes.adopt_descendants()
+            environment['PREVIEW_PRODUCER_PROCESS_HELPER']=str(helper)
+            credentials=base64.b64encode(('x-access-token:'+environment['GH_TOKEN']).encode()).decode()
+            clone_environment=dict(environment,GIT_CONFIG_GLOBAL='/dev/null',GIT_CONFIG_NOSYSTEM='1',GIT_TERMINAL_PROMPT='0',
+                GIT_CONFIG_COUNT='2',GIT_CONFIG_KEY_0='http.https://github.com/.extraheader',GIT_CONFIG_VALUE_0='AUTHORIZATION: basic '+credentials,
+                GIT_CONFIG_KEY_1='core.hooksPath',GIT_CONFIG_VALUE_1='/dev/null')
+            def run(command,cwd,values):
+                seconds=math.floor((deadline-datetime.now(timezone.utc)).total_seconds())
+                if seconds<=0:raise ValueError('original producer deadline expired before retrieval')
+                child=subprocess.Popen(command,cwd=cwd,env=values,start_new_session=True)
+                try:
+                    child.wait(timeout=seconds)
+                    if child.returncode:raise subprocess.CalledProcessError(child.returncode,command)
+                finally:processes.stop_descendants(child)
+            source=directory/'actions';source.mkdir(mode=0o700)
+            for arguments in [['init','-q'],['remote','add','origin','https://github.com/nicodes/komizo-actions.git'],
+                    ['fetch','--no-tags','--depth=1','origin',environment['KOMIZO_REF']],['checkout','--force','--detach','FETCH_HEAD']]:
+                run(['git',*arguments],source,clone_environment)
+            actual=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True,timeout=10).strip()
+            if actual!=environment['KOMIZO_REF']:raise ValueError('retrieved producer differs from its accepted source')
+            run([sys.executable,str(source/'scripts/preview-producer.py'),'run'],Path.cwd(),environment)
+        PYTHON
+    - name: Retain exact native producer and selected publication evidence
+      timeout-minutes: ${{ fromJSON(steps.producer.outputs.remaining_minutes) }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: preview-producer-${{ steps.producer.outputs.head }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .artifacts/preview-producer-publication.json
+        include-hidden-files: true
+        if-no-files-found: error
+        retention-days: 7

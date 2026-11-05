@@ -1,0 +1,90 @@
+name: Preserve an opt-in exact-HEAD Preview producer
+description: Resolve the existing lifecycle and bind source publication to reviewed native policy
+inputs:
+  tools-ref:
+    description: Accepted immutable cookbook source
+    required: true
+  komizo-ref:
+    description: Accepted immutable producer source
+    required: true
+  declaration:
+    description: Tracked native publication policy
+    required: true
+outputs:
+  enabled:
+    description: Existing lifecycle decision
+    value: ${{ steps.plan.outputs.enabled || steps.request.outputs.enabled }}
+  action:
+    description: Existing up or down lifecycle
+    value: ${{ steps.plan.outputs.action || steps.request.outputs.action }}
+  pr:
+    description: Same-repository pull request
+    value: ${{ steps.plan.outputs.pr || steps.request.outputs.pr }}
+  sha:
+    description: Exact selected source commit
+    value: ${{ steps.plan.outputs.sha || steps.request.outputs.sha }}
+  base:
+    description: Exact current trusted-main source
+    value: ${{ steps.plan.outputs.base }}
+  plan:
+    description: Closed immutable source and publication authority
+    value: ${{ steps.plan.outputs.plan }}
+  build-runner:
+    description: Original source producer runner
+    value: ${{ steps.plan.outputs.build_runner }}
+  build-timeout:
+    description: Original source producer deadline
+    value: ${{ steps.plan.outputs.build_timeout }}
+  publish-runner:
+    description: Original publication runner
+    value: ${{ steps.plan.outputs.publish_runner }}
+  publish-timeout:
+    description: Original producer job ceiling
+    value: ${{ steps.plan.outputs.publish_timeout }}
+  publication-timeout:
+    description: Original publication command deadline
+    value: ${{ steps.plan.outputs.publication_timeout }}
+runs:
+  using: composite
+  steps:
+    - name: Resolve the independent opt-in lifecycle
+      id: request
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 "$GITHUB_ACTION_PATH/../scripts/preview-producer.py" resolve
+    - name: Check out trusted caller policy only for up
+      if: steps.request.outputs.enabled == 'true' && steps.request.outputs.action == 'up'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Check out accepted source SDK only for up
+      if: steps.request.outputs.enabled == 'true' && steps.request.outputs.action == 'up'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        path: _preview_producer_tools
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Check out accepted producer only for up
+      if: steps.request.outputs.enabled == 'true' && steps.request.outputs.action == 'up'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _preview_producer_actions
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Admit the exact selected-HEAD source producer
+      id: plan
+      if: steps.request.outputs.enabled == 'true' && steps.request.outputs.action == 'up'
+      shell: bash
+      env:
+        TOOLS_REF: ${{ inputs.tools-ref }}
+        KOMIZO_REF: ${{ inputs.komizo-ref }}
+        DECLARATION: ${{ inputs.declaration }}
+        GH_TOKEN: ${{ github.token }}
+      run: python3 _preview_producer_actions/scripts/preview-producer.py request --declaration "$DECLARATION"
