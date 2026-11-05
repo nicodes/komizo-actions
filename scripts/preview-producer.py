@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -140,7 +141,8 @@ def request(root, tools, name, environment, lookup=api):
     fresh(plan, environment, lookup)
     result.update(plan=json.dumps(plan, sort_keys=True, separators=(',', ':')), base=plan['base'],
                   build_runner=policy['build']['runner'], build_timeout=str(policy['build']['timeout_minutes']),
-                  publish_runner=policy['publish']['runner'], publish_timeout=str(policy['publish']['timeout_minutes']))
+                  publish_runner=policy['publish']['runner'], publish_timeout=str(policy['producer_timeout_minutes']),
+                  publication_timeout=str(policy['publish']['timeout_minutes']))
     return result
 
 
@@ -293,20 +295,116 @@ def payload(incoming, proof):
             raise ValueError('Preview artifact bytes differ from complete native acceptance')
 
 
-def bounded(command, *, tools, deadline, cwd, env, input=None):
+def bounded(command, *, tools, deadline, cwd, env, input=None, output=None):
     seconds = math.floor((deadline - datetime.now(timezone.utc)).total_seconds())
     if seconds <= 0:
         raise ValueError('Preview publication deadline expired before its next command')
-    processes = module('producer_process_ownership', tools / 'helpers/dev.py')
+    helper = Path(env.get('PREVIEW_PRODUCER_PROCESS_HELPER', str(tools / 'helpers/dev.py')))
+    processes = module('producer_process_ownership', helper)
     processes.adopt_descendants()
     child = subprocess.Popen(command, cwd=cwd, env=env, text=True, stdin=subprocess.PIPE if input is not None else None,
-                             start_new_session=True)
+                             stdout=output, start_new_session=True)
     try:
         child.communicate(input=input, timeout=seconds)
         if child.returncode:
             raise subprocess.CalledProcessError(child.returncode, command)
     finally:
         processes.stop_descendants(child)
+
+
+def extract_packet(archive, destination):
+    if destination.exists() or destination.is_symlink() or any(p.is_symlink() for p in destination.parents):
+        raise ValueError('Preview packet requires a fresh regular destination')
+    with zipfile.ZipFile(archive) as package:
+        entries = package.infolist()
+        names = [entry.filename for entry in entries]
+        if not entries or len(entries) > 200000 or len(names) != len(set(names)) or sum(e.file_size for e in entries) > 8 << 30:
+            raise ValueError('Preview packet has excessive or ambiguous entries')
+        for entry in entries:
+            relative = PurePosixPath(entry.filename)
+            mode = (entry.external_attr >> 16) & 0o170000
+            name = entry.filename.rstrip('/') if entry.is_dir() else entry.filename
+            if (name != str(relative) or relative.is_absolute() or '..' in relative.parts or '\\' in entry.filename
+                    or entry.file_size > 2 << 30 or mode not in {0, 0o040000, 0o100000}):
+                raise ValueError('Preview packet contains an unsafe nonregular path')
+        destination.mkdir(mode=0o700, parents=True)
+        for entry in entries:
+            path = destination / entry.filename
+            if entry.is_dir():
+                path.mkdir(mode=0o700, parents=True, exist_ok=True)
+            else:
+                path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                with package.open(entry) as source, path.open('xb') as target:
+                    os.chmod(path, 0o600)
+                    while chunk := source.read(1 << 20):
+                        target.write(chunk)
+
+
+def retrieve(root, repository, revision, values, tools, deadline, execute=bounded):
+    if not preview.REPOSITORY.fullmatch(repository) or not SHA.fullmatch(revision):
+        raise ValueError('Preview retrieval requires a fixed repository and immutable revision')
+    if root.is_symlink() or any(p.is_symlink() for p in root.parents) or (root.exists() and any(root.iterdir())):
+        raise ValueError('Preview retrieval requires an empty regular checkout')
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    import base64
+    token = values.get('GH_TOKEN', '')
+    if not token or len(token) > 512 or any(c.isspace() or c == '\0' for c in token):
+        raise ValueError('Preview retrieval requires its bounded workflow token')
+    credentials = base64.b64encode(('x-access-token:' + token).encode()).decode()
+    environment = dict(values, GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0',
+        GIT_LFS_SKIP_SMUDGE='1', GIT_CONFIG_COUNT='2', GIT_CONFIG_KEY_0='http.https://github.com/.extraheader',
+        GIT_CONFIG_VALUE_0='AUTHORIZATION: basic ' + credentials, GIT_CONFIG_KEY_1='core.hooksPath', GIT_CONFIG_VALUE_1='/dev/null')
+    for arguments in [['init', '-q'], ['remote', 'add', 'origin', 'https://github.com/' + repository + '.git'],
+            ['fetch', '--no-tags', '--depth=1', 'origin', revision], ['checkout', '--force', '--detach', 'FETCH_HEAD']]:
+        execute(['git', *arguments], tools=tools, deadline=deadline, cwd=root, env=environment)
+    if git(root, 'rev-parse', 'HEAD') != revision:
+        raise ValueError('Preview retrieval returned another commit')
+
+
+def run_writer(root, tools, source_root, incoming, environment, lookup=api, execute=bounded):
+    # The immutable workflow bootstraps this trusted process under the actual
+    # source job deadline. Its supervisor owns every descendant, including
+    # checkout, metadata reads, decompression and final publication.
+    raw = environment.get('PLAN', '')
+    if len(raw.encode()) > 131072:
+        raise ValueError('Preview producer plan exceeds its bound')
+    plan = json.loads(raw)
+    _, actual_deadline = remaining(plan, lookup(f"repos/{environment['GITHUB_REPOSITORY']}/actions/runs/{environment['GITHUB_RUN_ID']}/attempts/{environment['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100"))
+    deadline = datetime.fromisoformat(environment['PREVIEW_PRODUCER_DEADLINE'])
+    if deadline != actual_deadline:
+        raise ValueError('Preview bootstrap deadline differs from the actual source job')
+    retrieve(root, environment['GITHUB_REPOSITORY'], environment['GITHUB_SHA'], environment, tools, deadline, execute)
+    retrieve(tools, 'nicodes/tools', environment['TOOLS_REF'], environment, tools, deadline, execute)
+    preview.accepted_automation(tools, environment['TOOLS_REF'], environment['KOMIZO_REF'], lookup)
+    plan = validate_plan(raw, root, tools, environment, lookup)
+    retrieve(source_root, plan['repository'], plan['head'], environment, tools, deadline, execute)
+    artifacts = lookup(f"repos/{plan['repository']}/actions/runs/{environment['GITHUB_RUN_ID']}/artifacts?per_page=100")
+    if artifacts.get('total_count') != len(artifacts.get('artifacts', [])):
+        raise ValueError('Preview requires complete same-run artifact metadata')
+    name = f"cookbook-full-{plan['head']}-{environment['GITHUB_RUN_ID']}-{environment['GITHUB_RUN_ATTEMPT']}"
+    matches = [a for a in artifacts['artifacts'] if a.get('name') == name]
+    if (len(matches) != 1 or matches[0].get('expired') is not False
+            or type(matches[0].get('id')) is not int or matches[0]['id'] < 1
+            or type(matches[0].get('size_in_bytes')) is not int or not 1 <= matches[0]['size_in_bytes'] <= 2 << 30
+            or not re.fullmatch('sha256:[a-f0-9]{64}', matches[0].get('digest', ''))):
+        raise ValueError('Preview requires one bounded complete current-attempt native packet')
+    metadata = matches[0]
+    with tempfile.TemporaryDirectory(prefix='preview-native-packet-') as directory:
+        packet = Path(directory) / 'native.zip'
+        with packet.open('xb') as target:
+            os.chmod(packet, 0o600)
+            execute(['gh', 'api', '--method', 'GET', f"repos/{plan['repository']}/actions/artifacts/{metadata['id']}/zip"],
+                    tools=tools, deadline=deadline, cwd=root, env=environment, output=target)
+        with packet.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if packet.stat().st_size != metadata['size_in_bytes'] or 'sha256:' + digest != metadata['digest']:
+            raise ValueError('Preview native packet differs from its immutable Actions artifact')
+        extract_packet(packet, incoming)
+    publication(plan, root, source_root, tools, environment['TOOLS_REF'], incoming, environment, lookup, execute)
+    seconds, _ = remaining(plan, lookup(f"repos/{plan['repository']}/actions/runs/{environment['GITHUB_RUN_ID']}/attempts/{environment['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100"))
+    if seconds < 120:
+        raise ValueError('Preview producer has insufficient original budget to retain publication evidence')
+    preview.output({'head': plan['head'], 'remaining_minutes': str(seconds // 60 - 1)}, environment)
 
 
 def publication(plan, root, source_root, tools, tools_ref, incoming, environment, lookup=api, execute=bounded):
@@ -329,7 +427,8 @@ def publication(plan, root, source_root, tools, tools_ref, incoming, environment
     writers = [job for job in jobs.get('jobs', []) if job.get('name', '').endswith('/ Publish selected Preview images')]
     if (environment.get('GITHUB_JOB') != 'publish'
             or environment.get('PRODUCER_RUNNER') != policy['publish']['runner']
-            or environment.get('PRODUCER_TIMEOUT') != str(policy['publish']['timeout_minutes'])
+            or environment.get('PRODUCER_TIMEOUT') != str(policy['producer_timeout_minutes'])
+            or environment.get('PUBLICATION_TIMEOUT') != str(policy['publish']['timeout_minutes'])
             or len(writers) != 1 or writers[0].get('head_sha') != plan['controller']
             or policy['publish']['runner'] not in writers[0].get('labels', [])
             or writers[0].get('status') != 'in_progress'):
@@ -406,7 +505,7 @@ def publication(plan, root, source_root, tools, tools_ref, incoming, environment
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=['resolve', 'request', 'plan', 'verify', 'publish'])
+    parser.add_argument('operation', choices=['resolve', 'request', 'plan', 'verify', 'publish', 'run'])
     parser.add_argument('--tools', type=Path, default=Path('_preview_producer_tools'))
     parser.add_argument('--declaration', default='')
     parser.add_argument('--source-root', type=Path, default=Path('_preview_producer_source'))
@@ -416,6 +515,9 @@ def main():
         environment = dict(os.environ); root = Path.cwd()
         if args.operation == 'resolve':
             preview.output(resolve(environment), environment)
+            return
+        if args.operation == 'run':
+            run_writer(root, args.tools.resolve(), args.source_root.resolve(), args.incoming.resolve(), environment)
             return
         preview.accepted_automation(args.tools, environment['TOOLS_REF'], environment['KOMIZO_REF'])
         if args.operation == 'request':

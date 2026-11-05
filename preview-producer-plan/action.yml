@@ -16,13 +16,13 @@ outputs:
     value: ${{ steps.plan.outputs.enabled || steps.request.outputs.enabled }}
   action:
     description: Existing up or down lifecycle
-    value: ${{ steps.request.outputs.action }}
+    value: ${{ steps.plan.outputs.action || steps.request.outputs.action }}
   pr:
     description: Same-repository pull request
-    value: ${{ steps.request.outputs.pr }}
+    value: ${{ steps.plan.outputs.pr || steps.request.outputs.pr }}
   sha:
     description: Exact selected source commit
-    value: ${{ steps.request.outputs.sha }}
+    value: ${{ steps.plan.outputs.sha || steps.request.outputs.sha }}
   base:
     description: Exact current trusted-main source
     value: ${{ steps.plan.outputs.base }}
@@ -39,8 +39,11 @@ outputs:
     description: Original publication runner
     value: ${{ steps.plan.outputs.publish_runner }}
   publish-timeout:
-    description: Original publication step deadline
+    description: Original producer job ceiling
     value: ${{ steps.plan.outputs.publish_timeout }}
+  publication-timeout:
+    description: Original publication command deadline
+    value: ${{ steps.plan.outputs.publication_timeout }}
 runs:
   using: composite
   steps:

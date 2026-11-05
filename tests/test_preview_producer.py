@@ -14,6 +14,8 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import zipfile
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('preview_producer', ROOT / 'scripts/preview-producer.py')
@@ -58,7 +60,8 @@ class PreviewProducer(unittest.TestCase):
             GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='issue_comment', GITHUB_SERVER_URL='https://github.com',
             GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/pr-preview.yml@refs/heads/main',
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', GITHUB_JOB='publish', GH_TOKEN='fixture-token',
-            PRODUCER_RUNNER='ubuntu-24.04', PRODUCER_TIMEOUT='15')
+            PRODUCER_RUNNER='ubuntu-24.04', PRODUCER_TIMEOUT='60', PUBLICATION_TIMEOUT='15',
+            TOOLS_REF=self.tools_ref,KOMIZO_REF='d'*40)
         self.event = dict(action='created', issue=dict(number=42, pull_request={'url':'fixture'}),
             comment=dict(body='/preview', author_association='OWNER'))
         self.event_path = self.directory / 'event.json'; self.event_path.write_text(json.dumps(self.event))
@@ -92,7 +95,7 @@ class PreviewProducer(unittest.TestCase):
         self.assertEqual(json.loads(result['plan']), self.plan)
         self.assertEqual(result['sha'], self.head)
         self.assertEqual(producer.validate_plan(result['plan'], self.root, self.tools, self.environment, self.lookup), self.plan)
-        self.assertEqual(result['build_timeout'], '60'); self.assertEqual(result['publish_timeout'], '15')
+        self.assertEqual(result['build_timeout'], '60'); self.assertEqual(result['publish_timeout'], '60'); self.assertEqual(result['publication_timeout'], '15')
 
     def test_target_event_preserves_all_original_lifecycle_decisions_and_independent_down(self):
         self.environment['GITHUB_EVENT_NAME'] = 'pull_request_target'
@@ -269,12 +272,12 @@ class PreviewProducer(unittest.TestCase):
                 elif change=='attempt':
                     p=incoming/'.artifacts/cookbook-validation.json';v=json.loads(p.read_text());v['execution_context']['GITHUB_RUN_ATTEMPT']='1';p.write_text(json.dumps(v))
                 elif change=='archive':(incoming/'.artifacts/release/images.tar.gz').write_bytes(b'unverified bytes')
-                elif change=='writer':self.environment['PRODUCER_TIMEOUT']='60'
+                elif change=='writer':self.environment['PRODUCER_TIMEOUT']='15'
                 else:self.jobs['jobs'][0]['started_at']=(datetime.now(timezone.utc)-timedelta(minutes=61)).isoformat()
                 with self.assertRaises(ValueError):self.run_publication(incoming,lambda *a,**k:calls.append(a))
                 self.assertEqual(calls,[])
                 import shutil
-                shutil.rmtree(incoming);self.environment['PRODUCER_TIMEOUT']='15'
+                shutil.rmtree(incoming);self.environment['PRODUCER_TIMEOUT']='60'
 
     @unittest.skipUnless(sys.platform == 'linux', 'owned descendant handles are Linux runner capabilities')
     def test_expired_command_deadline_reaps_its_actual_detached_descendant(self):
@@ -286,6 +289,88 @@ class PreviewProducer(unittest.TestCase):
             producer.bounded([sys.executable,str(program),str(identity)],tools=tools,
                 deadline=datetime.now(timezone.utc)+timedelta(seconds=1.8),cwd=self.directory,env=dict(os.environ))
         with self.assertRaises(ProcessLookupError):os.kill(int(identity.read_text()),0)
+
+    def test_native_packet_is_safely_inventoried_before_any_file_is_extracted(self):
+        packet=self.directory/'packet.zip'
+        with zipfile.ZipFile(packet,'w') as archive:archive.writestr('.artifacts/data.bin',b'accepted bytes')
+        destination=self.directory/'extracted';producer.extract_packet(packet,destination)
+        self.assertEqual((destination/'.artifacts/data.bin').read_bytes(),b'accepted bytes')
+        self.assertEqual((destination/'.artifacts/data.bin').stat().st_mode&0o777,0o600)
+        for kind in ['traversal','symlink','duplicate']:
+            with zipfile.ZipFile(packet,'w') as archive:
+                archive.writestr('first.bin',b'first')
+                if kind=='symlink':
+                    entry=zipfile.ZipInfo('linked');entry.external_attr=0o120777<<16;archive.writestr(entry,b'../../escape')
+                elif kind=='traversal':archive.writestr('../escape',b'unsafe')
+                else:
+                    import warnings
+                    with warnings.catch_warnings():warnings.simplefilter('ignore');archive.writestr('first.bin',b'duplicate')
+            target=self.directory/('unsafe-'+kind)
+            with self.subTest(kind=kind),self.assertRaises(ValueError):producer.extract_packet(packet,target)
+            self.assertFalse(target.exists())
+
+    def test_trusted_checkout_retrieves_only_the_exact_commit_without_running_source_hooks_or_mise(self):
+        destination=self.directory/'retrieved';values=self.environment|{
+            'PREVIEW_PRODUCER_PROCESS_HELPER':str(Path(os.environ['TOOLS_ROOT'])/'helpers/dev.py')}
+        commands=[];deadline=datetime.now(timezone.utc)+timedelta(seconds=20)
+        def local(command,**options):
+            commands.append(command);self.assertEqual(options['deadline'],deadline)
+            self.assertNotIn('fixture-token',' '.join(command));self.assertEqual(command[0],'git')
+            self.assertEqual(options['env']['GIT_CONFIG_VALUE_1'],'/dev/null')
+            actual=list(command)
+            if actual[1:4]==['remote','add','origin']:actual[-1]=str(self.source)
+            producer.bounded(actual,**options)
+        producer.retrieve(destination,'owner/demo',self.head,values,self.tools,deadline,local)
+        self.assertEqual(self.git(destination,'rev-parse','HEAD'),self.head)
+        self.assertEqual(len(commands),4)
+        self.assertNotIn('fixture-token',(destination/'.git/config').read_text())
+        with self.assertRaises(ValueError):producer.retrieve(self.directory/'expired','owner/demo',self.head,values,
+            self.tools,datetime.now(timezone.utc)-timedelta(seconds=1))
+
+    def test_writer_refuses_expired_or_malicious_packets_before_publication(self):
+        packet=self.directory/'transport.zip'
+        with zipfile.ZipFile(packet,'w') as archive:archive.writestr('../escape',b'unsafe')
+        artifact=dict(id=1,name=f'cookbook-full-{self.head}-123-2',expired=False,size_in_bytes=packet.stat().st_size,
+            digest='sha256:'+hashlib.sha256(packet.read_bytes()).hexdigest())
+        environment=self.environment|{'PREVIEW_PRODUCER_DEADLINE':producer.remaining(self.plan,self.jobs)[1].isoformat(),
+            'PLAN':json.dumps(self.plan)}
+        def lookup(path):
+            return {'total_count':1,'artifacts':[artifact]} if path.endswith('/artifacts?per_page=100') else self.lookup(path)
+        def download(command,**options):options['output'].write(packet.read_bytes())
+        for kind in ['expired','digest','unsafe']:
+            original=self.jobs['jobs'][0]['started_at']
+            if kind=='expired':self.jobs['jobs'][0]['started_at']=(datetime.now(timezone.utc)-timedelta(minutes=61)).isoformat()
+            if kind=='digest':artifact['digest']='sha256:'+'e'*64
+            with self.subTest(kind=kind),patch.object(producer,'retrieve') as retrieve,\
+                    patch.object(producer.preview,'accepted_automation'),patch.object(producer,'publication') as publish:
+                with self.assertRaises(ValueError):producer.run_writer(self.root,self.tools,self.source,self.directory/'packet-input',environment,lookup,download)
+                publish.assert_not_called()
+                if kind=='expired':retrieve.assert_not_called()
+            self.jobs['jobs'][0]['started_at']=original;artifact['digest']='sha256:'+hashlib.sha256(packet.read_bytes()).hexdigest()
+
+    def test_actual_workflow_bootstrap_refuses_expired_metadata_and_changed_sdk_bytes_before_git(self):
+        workflow=yaml.safe_load((ROOT/'.github/workflows/cookbook-preview-producer-publish.yml').read_text())
+        body=workflow['jobs']['publish']['steps'][0]['run']
+        program=body.split("python3 - <<'PYTHON'\n",1)[1].rsplit('\nPYTHON',1)[0]
+        environment=self.environment|{'PLAN':json.dumps(self.plan),'TOOLS_REF':self.tools_ref,'KOMIZO_REF':'d'*40,
+            'RUNNER_TEMP':str(self.directory)}
+        helper=b'raise AssertionError("untrusted SDK bytes executed")\n'
+        def response(request,**_):
+            url=request.full_url
+            if '/jobs?' in url:value=self.jobs
+            elif '/compare/' in url:value={'status':'ahead'}
+            else:
+                import base64
+                value={'type':'file','encoding':'base64','size':len(helper),'content':base64.b64encode(helper).decode(),'sha':'e'*40}
+            return io.BytesIO(json.dumps(value).encode())
+        for kind in ['expired','changed-helper']:
+            original=self.jobs['jobs'][0]['started_at']
+            if kind=='expired':self.jobs['jobs'][0]['started_at']=(datetime.now(timezone.utc)-timedelta(minutes=61)).isoformat()
+            with self.subTest(kind=kind),patch.dict(os.environ,environment,clear=True),\
+                    patch('urllib.request.urlopen',side_effect=response),patch('subprocess.Popen') as execute:
+                with self.assertRaises(ValueError):exec(compile(program,'actual-writer-bootstrap','exec'),{})
+                execute.assert_not_called()
+            self.jobs['jobs'][0]['started_at']=original
 
 
 if __name__=='__main__':unittest.main()
