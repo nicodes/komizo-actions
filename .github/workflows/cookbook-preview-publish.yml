@@ -1,0 +1,89 @@
+name: Publish exact accepted Preview images
+'on':
+  workflow_call:
+    inputs:
+      tools-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      plan:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      timeout-minutes:
+        type: number
+        required: true
+permissions: {}
+jobs:
+  publish:
+    name: Publish exact Preview images
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs['timeout-minutes'] }}
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      packages: write
+      attestations: read
+    env:
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      KOMIZO_REF: ${{ inputs.komizo-ref }}
+      PLAN: ${{ inputs.plan }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        fetch-depth: 0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/tools
+        ref: ${{ inputs.tools-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _preview_cookbook
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: _preview_actions
+    - name: Revalidate exact request and trusted publication policy
+      id: plan
+      shell: bash
+      run: python3 _preview_actions/scripts/preview.py plan
+    - name: Inspect exact PR source as data
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ steps.plan.outputs.head }}
+        path: _preview_source
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Download current-attempt full validation
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: cookbook-full-${{ steps.plan.outputs.head }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .artifacts/preview-input
+    - name: Authenticate only the trusted publisher
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ github.token }}
+    - name: Admit and publish the exact tested archive
+      shell: bash
+      run: python3 _preview_actions/scripts/preview.py publish
+    - name: Retain exact Preview publication evidence
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: preview-publication-${{ steps.plan.outputs.head }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .artifacts/preview-publication.json
+        include-hidden-files: true
+        if-no-files-found: error
+        retention-days: 7
