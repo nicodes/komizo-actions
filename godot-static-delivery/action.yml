@@ -43,13 +43,10 @@ runs:
       ref: ${{ inputs.tools-ref }}
       path: _godot_static_cookbook
       persist-credentials: false
-  - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+  - uses: ./_godot_static_cookbook/setup
     with:
-      install_args: python
-      cache: true
+      tools: python
     env:
-      MISE_AUTO_INSTALL: 'false'
-      MISE_EXEC_AUTO_INSTALL: 'false'
       MISE_GITHUB_TOKEN: ${{ github.token }}
   - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
     with:
@@ -79,7 +76,6 @@ runs:
       kind: gate-artifact
       image-base: ghcr.io/${{ github.repository }}
       expected-gate-id: ${{ steps.publication.outputs.gate-id }}
-    timeout-minutes: 2
   - name: Recheck current main before host activation
     shell: bash
     env:

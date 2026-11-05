@@ -41,7 +41,6 @@ runs:
     - uses: nicodes/komizo-actions/connect@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
       with:
         user: komizo-${{ inputs.project }}
-      timeout-minutes: 3
     - name: Capture the verified encrypted pre-deploy snapshot
       id: backup
       if: steps.plan.outputs.backup != ''
@@ -50,8 +49,7 @@ runs:
         PROJECT: ${{ inputs.project }}
         BACKUP_CONFIG: ${{ steps.plan.outputs.backup }}
         TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
-      run: python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"
-      timeout-minutes: 15
+      run: timeout --foreground --kill-after=10s 900s python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"
     - name: Upload the encrypted snapshot
       if: steps.plan.outputs.upload == 'true' && steps.backup.outputs.has-export == 'true'
       shell: bash
@@ -59,8 +57,7 @@ runs:
         PROJECT: ${{ inputs.project }}
         BACKUP_ALLOWED_SLUGS: ${{ steps.plan.outputs.allowed-products }}
         TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
-      run: python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" upload --project "$PROJECT"
-      timeout-minutes: 10
+      run: timeout --foreground --kill-after=10s 600s python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" upload --project "$PROJECT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: steps.plan.outputs.backup != ''
       with:
@@ -69,12 +66,10 @@ runs:
         if-no-files-found: error
         include-hidden-files: true
         retention-days: 30
-      timeout-minutes: 10
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: host-release-${{ github.sha }}
         path: .artifacts/komizo-release
-      timeout-minutes: 5
     - name: Deploy immutable accepted images
       uses: nicodes/komizo-actions/deploy@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
       with:
@@ -83,15 +78,13 @@ runs:
         registry-user: ${{ github.repository_owner }}
         registry-token: ${{ env.KOMIZO_REGISTRY_TOKEN }}
         health-urls: ${{ steps.plan.outputs.health-urls }}
-      timeout-minutes: 25
     - name: Verify product readiness contract
       if: steps.plan.outputs.readiness != ''
       shell: bash
       env:
         READINESS: ${{ steps.plan.outputs.readiness }}
         EXPECTED_REVISION: ${{ github.sha }}
-      run: python3 "$READINESS"
-      timeout-minutes: 3
+      run: timeout --foreground --kill-after=10s 180s python3 "$READINESS"
     - name: Record owner production acceptance status
       shell: bash
       run: printf '%s\n' 'Availability checks passed. Authenticated account acceptance must be recorded separately.' >> "$GITHUB_STEP_SUMMARY"
@@ -101,5 +94,4 @@ runs:
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}
-      run: ssh -o BatchMode=yes -o ConnectTimeout=15 deploy-target doas "/usr/local/bin/diagnose-$PROJECT" 200
-      timeout-minutes: 3
+      run: timeout --foreground --kill-after=10s 180s ssh -o BatchMode=yes -o ConnectTimeout=15 deploy-target doas "/usr/local/bin/diagnose-$PROJECT" 200
