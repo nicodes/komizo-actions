@@ -29,6 +29,13 @@ class PublicVerification(unittest.TestCase):
         for source,release,runner,timeout in [(SOURCE,'wrong',self.entry['runner'],15),(SOURCE,RELEASE,'ubuntu-24.04',15),(SOURCE,RELEASE,self.entry['runner'],16)]:
             with self.assertRaises(ValueError):public.select(self.config,self.plan,source,release,self.env,runner,timeout)
 
+    def test_existing_manual_historical_expectations_do_not_change_the_checked_out_main_code(self):
+        older='c'*40
+        with self.assertRaisesRegex(ValueError,'current main payload'):
+            public.select(self.config,self.plan,SOURCE,RELEASE,self.env,self.entry['runner'],15,older,True)
+        self.assertEqual(public.select(self.config,self.plan,SOURCE,RELEASE,self.env,self.entry['runner'],15,older,False),self.entry)
+        with self.assertRaises(ValueError):public.select(self.config,self.plan,older,RELEASE,self.env,self.entry['runner'],15,older,False)
+
     def test_coverage_cannot_invent_browsers_unknown_programs_or_generic_commands(self):
         for change in ['matrix','display','program','arguments','role','packages','duplicate']:
             entry=copy.deepcopy(self.entry);plan={'production':{'include':[entry]}}

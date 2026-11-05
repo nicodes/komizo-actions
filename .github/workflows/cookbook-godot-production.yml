@@ -14,6 +14,10 @@ name: Verify exact public Godot release
       release-id:
         required: true
         type: string
+      expected-source:
+        required: false
+        type: string
+        default: ''
       runner:
         required: true
         type: string
@@ -55,6 +59,7 @@ jobs:
         tools-ref: ${{ inputs.tools-ref }}
         source: ${{ inputs.source }}
         release-id: ${{ inputs.release-id }}
+        expected-source: ${{ inputs.expected-source }}
         runner: ${{ inputs.runner }}
         timeout-minutes: ${{ inputs.timeout-minutes }}
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

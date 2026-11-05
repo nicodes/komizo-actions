@@ -10,6 +10,10 @@ inputs:
   release-id:
     description: Exact verified ordinary payload identity
     required: true
+  expected-source:
+    description: Expected deployed source when the existing native manual policy permits a historical payload
+    required: false
+    default: ''
   runner:
     description: Existing native sandbox-capable runner declaration
     required: true
@@ -53,23 +57,25 @@ runs:
       SOURCE: ${{ inputs.source }}
       RELEASE_ID: ${{ inputs.release-id }}
       TOOLS_REF: ${{ inputs.tools-ref }}
+      EXPECTED_SOURCE: ${{ inputs.expected-source }}
       DECLARED_RUNNER: ${{ inputs.runner }}
       DECLARED_TIMEOUT: ${{ inputs.timeout-minutes }}
       MISE_AUTO_INSTALL: 'false'
       MISE_EXEC_AUTO_INSTALL: 'false'
     run: |
       set -euo pipefail
-      mise exec -- python3 "$GITHUB_ACTION_PATH/production.py" setup --tools _godot_production_cookbook --tools-ref "$TOOLS_REF" --source "$SOURCE" --release "$RELEASE_ID" --runner "$DECLARED_RUNNER" --timeout "$DECLARED_TIMEOUT"
+      mise exec -- python3 "$GITHUB_ACTION_PATH/production.py" setup --tools _godot_production_cookbook --tools-ref "$TOOLS_REF" --source "$SOURCE" --release "$RELEASE_ID" --expected-source "$EXPECTED_SOURCE" --runner "$DECLARED_RUNNER" --timeout "$DECLARED_TIMEOUT"
   - name: Verify ordinary public gameplay and exact release identity in all browsers
     shell: bash
     env:
       SOURCE: ${{ inputs.source }}
       RELEASE_ID: ${{ inputs.release-id }}
       TOOLS_REF: ${{ inputs.tools-ref }}
+      EXPECTED_SOURCE: ${{ inputs.expected-source }}
       DECLARED_RUNNER: ${{ inputs.runner }}
       DECLARED_TIMEOUT: ${{ inputs.timeout-minutes }}
       MISE_AUTO_INSTALL: 'false'
       MISE_EXEC_AUTO_INSTALL: 'false'
     run: |
       set -euo pipefail
-      mise exec -- python3 "$GITHUB_ACTION_PATH/production.py" verify --tools _godot_production_cookbook --tools-ref "$TOOLS_REF" --source "$SOURCE" --release "$RELEASE_ID" --runner "$DECLARED_RUNNER" --timeout "$DECLARED_TIMEOUT"
+      mise exec -- python3 "$GITHUB_ACTION_PATH/production.py" verify --tools _godot_production_cookbook --tools-ref "$TOOLS_REF" --source "$SOURCE" --release "$RELEASE_ID" --expected-source "$EXPECTED_SOURCE" --runner "$DECLARED_RUNNER" --timeout "$DECLARED_TIMEOUT"

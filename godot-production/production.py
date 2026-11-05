@@ -16,8 +16,10 @@ def literal_sha(value):
     return value
 
 
-def select(config, plan, source, release, environment, runner, timeout):
+def select(config, plan, source, release, environment, runner, timeout, expected_source=None, current_source=True):
     literal_sha(source)
+    expected_source=literal_sha(expected_source or source)
+    if current_source and expected_source!=source:raise ValueError('this native public workflow requires the current main payload')
     if (environment.get('GITHUB_REF')!='refs/heads/main' or source!=environment.get('GITHUB_SHA')
             or environment.get('GITHUB_EVENT_NAME') not in {'push','workflow_dispatch'}):
         raise ValueError('production verification requires the exact trusted main source')
@@ -98,6 +100,7 @@ def main():
     parser.add_argument('--tools-ref',required=True)
     parser.add_argument('--source',required=True)
     parser.add_argument('--release',required=True)
+    parser.add_argument('--expected-source',default='')
     parser.add_argument('--runner',required=True)
     parser.add_argument('--timeout',type=int,required=True)
     args=parser.parse_args();root=Path.cwd().resolve();tools=args.tools.resolve()
@@ -112,11 +115,15 @@ def main():
         from configuration import load,relative
         import godot_ci
         config=load(root)
-        entry=select(config,godot_ci.plan(root,config),args.source,args.release,os.environ,args.runner,args.timeout)
+        import godot_static
+        static=godot_static.declaration(root,config)
+        expected_source=args.expected_source or args.source
+        entry=select(config,godot_ci.plan(root,config),args.source,args.release,os.environ,args.runner,args.timeout,
+                     expected_source,(static or {}).get('production_current_source',True))
         relative(root,entry['entry']['path'],exists=True)
         environment={**os.environ,'TOOLS_ROOT':str(tools),'MISE_AUTO_INSTALL':'false','MISE_EXEC_AUTO_INSTALL':'false'}
         if args.operation=='setup':prepare(root,config,entry,environment)
-        else:verify(root,entry,environment,args.source,args.release)
+        else:verify(root,entry,environment,expected_source,args.release)
     except (OSError,ValueError,KeyError,subprocess.SubprocessError) as error:
         parser.exit(1,str(error)+'\n')
 
