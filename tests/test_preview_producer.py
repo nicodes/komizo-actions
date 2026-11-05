@@ -41,7 +41,11 @@ class PreviewProducer(unittest.TestCase):
         for name, body in {'cookbook.toml':'recipe = "react-native"\n', 'mise.toml':'[tools]\npython = "3.13.11"\n',
                 'Makefile':'COOKBOOK_REF := '+self.tools_ref+'\n',
                 '.github/workflows/pr-preview.yml':'reviewed raw workflow\n',
-                'deploy/preview-publication.json':json.dumps(self.raw_policy), 'deploy/release.json':'{}\n'}.items():
+                'deploy/preview-publication.json':json.dumps(self.raw_policy),
+                'deploy/release.json':json.dumps(dict(version=1,project='demo',image_base='ghcr.io/owner/demo',
+                    tests=['lint','unit','security','e2e'],inputs=dict(artifacts=['.artifacts/release'],
+                    images=['ghcr.io/owner/demo-'+c+':{revision}' for c in ['gate','api','config']],
+                    environment=[],revision_environment=[])))}.items():
             path = self.root / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(body)
         self.commit(self.root)
         self.base = self.git(self.root, 'rev-parse', 'HEAD')
@@ -258,10 +262,39 @@ class PreviewProducer(unittest.TestCase):
             self.assertEqual(command[command.index('--components')+1:command.index('--definition')],['gate'])
             selected=Path(command[command.index('--directory')+1]);result=json.loads((selected/'release.json').read_text())
             (selected/'publication.json').write_text(json.dumps(dict(revision=self.head,tested_commit=self.head,images=result['images'])))
-        self.run_publication(incoming,execute)
+        # Exercise the actual SDK's tracked-source definition ownership, not a
+        # mocked image adapter, while controller and selected HEAD are distinct Git repositories.
+        sdk=Path(os.environ['TOOLS_ROOT']);sys.path.insert(0,str(sdk/'cookbook'))
+        try:images=producer.module('actual_preview_sdk_images',sdk/'cookbook/images.py')
+        finally:sys.path.pop(0)
+        modules=(None,SimpleNamespace(load=lambda _:copy.deepcopy(self.config)),images)
+        with patch.object(producer.preview,'tools_modules',return_value=modules):
+            self.run_publication(incoming,execute)
         self.assertEqual(len(calls),2);report=json.loads((self.root/'.artifacts/preview-producer-publication.json').read_text())
         self.assertEqual(list(report['derivation']['selected_images']),['ghcr.io/owner/demo-gate:'+self.head])
         self.assertEqual(json.loads((incoming/'.artifacts/release/release.json').read_text()),manifest)
+
+    def test_typed_preview_reads_the_actual_owned_definition_and_restores_controller_cwd_on_refusal(self):
+        sdk=Path(os.environ['TOOLS_ROOT']);sys.path.insert(0,str(sdk/'cookbook'))
+        try:images=producer.module('typed_preview_actual_sdk_images',sdk/'cookbook/images.py')
+        finally:sys.path.pop(0)
+        policy=dict(recipe='react-native',project='demo',image_base='ghcr.io/owner/demo',
+            shipping_components=['gate','api','config'],test_groups=self.definition['tests'],
+            artifact_definition='deploy/release.json',release_metadata=[])
+        modules=(SimpleNamespace(declaration=lambda *_:copy.deepcopy(policy)),
+            SimpleNamespace(load=lambda _:copy.deepcopy(self.config)),images)
+        nested=self.root/'_preview_source'
+        self.git(self.root,'clone','-q','--no-hardlinks',str(self.source),str(nested))
+        with patch.object(producer.preview,'tools_modules',return_value=modules),producer.preview.owning_checkout(self.root):
+            config,definition=producer.preview.source_policy({'policy':policy},Path('_preview_source'),self.tools)
+            self.assertEqual(definition['project'],'demo');self.assertEqual(Path.cwd(),self.root)
+            # A regular but untracked declaration must remain refused; selecting
+            # the owning cwd does not weaken the SDK's Git ownership boundary.
+            (nested/'deploy/untracked.json').write_bytes((nested/'deploy/release.json').read_bytes())
+            self.config['artifacts']['definition']='deploy/untracked.json'
+            with self.assertRaisesRegex(ValueError,'tracked caller-owned'):
+                producer.preview.source_policy({'policy':policy},Path('_preview_source'),self.tools)
+            self.assertEqual(Path.cwd(),self.root)
 
     def test_failed_group_mixed_attempt_tampered_archive_and_wrong_writer_cannot_login(self):
         for change in ['group','attempt','archive','writer','deadline']:
