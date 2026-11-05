@@ -84,7 +84,7 @@ jobs:
         path: _operation_actions
     - name: Prepare the pinned configuration parser
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
-      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
       with:
         tools: python
     - name: Admit exact trusted main and bounded native operational policy
@@ -161,7 +161,7 @@ jobs:
         path: _operation_actions
     - name: Prepare the pinned report parser
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_setup }}
-      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
       with:
         tools: python
     - name: Report bounded audit failure

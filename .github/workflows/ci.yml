@@ -23,7 +23,7 @@ jobs:
       with:
         persist-credentials: false
     - name: Set up development tools
-      uses: nicodes/tools/setup@7a057b6e584e27b0f07ec5d3769fa966fc8c42dc
+      uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5

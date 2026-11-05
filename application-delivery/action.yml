@@ -53,7 +53,7 @@ runs:
         persist-credentials: false
     - name: Prepare the pinned native configuration interpreter
       if: inputs.sdk-prepared != 'true'
-      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
       with:
         tools: python
     - name: Read bounded native delivery declaration
