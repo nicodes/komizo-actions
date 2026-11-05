@@ -23,7 +23,7 @@ def read(path, limit=4 << 20):
     return json.loads(path.read_text())
 
 
-def accept(proof, config, source, tools, tree, groups, jobs, environment):
+def accept(proof, config, source, tools, tree, groups, jobs, environment, workflow_source=None):
     if (proof.get('version') != 1 or proof.get('source_commit') != source
             or proof.get('source_tree') != tree or proof.get('cookbook_commit') != tools
             or proof.get('recipe') != config.get('recipe') or config.get('recipe') not in {'react-native', 'godot-game'}
@@ -42,7 +42,7 @@ def accept(proof, config, source, tools, tree, groups, jobs, environment):
     if jobs.get('total_count') != len(jobs.get('jobs', [])):
         raise ValueError('publication requires complete current-attempt job metadata')
     hosts = [job for job in jobs['jobs'] if job['name'].endswith('/ Make full')]
-    if len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != source:
+    if len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != (workflow_source or source):
         raise ValueError('the actual full validation job must have succeeded at this source')
     if config['ci']['runner'] not in hosts[0].get('labels', []):
         raise ValueError('full validation ran on another declared runner')
