@@ -33,6 +33,11 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
+        ref: ${{ inputs.source }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
         path: _publication_actions
@@ -43,5 +48,6 @@ jobs:
         komizo-ref: ${{ inputs.komizo-ref }}
         source: ${{ inputs.source }}
         project: ${{ inputs.project }}
+        source-prepared: 'true'
       env:
         GH_TOKEN: ${{ github.token }}
