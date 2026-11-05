@@ -1,0 +1,75 @@
+name: Verify fixed public Godot release
+description: Native read-only browser verification against one declared public origin
+inputs:
+  tools-ref:
+    description: Accepted cookbook source commit
+    required: true
+  source:
+    description: Exact trusted main source commit
+    required: true
+  release-id:
+    description: Exact verified ordinary payload identity
+    required: true
+  runner:
+    description: Existing native sandbox-capable runner declaration
+    required: true
+  timeout-minutes:
+    description: Existing total production verification deadline
+    required: true
+runs:
+  using: composite
+  steps:
+  - name: Require trusted immutable public verification inputs
+    shell: bash
+    env:
+      SOURCE: ${{ inputs.source }}
+      RELEASE_ID: ${{ inputs.release-id }}
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      GH_TOKEN: ${{ github.token }}
+    run: |
+      set -euo pipefail
+      [[ "$SOURCE" =~ ^[a-f0-9]{40}$ && "$SOURCE" == "$GITHUB_SHA" && "$GITHUB_REF" == refs/heads/main ]]
+      [[ "$RELEASE_ID" =~ ^[a-f0-9]{64}$ && "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+      relation="$(gh api "repos/nicodes/tools/compare/$TOOLS_REF...main" --jq .status)"
+      [[ "$relation" == ahead || "$relation" == identical ]]
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    with:
+      repository: nicodes/tools
+      ref: ${{ inputs.tools-ref }}
+      path: _godot_production_cookbook
+      persist-credentials: false
+  - name: Bootstrap the pinned setup driver
+    uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+    with:
+      install_args: python
+      cache: true
+    env:
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_GITHUB_TOKEN: ${{ github.token }}
+  - name: Prepare only the locked native public browser SDK
+    shell: bash
+    env:
+      SOURCE: ${{ inputs.source }}
+      RELEASE_ID: ${{ inputs.release-id }}
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      DECLARED_RUNNER: ${{ inputs.runner }}
+      DECLARED_TIMEOUT: ${{ inputs.timeout-minutes }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+    run: |
+      set -euo pipefail
+      mise exec -- python3 "$GITHUB_ACTION_PATH/production.py" setup --tools _godot_production_cookbook --tools-ref "$TOOLS_REF" --source "$SOURCE" --release "$RELEASE_ID" --runner "$DECLARED_RUNNER" --timeout "$DECLARED_TIMEOUT"
+  - name: Verify ordinary public gameplay and exact release identity in all browsers
+    shell: bash
+    env:
+      SOURCE: ${{ inputs.source }}
+      RELEASE_ID: ${{ inputs.release-id }}
+      TOOLS_REF: ${{ inputs.tools-ref }}
+      DECLARED_RUNNER: ${{ inputs.runner }}
+      DECLARED_TIMEOUT: ${{ inputs.timeout-minutes }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+    run: |
+      set -euo pipefail
+      mise exec -- python3 "$GITHUB_ACTION_PATH/production.py" verify --tools _godot_production_cookbook --tools-ref "$TOOLS_REF" --source "$SOURCE" --release "$RELEASE_ID" --runner "$DECLARED_RUNNER" --timeout "$DECLARED_TIMEOUT"
