@@ -261,14 +261,15 @@ class OperationalAuthority(unittest.TestCase):
     def test_browser_preparation_preserves_full_chromium_unless_shell_was_declared(self):
         calls = []
         node = SimpleNamespace(validate=lambda value, root: (value, None), install=lambda *args: None)
-        (self.root / 'mise.toml').write_text('[tools]\npython="3.13.5"\nbun="1.2.0"\n')
+        (self.root / 'mise.toml').write_text('[tools]\npython="3.13.5"\nbun="1.2.0"\nnode="24.18.1"\n')
         (self.root / 'tests/e2e').mkdir(parents=True)
         config = self.config | {'node': {'packages': [{'directory': 'tests/e2e', 'manager': 'bun'}]}}
         record = {'checks': [], 'prepare': {'packages': ['tests/e2e'], 'browser': 'tests/e2e'}}
         with patch.object(driver, 'tools_modules', return_value=(workflows, node, None)), \
-                patch.object(driver, 'execute'), \
+                patch.object(driver, 'execute') as install, \
                 patch.object(driver, 'pinned', side_effect=lambda argv, *args: calls.append(argv)):
             driver.prepare(self.root, self.tools, config, record, 'production', self.environment)
+            self.assertIn('node',install.call_args.args[0])
             self.assertEqual(calls[-1], ['bun', 'x', '--no-install', 'playwright', 'install', '--with-deps', 'chromium'])
             record['prepare']['browser_only_shell'] = True
             driver.prepare(self.root, self.tools, config, record, 'production', self.environment)

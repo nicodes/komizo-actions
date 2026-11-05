@@ -158,9 +158,10 @@ def prepare(root,tools,config,record,operation,environment):
     checks=[record['check']] if operation=='paid' else record.get('checks',[])
     for check in [*checks,*prepare.get('native',[])]:
         if check['runner'] in {'node','node-test','bun'}:tools_needed.add('node' if check['runner']=='node-test' else check['runner'])
-        if check['runner']=='playwright':tools_needed.add('bun' if check['manager']=='bun' else 'node')
+        if check['runner']=='playwright':tools_needed.update(['node',*(['bun'] if check['manager']=='bun' else [])])
         if check['runner'].startswith('cargo-'):tools_needed.add('rust')
     if prepare.get('rust'):tools_needed.add('rust')
+    if prepare.get('browser'):tools_needed.add('node')
     packages=[node.validate(value,root)[0] for value in config.get('node',{}).get('packages',[])]
     selected=[item for item in packages if item['directory'] in prepare.get('packages',[])]
     if {item['directory'] for item in selected}!=set(prepare.get('packages',[])):raise ValueError('operational dependency preparation must select real native packages')
