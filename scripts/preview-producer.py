@@ -50,6 +50,7 @@ def tracked(root, name, maximum=4 << 20):
 
 
 def native_policy(root, tools, name):
+    root = root.resolve()
     if not isinstance(name, str) or not re.fullmatch('deploy/[A-Za-z0-9_.-]+\\.json', name):
         raise ValueError('Preview producer policy belongs to its native deploy owner')
     data = json.loads(tracked(root, name, 32768))

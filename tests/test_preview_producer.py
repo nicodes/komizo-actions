@@ -283,15 +283,17 @@ class PreviewProducer(unittest.TestCase):
             artifact_definition='deploy/release.json',release_metadata=[])
         modules=(SimpleNamespace(declaration=lambda *_:copy.deepcopy(policy)),
             SimpleNamespace(load=lambda _:copy.deepcopy(self.config)),images)
+        nested=self.root/'_preview_source'
+        self.git(self.root,'clone','-q','--no-hardlinks',str(self.source),str(nested))
         with patch.object(producer.preview,'tools_modules',return_value=modules),producer.preview.owning_checkout(self.root):
-            config,definition=producer.preview.source_policy({'policy':policy},self.source,self.tools)
+            config,definition=producer.preview.source_policy({'policy':policy},Path('_preview_source'),self.tools)
             self.assertEqual(definition['project'],'demo');self.assertEqual(Path.cwd(),self.root)
             # A regular but untracked declaration must remain refused; selecting
             # the owning cwd does not weaken the SDK's Git ownership boundary.
-            (self.source/'deploy/untracked.json').write_bytes((self.source/'deploy/release.json').read_bytes())
+            (nested/'deploy/untracked.json').write_bytes((nested/'deploy/release.json').read_bytes())
             self.config['artifacts']['definition']='deploy/untracked.json'
             with self.assertRaisesRegex(ValueError,'tracked caller-owned'):
-                producer.preview.source_policy({'policy':policy},self.source,self.tools)
+                producer.preview.source_policy({'policy':policy},Path('_preview_source'),self.tools)
             self.assertEqual(Path.cwd(),self.root)
 
     def test_failed_group_mixed_attempt_tampered_archive_and_wrong_writer_cannot_login(self):

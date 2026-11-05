@@ -181,6 +181,7 @@ def validate_plan(raw,root,tools,environment,lookup=api,*,fresh=True):
 
 
 def source_policy(plan,source_root,tools):
+    source_root=source_root.resolve()
     preview,configuration,images=tools_modules(tools)
     config=configuration.load(source_root)
     policy=plan['policy']
