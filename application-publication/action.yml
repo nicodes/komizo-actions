@@ -13,12 +13,16 @@ inputs:
   project:
     description: Application slug
     required: true
+  source-prepared:
+    description: Exact clean product source was checked out before this action
+    required: false
+    default: 'false'
 runs:
   using: composite
   steps:
   - name: Require accepted immutable automation before publication
     shell: bash
-    run: "set -euo pipefail\n[[ \"$SOURCE\" =~ ^[a-f0-9]{40}$ && \"$SOURCE\" == \"\
+    run: "set -euo pipefail\n[[ \"$SOURCE_PREPARED\" == true || \"$SOURCE_PREPARED\" == false ]]\n[[ \"$SOURCE\" =~ ^[a-f0-9]{40}$ && \"$SOURCE\" == \"\
       $GITHUB_SHA\" && \"$GITHUB_REF\" == refs/heads/main ]]\n[[ \"$TOOLS_REF\" =~\
       \ ^[a-f0-9]{40}$ && \"$KOMIZO_REF\" =~ ^[a-f0-9]{40}$ && \"$PROJECT\" =~ ^[a-z][a-z0-9-]{0,62}$\
       \ ]]\nfor pair in \"tools:$TOOLS_REF\" \"komizo-actions:$KOMIZO_REF\"; do\n\
@@ -30,12 +34,28 @@ runs:
       TOOLS_REF: ${{ inputs.tools-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       PROJECT: ${{ inputs.project }}
+      SOURCE_PREPARED: ${{ inputs.source-prepared }}
       GH_TOKEN: ${{ github.token }}
   - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    if: inputs.source-prepared != 'true'
     with:
       ref: ${{ inputs.source }}
       fetch-depth: 0
       persist-credentials: false
+  - name: Verify prepared product source before publication
+    shell: bash
+    run: |
+      set -euo pipefail
+      [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+      [[ "$(git rev-parse --show-toplevel)" == "$GITHUB_WORKSPACE" ]]
+      [[ "$(git rev-parse HEAD)" == "$SOURCE" ]]
+      git diff --quiet HEAD --
+      origin="$(git remote get-url origin)"
+      [[ "$origin" == "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" || "$origin" == "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" ]]
+      [[ "$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha)" == "$SOURCE" ]]
+    env:
+      SOURCE: ${{ inputs.source }}
+      GH_TOKEN: ${{ github.token }}
   - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     with:
       repository: nicodes/tools
