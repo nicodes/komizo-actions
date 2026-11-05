@@ -8,7 +8,6 @@ import argparse
 from contextlib import contextmanager
 import ctypes
 import fcntl
-import importlib.util
 import os
 from pathlib import Path
 import re
