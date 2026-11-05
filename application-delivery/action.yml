@@ -38,6 +38,10 @@ runs:
         ref: ${{ inputs.tools-ref }}
         path: _delivery_cookbook
         persist-credentials: false
+    - name: Prepare the pinned native configuration interpreter
+      uses: nicodes/tools/setup@0d59d20fe90e62af905e5e959caafff64ec9d18e
+      with:
+        tools: python
     - name: Read bounded native delivery declaration
       id: plan
       shell: bash
