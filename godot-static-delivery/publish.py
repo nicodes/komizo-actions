@@ -102,7 +102,7 @@ def admit(root,tools,source,tools_ref,incoming,environment):
     declaration=delivery_workflows.declaration(root,config)
     if declaration.get('mode')!='godot-static':raise ValueError('this publisher only preserves the static config-image protocol')
     selected=godot_static.declaration(root,config)
-    definition=verification.release_definition(root/config['artifacts']['definition'])
+    definition=verification.release_definition(root/sdk.recipe_data.effective_definition(tools,config))
     repository,run,attempt=(environment[key] for key in ['GITHUB_REPOSITORY','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'])
     if repository!=selected['repository']:raise ValueError('static publication belongs to another repository')
     jobs=json.loads(capture(['gh','api',f'repos/{repository}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100'],root,environment))

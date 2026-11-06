@@ -139,9 +139,10 @@ def authority(root, tools, actions, environment, lookup=None):
     if (regular(root/'.github/workflows/cd.yml') != expected['.github/workflows/cd.yml']
             or regular(root/'Makefile') != generator.makefile(root, pins['tools'])):
         raise ValueError('historical deployment caller differs from its canonical source contract')
-    for name in ['cookbook.toml', 'Makefile', '.github/workflows/cd.yml', environment['DECLARATION'], config['artifacts']['definition']]:
+    definition_name = recipe_data.effective_definition(tools, config, configuration)
+    for name in ['cookbook.toml', 'Makefile', '.github/workflows/cd.yml', environment['DECLARATION'], definition_name]:
         git(root, environment, 'ls-files', '--error-unmatch', '--', name)
-    definition_path = Path(config['artifacts']['definition'])
+    definition_path = Path(definition_name)
     if definition_path.is_absolute() or '..' in definition_path.parts:
         raise ValueError('historical image definition must remain caller-owned')
     definition = document(regular(root/definition_path, 1 << 20))

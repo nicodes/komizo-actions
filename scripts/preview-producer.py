@@ -95,7 +95,7 @@ def native_policy(root, tools, name):
         raise ValueError('Preview producer must use its exact source-declared SDK')
     return {**data, 'definition': name, 'recipe': config['recipe'], 'image_base': definition['image_base'],
             'shipping_components': images.components(definition), 'test_groups': definition['tests'],
-            'artifact_definition': config['artifacts']['definition'],
+            'artifact_definition': preview.recipe_data.effective_definition(tools, config, configuration),
             'release_metadata': config['artifacts'].get('release_metadata', []),
             'cookbook_sha256': hashlib.sha256(tracked(root, 'cookbook.toml')).hexdigest(),
             'mise_sha256': hashlib.sha256(tracked(root, 'mise.toml')).hexdigest()}

@@ -1,7 +1,7 @@
 """Read effective recipe data through the caller's already prepared pinned SDK."""
 from contextlib import chdir
 import importlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
 
 
@@ -11,6 +11,28 @@ def checked_module(module, tools, name):
     if not isinstance(origin, str) or Path(origin).resolve() != expected.resolve():
         raise ValueError('recipe reader loaded another cookbook SDK: ' + name)
     return module
+
+
+def effective_definition(tools, config, configuration=None):
+    """Read the caller SDK's effective definition without adding source keys."""
+    tools = Path(tools).resolve()
+    sys.path.insert(0, str(tools / 'cookbook'))
+    configuration = checked_module(configuration if configuration is not None
+        else importlib.import_module('configuration'), tools, 'configuration')
+    if hasattr(configuration, 'release_definition'):
+        if not callable(configuration.release_definition):
+            raise ValueError('recipe SDK exposes no usable effective release definition')
+        name = configuration.release_definition(config)
+    else:
+        # Immutable historical SDKs retain their explicit source declaration.
+        name = config.get('artifacts', {}).get('definition')
+    if (not isinstance(name, str) or not name or '\\' in name or ':' in name
+            or any(ord(character) < 32 for character in name)):
+        raise ValueError('release definition must be a literal caller-owned source path')
+    path = PurePosixPath(name)
+    if path.is_absolute() or '..' in path.parts or '.git' in path.parts or path.as_posix() != name or name == '.':
+        raise ValueError('release definition must remain a canonical caller-owned source path')
+    return name
 
 
 def load(root, tools, configuration=None):
