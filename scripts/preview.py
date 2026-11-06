@@ -193,7 +193,7 @@ def source_policy(plan,source_root,tools):
             or definition['image_base']!=policy['image_base']
             or set(images.components(definition))!=set(policy['shipping_components'])
             or set(definition['tests'])!=set(policy['test_groups'])
-            or config['artifacts']['definition']!=policy['artifact_definition']
+            or recipe_data.effective_definition(tools,config,configuration)!=policy['artifact_definition']
             or config['artifacts'].get('release_metadata',[])!=policy['release_metadata']):
         raise ValueError('PR source cannot change the trusted Preview publication family, components or required checks')
     if supplied!=policy:

@@ -51,6 +51,15 @@ jobs:
         path: .artifacts/recipe-test-sdk
         fetch-depth: 1
         persist-credentials: false
+    - name: Prepare the accepted strict recipe SDK for definition controls
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: 1
+      with:
+        repository: nicodes/tools
+        ref: 6391cdae4f0ead355a43de161f0dbadd22168f62
+        path: .artifacts/recipe-contract-test-sdk
+        fetch-depth: 1
+        persist-credentials: false
     - name: Test
       shell: bash
       run: |-
@@ -62,3 +71,5 @@ jobs:
     env:
       MISE_GITHUB_TOKEN: ${{ github.token }}
       RECIPE_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-test-sdk
+      RECIPE_CONTRACT_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-contract-test-sdk
+      RECIPE_CONTRACT_TEST_SDK_REF: 6391cdae4f0ead355a43de161f0dbadd22168f62

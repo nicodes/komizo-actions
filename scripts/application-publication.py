@@ -98,13 +98,14 @@ def main():
         if subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--'], timeout=30).returncode:
             raise ValueError('publisher checkout must be clean')
         config = recipe_data.load(Path.cwd(), args.tools)
+        definition_name = recipe_data.effective_definition(args.tools, config)
         proof = read(args.incoming / '.artifacts/cookbook-validation.json')
         if proof.get('configuration_sha256') != hashlib.sha256(Path('cookbook.toml').read_bytes()).hexdigest():
             raise ValueError('publication recipe differs from the accepted source')
         spec = importlib.util.spec_from_file_location('publication_verification', args.tools / 'helpers/verification.py')
         verify = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(verify)
-        definition = verify.release_definition(Path(config['artifacts']['definition']))
+        definition = verify.release_definition(Path(definition_name))
         if definition['project'] != args.project:
             raise ValueError('publication project differs from its source declaration')
         repository, run, attempt = (os.environ[key] for key in ['GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'])
@@ -125,7 +126,7 @@ def main():
         components = [reference[len(prefix):-len(':{revision}')] for reference in references]
         subprocess.run([sys.executable, str(args.tools / 'helpers/release.py'), 'publish',
                         '--project', args.project, '--revision', args.source, '--components', *components,
-                        '--definition', config['artifacts']['definition'], '--test-job', 'validate',
+                        '--definition', definition_name, '--test-job', 'validate',
                         '--test-evidence-directory', str(evidence)], check=True, timeout=2400)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n')
