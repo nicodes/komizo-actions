@@ -16,6 +16,8 @@ import tomllib
 
 sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
+import recipe_data
 SHA=re.compile('[a-f0-9]{40}')
 WORKFLOWS={'backup':'backup.yml','recovery':'recovery.yml','retention':'recovery.yml','security':'security-scan.yml','production':'production-verification.yml','paid':'production-verification.yml'}
 
@@ -83,7 +85,7 @@ def authority(root,tools,operation,selected,environment,lookup=None):
         response=json.loads(lookup(f'repos/nicodes/{name}/compare/{commit}...main'))
         if not isinstance(response,dict) or response.get('status') not in {'ahead','identical'}:raise ValueError('operational automation must first be accepted on main')
     workflow,_,_=tools_modules(tools)
-    config=tomllib.loads((root/'cookbook.toml').read_text())
+    config=recipe_data.load(root,tools)
     data=workflow.declaration(root,config)
     if data['definition']!=environment.get('DECLARATION') or data['komizo_ref']!=revisions['komizo-actions']:
         raise ValueError('operational input differs from trusted native policy')
@@ -239,7 +241,7 @@ def main():
             if args.command in commands:execute(['make',commands[args.command]],root,environment,record['timeout_minutes']*60)
             else:
                 import configuration,recipe
-                config=configuration.load(root)
+                config=recipe_data.load(root,args.tools,configuration)
                 os.environ.update(environment)
                 environment=recipe.configure_environment(root,config)
                 adapter=recipe.adapter(config)

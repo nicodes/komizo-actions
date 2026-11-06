@@ -11,7 +11,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 
 
 def module(name,path):
@@ -93,7 +92,7 @@ def admit(root,tools,source,tools_ref,incoming,environment):
     for directory,expected in [(root,source),(tools,tools_ref)]:
         if sdk.git('-C',str(directory),'rev-parse','HEAD')!=expected:raise ValueError('static publisher source or cookbook differs from its accepted pin')
         execute(['git','-C',str(directory),'diff','--exit-code','HEAD','--'],root,environment,30)
-    config=tomllib.loads((root/'cookbook.toml').read_text())
+    config=sdk.recipe_data.load(root,tools)
     proof=sdk.read(incoming/'.artifacts/cookbook-validation.json')
     if proof.get('configuration_sha256')!=hashlib.sha256((root/'cookbook.toml').read_bytes()).hexdigest():
         raise ValueError('static publication declaration differs from complete source acceptance')

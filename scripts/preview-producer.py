@@ -58,7 +58,7 @@ def native_policy(root, tools, name):
     if not isinstance(data, dict) or set(data) != keys or data.get('version') != 1:
         raise ValueError('Preview producer requires closed native policy data')
     _, configuration, images = preview.tools_modules(tools)
-    config = configuration.load(root)
+    config = preview.recipe_data.load(root, tools, configuration)
     if config['recipe'] != 'react-native':
         raise ValueError('this producer requires complete native React Native acceptance')
     with preview.owning_checkout(root):
@@ -417,7 +417,7 @@ def publication(plan, root, source_root, tools, tools_ref, incoming, environment
     if git(source_root, 'rev-parse', 'HEAD') != plan['head'] or subprocess.run(
             ['git', '-C', str(source_root), 'diff', '--quiet', 'HEAD', '--'], timeout=10).returncode:
         raise ValueError('Preview publisher requires the clean actual selected HEAD')
-    config = configuration.load(source_root)
+    config = preview.recipe_data.load(source_root, tools, configuration)
     policy = plan['policy']
     with preview.owning_checkout(source_root):
         definition = images.definition(source_root, config)

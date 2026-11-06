@@ -6,14 +6,18 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(Path(os.environ['TOOLS_ROOT'])/'cookbook'))
+import configuration as sdk_configuration
 spec=importlib.util.spec_from_file_location('preview_authority',ROOT/'scripts/preview.py')
 preview=importlib.util.module_from_spec(spec);spec.loader.exec_module(preview)
 
@@ -109,7 +113,8 @@ class PreviewAuthority(unittest.TestCase):
         definition={'project':'demo','image_base':'ghcr.io/owner/demo','tests':self.policy['test_groups']}
         declaration=Mock(return_value=self.policy)
         image=SimpleNamespace(definition=Mock(return_value=definition),components=Mock(return_value=['gate','api','config']))
-        modules=(SimpleNamespace(declaration=declaration),SimpleNamespace(load=lambda _:config),image)
+        modules=(SimpleNamespace(declaration=declaration),SimpleNamespace(load=lambda _:config,ci_settings=sdk_configuration.ci_settings,
+                                                                        __file__=str(self.root/'cookbook/configuration.py')),image)
         with patch.object(preview,'tools_modules',return_value=modules):
             preview.source_policy(self.plan,self.root,self.root)
             for key,value in [('project','other'),('image_base','ghcr.io/other/demo'),('tests',['lint','unit'])]:

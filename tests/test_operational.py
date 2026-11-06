@@ -44,6 +44,12 @@ class OperationalAuthority(unittest.TestCase):
         self.tools, tools_sha = self.repository('tools')
         self.actions, actions_sha = self.repository('komizo-actions')
         self.root, _ = self.repository('product')
+        # Git-authority controls use a synthetic SDK repository; decode their
+        # source with the explicitly prepared real SDK, as their workflow mock does.
+        reader = driver.recipe_data.load
+        decoder = patch.object(driver.recipe_data, 'load', side_effect=lambda root, tools, configuration=None: reader(root, TOOLS))
+        decoder.start()
+        self.addCleanup(decoder.stop)
         (self.root / 'deploy').mkdir()
         (self.root / 'api').mkdir()
         (self.root / 'api/Cargo.toml').write_text('[package]\nname="fixture"\n')

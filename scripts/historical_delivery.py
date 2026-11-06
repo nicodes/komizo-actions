@@ -9,7 +9,6 @@ import re
 import secrets
 import subprocess
 import sys
-import tomllib
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,10 +65,11 @@ def tools_modules(tools):
     sys.path.insert(0, str(tools.resolve()/'cookbook'))
     import delivery_workflows
     import generate
+    import configuration
     if any(not Path(module.__file__).resolve().is_relative_to(tools.resolve()/'cookbook')
-           for module in [delivery_workflows, generate]):
+           for module in [delivery_workflows, generate, configuration]):
         raise ValueError('historical deployment loaded another SDK authority')
-    return delivery_workflows, generate
+    return delivery_workflows, generate, configuration
 
 
 def ancestry(lookup, repository, older, newer):
@@ -115,8 +115,11 @@ def authority(root, tools, actions, environment, lookup=None):
     if not isinstance(current, dict) or current.get('object', {}).get('sha') != revision:
         raise ValueError('historical controller source is no longer current main')
     ancestry(lookup, repository, version, revision)
-    workflow, generator = tools_modules(tools)
-    config = tomllib.loads(regular(root/'cookbook.toml', 262144))
+    workflow, generator, configuration = tools_modules(tools)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import recipe_data
+    regular(root/'cookbook.toml', 262144)
+    config = recipe_data.load(root, tools, configuration)
     data = workflow.declaration(root, config)
     if (config.get('recipe') not in {'react-native', 'godot-game'}
             or data.get('mode', 'application-images') != 'application-images'

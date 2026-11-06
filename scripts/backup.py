@@ -12,7 +12,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 
 sys.dont_write_bytecode = True
 
@@ -108,7 +107,9 @@ def restore_profile(root, tools, name, project):
     path = operational_workflows.relative(root, 'cookbook.toml', exists=True)
     if not path.is_file() or path.stat().st_size > 262144:
         raise ValueError('restore profiles require bounded native cookbook data')
-    config = tomllib.loads(path.read_text())
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import recipe_data
+    config = recipe_data.load(root, tools)
     data = operational_workflows.declaration(root, config)
     selected = [value for value in data.get('restore_profiles', []) if value['name'] == name]
     if len(selected) != 1 or selected[0]['project'] != project:
