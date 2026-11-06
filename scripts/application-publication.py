@@ -10,7 +10,8 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import recipe_data
 
 
 def git(*arguments):
@@ -96,7 +97,7 @@ def main():
             raise ValueError('publisher cookbook checkout differs from its accepted pin')
         if subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--'], timeout=30).returncode:
             raise ValueError('publisher checkout must be clean')
-        config = tomllib.loads(Path('cookbook.toml').read_text())
+        config = recipe_data.load(Path.cwd(), args.tools)
         proof = read(args.incoming / '.artifacts/cookbook-validation.json')
         if proof.get('configuration_sha256') != hashlib.sha256(Path('cookbook.toml').read_bytes()).hexdigest():
             raise ValueError('publication recipe differs from the accepted source')

@@ -18,6 +18,8 @@ import zipfile
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(os.environ['TOOLS_ROOT']) / 'cookbook'))
+import configuration as sdk_configuration
 spec = importlib.util.spec_from_file_location('preview_producer', ROOT / 'scripts/preview-producer.py')
 producer = importlib.util.module_from_spec(spec); spec.loader.exec_module(producer)
 
@@ -57,7 +59,8 @@ class PreviewProducer(unittest.TestCase):
         self.head = self.git(self.source, 'rev-parse', 'HEAD'); self.source_tree = self.git(self.source, 'rev-parse', 'HEAD^{tree}')
         self.config = dict(recipe='react-native', ci=dict(runner='ubuntu-24.04', timeout_minutes=90), artifacts=dict(definition='deploy/release.json'))
         self.definition = dict(project='demo', image_base='ghcr.io/owner/demo', tests=['lint','unit','security','e2e'])
-        modules = (None, SimpleNamespace(load=lambda _:copy.deepcopy(self.config)),
+        modules = (None, SimpleNamespace(load=lambda _:copy.deepcopy(self.config), ci_settings=sdk_configuration.ci_settings,
+                                        __file__=str(self.tools/'cookbook/configuration.py')),
             SimpleNamespace(definition=lambda *_:copy.deepcopy(self.definition), components=lambda _:['gate','api','config']))
         self.patch = patch.object(producer.preview, 'tools_modules', return_value=modules); self.patch.start(); self.addCleanup(self.patch.stop)
         self.environment = dict(GITHUB_REPOSITORY='owner/demo', GITHUB_SHA=self.base, GITHUB_WORKFLOW_SHA=self.base,
@@ -267,7 +270,8 @@ class PreviewProducer(unittest.TestCase):
         sdk=Path(os.environ['TOOLS_ROOT']);sys.path.insert(0,str(sdk/'cookbook'))
         try:images=producer.module('actual_preview_sdk_images',sdk/'cookbook/images.py')
         finally:sys.path.pop(0)
-        modules=(None,SimpleNamespace(load=lambda _:copy.deepcopy(self.config)),images)
+        modules=(None,SimpleNamespace(load=lambda _:copy.deepcopy(self.config),ci_settings=sdk_configuration.ci_settings,
+                                     __file__=str(self.tools/'cookbook/configuration.py')),images)
         with patch.object(producer.preview,'tools_modules',return_value=modules):
             self.run_publication(incoming,execute)
         self.assertEqual(len(calls),2);report=json.loads((self.root/'.artifacts/preview-producer-publication.json').read_text())
@@ -282,7 +286,8 @@ class PreviewProducer(unittest.TestCase):
             shipping_components=['gate','api','config'],test_groups=self.definition['tests'],
             artifact_definition='deploy/release.json',release_metadata=[])
         modules=(SimpleNamespace(declaration=lambda *_:copy.deepcopy(policy)),
-            SimpleNamespace(load=lambda _:copy.deepcopy(self.config)),images)
+            SimpleNamespace(load=lambda _:copy.deepcopy(self.config),ci_settings=sdk_configuration.ci_settings,
+                            __file__=str(self.tools/'cookbook/configuration.py')),images)
         nested=self.root/'_preview_source'
         self.git(self.root,'clone','-q','--no-hardlinks',str(self.source),str(nested))
         with patch.object(producer.preview,'tools_modules',return_value=modules),producer.preview.owning_checkout(self.root):

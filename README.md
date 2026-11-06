@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 5775f8172a59d26026075616fcb88c97b15b979f460364ccf78fc93ef3dd0316 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: f4f7b40d34cb63c3cc287ff0a609d531d71c099b5ec83f220eaa279ebfa7d39b -->
 
 # komizo Actions
 
@@ -7,6 +7,8 @@ Optional GitHub adapters for Komizo deployment, scoped connectivity, previews, r
 ## Accepted recipe artifacts
 
 Generated recipe callers compose read-only source validation with separate publication and host-effect jobs. `cookbook-publish.yml` and `application-publication` consume exact same-run full Make artifacts. They verify the successful validation job, source/tree, cookbook, complete native coverage and closed image archive before publishing. Publication executes no application setup or build program. Nonshipping fixture images remain outside the shipping publication set.
+
+Recipe-aware adapters read effective settings through the caller's already prepared, pinned cookbook. Shared CI defaults, literal native test groups and mandatory static metadata use that SDK's decoder and capability definitions. Raw configuration hashes and the complete accepted artifact scope remain bound to the original source.
 
 `application-delivery` reads the tracked native declaration, refuses obsolete main before host effects, captures a declared encrypted backup, activates the accepted immutable manifest and runs explicit health assertions. Secret mappings remain visible in the caller. Production retains its authenticated root `cd.yml`, protected environment, serialization and declared total deadline.
 

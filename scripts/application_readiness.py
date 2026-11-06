@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tomllib
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import recipe_data
 
 sys.dont_write_bytecode = True
 
@@ -14,7 +15,7 @@ def readiness(root, tools, environment, driver=None):
     sys.path.insert(0, str(tools.resolve() / 'cookbook'))
     import delivery_workflows
     import operational_workflows
-    config = tomllib.loads((root / 'cookbook.toml').read_text())
+    config = recipe_data.load(root, tools)
     if config.get('delivery') != {'definition': environment['DECLARATION']}:
         raise ValueError('readiness differs from the accepted native delivery declaration')
     data = delivery_workflows.declaration(root, config)

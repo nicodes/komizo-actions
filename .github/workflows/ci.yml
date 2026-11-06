@@ -42,6 +42,15 @@ jobs:
         if-no-files-found: error
         retention-days: 7
         include-hidden-files: true
+    - name: Prepare the accepted recipe SDK for canonical reader controls
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: 1
+      with:
+        repository: nicodes/tools
+        ref: 14dd4792df910b8f72ae10bf01c7e426b97b667e
+        path: .artifacts/recipe-test-sdk
+        fetch-depth: 1
+        persist-credentials: false
     - name: Test
       shell: bash
       run: |-
@@ -52,3 +61,4 @@ jobs:
       attestations: read
     env:
       MISE_GITHUB_TOKEN: ${{ github.token }}
+      RECIPE_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-test-sdk

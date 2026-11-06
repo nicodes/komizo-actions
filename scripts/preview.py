@@ -12,11 +12,12 @@ import re
 import secrets
 import subprocess
 import sys
-import tomllib
 from urllib.parse import urlsplit
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
+import recipe_data
 SHA=re.compile('[a-f0-9]{40}')
 REPOSITORY=re.compile('[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}')
 
@@ -79,8 +80,8 @@ def accepted_automation(tools,tools_ref,komizo_ref,lookup=api):
 
 
 def native_policy(root,tools,declaration):
-    preview,_,_=tools_modules(tools)
-    config=tomllib.loads((root/'cookbook.toml').read_text())
+    preview,configuration,_=tools_modules(tools)
+    config=recipe_data.load(root,tools,configuration)
     if config.get('preview')!={'definition':declaration}:
         raise ValueError('Preview input differs from its trusted native declaration')
     reference=re.search(r'^COOKBOOK_REF := ([a-f0-9]{40})$',(root/'Makefile').read_text(),re.M)
@@ -183,7 +184,7 @@ def validate_plan(raw,root,tools,environment,lookup=api,*,fresh=True):
 def source_policy(plan,source_root,tools):
     source_root=source_root.resolve()
     preview,configuration,images=tools_modules(tools)
-    config=configuration.load(source_root)
+    config=recipe_data.load(source_root,tools,configuration)
     policy=plan['policy']
     with owning_checkout(source_root):
         definition=images.definition(source_root,config)

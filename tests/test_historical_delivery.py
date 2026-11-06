@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -12,6 +13,8 @@ from unittest.mock import Mock, patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(os.environ['TOOLS_ROOT']) / 'cookbook'))
+import configuration as sdk_configuration
 spec = importlib.util.spec_from_file_location('historical_delivery', ROOT/'scripts/historical_delivery.py')
 historical = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(historical)
@@ -64,7 +67,9 @@ class HistoricalDelivery(unittest.TestCase):
                                    historical_deadlines=lambda data: LIMITS)
         generator = SimpleNamespace(workflow_files=lambda root, pin: {'.github/workflows/cd.yml': self.canonical_cd},
                                     makefile=lambda root, pin: self.canonical_make)
-        self.modules = patch.object(historical, 'tools_modules', return_value=(workflow, generator)).start()
+        decoder = SimpleNamespace(load=sdk_configuration.load, ci_settings=sdk_configuration.ci_settings,
+                                  __file__=str(self.tools/'cookbook/configuration.py'))
+        self.modules = patch.object(historical, 'tools_modules', return_value=(workflow, generator, decoder)).start()
         self.addCleanup(patch.stopall)
 
     def git(self, directory, *arguments):
