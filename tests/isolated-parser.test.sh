@@ -5,6 +5,7 @@ scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 mkdir "$scratch/poison" "$scratch/bin"
 printf 'raise RuntimeError("caller YAML module must not load")\n' > "$scratch/poison/yaml.py"
+printf 'raise RuntimeError("caller TOML module must not load")\n' > "$scratch/poison/tomllib.py"
 printf '#!/bin/sh\nexit 99\n' > "$scratch/bin/komizo"
 chmod 700 "$scratch/bin/komizo"
 printf '{"recipe":"invalid","tools":"invalid"}\n' > "$scratch/komizo.json"
@@ -17,9 +18,9 @@ PYTHONPATH="$scratch/poison" PATH="$scratch/bin:$PATH" RUNNER_TEMP="$scratch" SO
   SECRETS_ENV_SERVICES="" bash "$root/check-secrets/run.sh"
 test -z "$(find "$scratch" -maxdepth 1 -type d -name 'komizo-yaml-parser.*' -print)"
 
-printf 'compose: compose.yml\nhostnames:\n  - fixture.example.com\n' > "$scratch/komizo.yml"
+printf 'compose="compose.yml"\nhostnames=["fixture.example.com"]\n' > "$scratch/komizo.toml"
 selected=$(PYTHONPATH="$scratch/poison" PATH="$scratch/bin:$PATH" RUNNER_TEMP="$scratch" \
-  bash "$root/scripts/with-yaml.sh" "$root/publish-config/parse-config.py" "$scratch/komizo.yml" "$scratch/hostnames")
+  python3 -I "$root/publish-config/parse-config.py" "$scratch/komizo.toml" "$scratch/hostnames")
 test "$selected" = "$scratch/compose.yml"
 grep -qx fixture.example.com "$scratch/hostnames"
 test -z "$(find "$scratch" -maxdepth 1 -type d -name 'komizo-yaml-parser.*' -print)"

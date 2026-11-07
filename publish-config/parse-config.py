@@ -1,63 +1,21 @@
 #!/usr/bin/env python3
-"""Read a komizo.yml deploy manifest and emit the flat `hostnames` file the host
-already reads, printing the resolved compose path to stdout.
+"""Read authored komizo.toml and emit the existing flat hostnames protocol.
 
-    parse-config.py <komizo.yml> <out-hostnames-file>
+Usage: parse-config.py <komizo.toml> <out-hostnames-file>
 
-komizo.yml is the app's single, structured deploy config; the host never sees
-it. This turns it into the same simple `name [-> container] [tls]` lines the
-deploy script has always parsed, so nothing on the box has to learn YAML. The
-structured file is an author-time convenience; what ships in the config image is
-the format the host validates.
+    compose = "compose.yml"
+    hostnames = ["app.example.com", {name = "api.example.com", container = "api"},
+                 {name = "*.preview.example.com", container = "api", tls = "on-demand"}]
 
-Shape:
-
-    compose: compose.yml          # path, relative to this file (default compose.yml)
-    hostnames:
-      - app.example.com           # a bare name
-      - name: api.example.com
-        container: api            # DISPLAY label only (monitor attribution)
-      - name: "*.preview.example.com"
-        container: api
-        tls: on-demand            # only a wildcard needs this
-
-EVERY VALUE IS VALIDATED HERE. It used to be interpolated straight into the
-output with str(), which had two silent failure modes, both of them the kind
-this toolkit refuses everywhere else:
-
-  * `tls: yes` is a YAML BOOLEAN, so the line became "name -> api True" and the
-    host rejected it with a message about arrows that named nothing the author
-    had written.
-  * a newline in any value emitted TWO lines, the second of which was a hostname
-    claim nobody made -- and the shell validator downstream reads the derived
-    file line by line, so it would have accepted it as well-formed.
-
-The charsets below are the ones the host enforces (alpine.sh). Checking them
-here as well is the same defence-in-depth the rest of this repository uses: the
-host is the side that has to be right, and finding out in CI is cheaper than
-finding out from a deploy that reverted.
+The host receives Compose YAML and validated flat hostname lines. Source values
+must preserve each native field's type and cannot inject extra output lines.
 """
 import os
 import re
 import sys
 
-try:
-    import yaml
-except ImportError:
-    # Deliberately no pip install fallback. This step holds the deploy key and
-    # the registry token, and reaching out to PyPI -- or escalating to sudo
-    # apt-get -- to fetch an unpinned package is the least verified thing that
-    # could happen in it. Every GitHub-hosted runner ships PyYAML; a runner that
-    # does not should install it once, on purpose, rather than have this do it
-    # silently on every deploy.
-    print(
-        "::error::PyYAML is required to read komizo.yml. GitHub-hosted runners "
-        "ship it; on a self-hosted runner install python3-yaml (or add a "
-        "pip install step to your workflow). Alternatively use the "
-        "config-compose:/config-hostnames: inputs, which need no YAML parser.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+import tomllib
+from pathlib import Path
 
 
 # A hostname, optionally with a single leading "*." wildcard -- the only form
@@ -80,16 +38,14 @@ def fail(msg):
 def scalar(cfg, i, field, value):
     """One field of one hostname entry, as a string, or fail saying why.
 
-    YAML types are checked before the charset, because the message differs and
-    the type error is the one nobody expects: `tls: yes` and `container: 3` are
-    both perfectly valid YAML that produce something that is not a string.
+    Types are checked before charsets so a boolean or numeric field produces
+    the appropriate diagnostic instead of being coerced into native text.
     """
     if isinstance(value, bool):
-        # The one that actually happened. `tls: yes`, `tls: on` and `tls: true`
-        # are all booleans to a YAML parser.
+        # Native text fields never stringify source booleans.
         fail(
-            f"{cfg}: hostnames[{i}] '{field}' is the YAML boolean "
-            f"{str(value).lower()}, not text. Quote it: {field}: \"...\"."
+            f"{cfg}: hostnames[{i}] '{field}' is the TOML boolean "
+            f"{str(value).lower()}, not text. Quote it: {field} = \"...\"."
         )
     if not isinstance(value, str):
         fail(
@@ -101,12 +57,15 @@ def scalar(cfg, i, field, value):
 
 def main():
     if len(sys.argv) != 3:
-        fail("parse-config.py takes <komizo.yml> <out-hostnames-file>.")
+        fail("parse-config.py takes <komizo.toml> <out-hostnames-file>.")
     cfg, out = sys.argv[1], sys.argv[2]
 
     try:
-        with open(cfg) as f:
-            data = yaml.safe_load(f) or {}
+        path = Path(cfg)
+        if (path.suffix != '.toml' or path.is_symlink() or any(parent.is_symlink() for parent in path.parents)
+                or not path.is_file() or path.stat().st_size > 65536):
+            fail(f'{cfg} must be a bounded regular TOML source file.')
+        data = tomllib.loads(path.read_text())
     except Exception as e:  # noqa: BLE001 - surface any parse error verbatim
         fail(f"could not parse {cfg}: {e}")
 
@@ -187,7 +146,7 @@ def main():
         if lines:
             f.write("\n".join(lines) + "\n")
 
-    # The compose path, resolved relative to komizo.yml, for the shell to pick
+    # The compose path, resolved relative to komizo.toml, for the shell to pick
     # up and confine to the workspace like any other named file.
     print(os.path.normpath(os.path.join(os.path.dirname(cfg) or ".", compose)))
 

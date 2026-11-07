@@ -16,6 +16,7 @@ import secrets
 import subprocess
 import tempfile
 import time
+import tomllib
 
 PIN = re.compile(r'(?:docker\.io/library/)?postgres@sha256:[a-f0-9]{64}')
 DOCKER_ENV_EXCLUDE = {'DOCKER_HOST','DOCKER_CONTEXT','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH'}
@@ -26,7 +27,9 @@ def declaration(path, project):
         raise ValueError('invalid PostgreSQL recovery project')
     if path.is_symlink() or any(p.is_symlink() for p in path.parents) or not path.is_file() or path.stat().st_size>16384:
         raise ValueError('PostgreSQL recovery declaration must be bounded regular data')
-    return validate(json.loads(path.read_text()),project)
+    if path.suffix != '.toml':
+        raise ValueError('PostgreSQL recovery source must be TOML')
+    return validate(tomllib.loads(path.read_text()),project)
 
 
 def validate(value, project):

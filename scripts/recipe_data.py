@@ -1,6 +1,7 @@
 """Read effective recipe data through the caller's already prepared pinned SDK."""
 from contextlib import chdir
 import importlib
+import json
 from pathlib import Path, PurePosixPath
 import sys
 
@@ -11,6 +12,44 @@ def checked_module(module, tools, name):
     if not isinstance(origin, str) or Path(origin).resolve() != expected.resolve():
         raise ValueError('recipe reader loaded another cookbook SDK: ' + name)
     return module
+
+
+def configuration_module(tools, configuration=None):
+    tools = Path(tools).resolve()
+    sys.path.insert(0, str(tools / 'cookbook'))
+    return checked_module(configuration if configuration is not None else importlib.import_module('configuration'), tools, 'configuration')
+
+
+def source_suffix(tools, configuration=None):
+    configuration = configuration_module(tools, configuration)
+    if hasattr(configuration, 'parse_source_data'):
+        if not callable(configuration.parse_source_data):
+            raise ValueError('recipe SDK exposes no usable source decoder')
+        return '.toml'
+    return '.json'
+
+
+def decode_source_data(tools, raw, *, maximum=8 << 20, configuration=None):
+    """The selected immutable SDK owns its source data format, never a flag."""
+    configuration = configuration_module(tools, configuration)
+    if hasattr(configuration, 'parse_source_data'):
+        if not callable(configuration.parse_source_data):
+            raise ValueError('recipe SDK exposes no usable source decoder')
+        return configuration.parse_source_data(raw, maximum=maximum)
+    # Genuine historical SDKs keep their frozen JSON source ABI.
+    if len(raw.encode() if isinstance(raw, str) else raw) > maximum:
+        raise ValueError('historical source declaration exceeds its byte limit')
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('historical source declaration repeats a field')
+            result[key] = value
+        return result
+    data = json.loads(raw, object_pairs_hook=unique)
+    if not isinstance(data, dict):
+        raise ValueError('historical source declaration must be an object')
+    return data
 
 
 def effective_definition(tools, config, configuration=None):

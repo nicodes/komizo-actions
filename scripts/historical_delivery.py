@@ -145,7 +145,7 @@ def authority(root, tools, actions, environment, lookup=None):
     definition_path = Path(definition_name)
     if definition_path.is_absolute() or '..' in definition_path.parts:
         raise ValueError('historical image definition must remain caller-owned')
-    definition = document(regular(root/definition_path, 1 << 20))
+    definition = recipe_data.decode_source_data(tools, regular(root/definition_path, 1 << 20), maximum=1 << 20, configuration=configuration)
     family = definition.get('image_base', '')
     references = definition.get('inputs', {}).get('images')
     if (definition.get('version') != 1 or definition.get('project') != data['project']

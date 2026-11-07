@@ -1,6 +1,7 @@
 """Scratch recovery admission and cleanup controls; no live database or key material."""
 import importlib.util
 import json
+from source_fixture import write_source
 import os
 from pathlib import Path
 import subprocess
@@ -23,11 +24,11 @@ class PostgresRestore(unittest.TestCase):
         self.driver=recovery.Drill('demo',self.config,self.root)
 
     def test_closed_declaration_keeps_engine_digest_project_and_row_floor(self):
-        path=self.root/'declaration.json'
-        path.write_text(json.dumps(self.config));self.assertEqual(recovery.declaration(path,'demo'),self.config)
+        path=self.root/'declaration.toml'
+        write_source(path,self.config);self.assertEqual(recovery.declaration(path,'demo'),self.config)
         for field,value in [('image','postgres:18'),('project','foreign'),('minimum_rows',0),
                             ('minimum_rows',True),('maximum_tables',501),('command','true')]:
-            config=self.config|{field:value};path.write_text(json.dumps(config))
+            config=self.config|{field:value};write_source(path,config)
             with self.subTest(field=field),self.assertRaises(ValueError):recovery.declaration(path,'demo')
         with self.assertRaises(ValueError):self.driver.row_requirement(0)
 
@@ -116,7 +117,7 @@ class PostgresRestore(unittest.TestCase):
         self.assertFalse(scratch.called)
 
     def test_local_key_requirement_is_checked_without_any_container_or_key_upload(self):
-        config=self.root/'config.json';config.write_text(json.dumps(self.config))
+        config=self.root/'config.toml';write_source(config,self.config)
         result=subprocess.run([sys.executable,str(ROOT/'scripts/postgres_restore.py'),'--project','demo',
             '--config',str(config),'--tools-root',str(self.root)],env={'PATH':os.environ['PATH']},
             capture_output=True,text=True,timeout=10)

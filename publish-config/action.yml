@@ -21,7 +21,7 @@ description: >
 inputs:
   config:
     description: >
-      Path to this app's komizo.yml — a single manifest naming the compose file
+      Path to this app's komizo.toml — a single manifest naming the compose file
       and the hostnames it answers on. When set, it replaces the compose: and
       hostnames: inputs below (pass one form or the other, not both).
 
@@ -173,11 +173,11 @@ runs:
           esac
         }
 
-        # Resolve the source: either a komizo.yml manifest, or the explicit
+        # Resolve the source: either a komizo.toml manifest, or the explicit
         # compose:/hostnames: inputs. Exactly one form -- config: is the newer,
         # structured one; the file inputs still work for apps that use them.
         if [ -n "$CONFIG" ] && [ -n "$COMPOSE_INPUT" ]; then
-          echo "::error::pass either config: (a komizo.yml) or compose:, not both."
+          echo "::error::pass either config: (a komizo.toml) or compose:, not both."
           exit 1
         fi
         HOSTNAMES_DERIVED=0
@@ -187,16 +187,16 @@ runs:
           # registry token, and it used to reach out to PyPI for an unpinned
           # package -- escalating to `sudo apt-get` if that failed -- which made
           # the least verified thing in the pipeline something that ran on every
-          # deploy. The action owns a hash-pinned isolated PyYAML environment; parse-config.py says what
+          # deploy. The source parser uses the isolated standard-library TOML decoder; parse-config.py says what
           # to do when it is genuinely missing.
           #
-          # Turn komizo.yml into the flat hostnames the host reads, and hand back
+          # Turn komizo.toml into the flat hostnames the host reads, and hand back
           # the compose path it names. The derived file is ours, so it is not
           # confined below (it lives in RUNNER_TEMP, not the workspace) -- but it
           # still goes through the same validation and the host re-checks it.
           HOSTNAMES="$RUNNER_TEMP/komizo-hostnames"
           : > "$HOSTNAMES"
-          if ! COMPOSE="$(bash "$GITHUB_ACTION_PATH/../scripts/with-yaml.sh" "$GITHUB_ACTION_PATH/parse-config.py" "$CONFIG" "$HOSTNAMES")"; then
+          if ! COMPOSE="$(python3 -I "$GITHUB_ACTION_PATH/parse-config.py" "$CONFIG" "$HOSTNAMES")"; then
             exit 1
           fi
           HOSTNAMES_DERIVED=1
@@ -207,7 +207,7 @@ runs:
           HOSTNAMES="$HOSTNAMES_INPUT"
         fi
         if [ -z "$COMPOSE" ]; then
-          echo "::error::no compose file. Pass config: (a komizo.yml) or compose:."
+          echo "::error::no compose file. Pass config: (a komizo.toml) or compose:."
           exit 1
         fi
 
