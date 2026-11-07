@@ -74,7 +74,7 @@ jobs:
         printf 'KOMIZO_BACKUP_PROOF_FILE=%s\n' "$RUNNER_TEMP/komizo-backup-proof/operation.frame" >> "$GITHUB_ENV"
     - name: Prepare bounded routine export authority
       timeout-minutes: 2
-      uses: nicodes/komizo-actions/backup-proof@cfc08dfbc35a02780d158265f14189a0c2f702d6
+      uses: nicodes/komizo-actions/backup-proof@1eeed9996aa147ea084cde26283fa31b1161c866
       with:
         output: ${{ runner.temp }}/komizo-backup-proof/operation.frame
     - name: Verify and encrypt the pre-deploy snapshot
