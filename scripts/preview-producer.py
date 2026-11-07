@@ -51,13 +51,13 @@ def tracked(root, name, maximum=4 << 20):
 
 def native_policy(root, tools, name):
     root = root.resolve()
-    if not isinstance(name, str) or not re.fullmatch('deploy/[A-Za-z0-9_.-]+\\.json', name):
+    _, configuration, images = preview.tools_modules(tools)
+    if not isinstance(name, str) or not re.fullmatch('deploy/[A-Za-z0-9_.-]+' + re.escape(preview.recipe_data.source_suffix(tools, configuration)), name):
         raise ValueError('Preview producer policy belongs to its native deploy owner')
-    data = json.loads(tracked(root, name, 32768))
+    data = preview.recipe_data.decode_source_data(tools, tracked(root, name, 32768), maximum=32768, configuration=configuration)
     keys = {'version', 'project', 'components', 'workflow_sha256', 'build', 'publish', 'producer_timeout_minutes'}
     if not isinstance(data, dict) or set(data) != keys or data.get('version') != 1:
         raise ValueError('Preview producer requires closed native policy data')
-    _, configuration, images = preview.tools_modules(tools)
     config = preview.recipe_data.load(root, tools, configuration)
     if config['recipe'] != 'react-native':
         raise ValueError('this producer requires complete native React Native acceptance')

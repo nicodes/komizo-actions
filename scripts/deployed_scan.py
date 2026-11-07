@@ -4,6 +4,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import tomllib
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -32,7 +33,9 @@ def read(root, name, maximum=65536):
     path = source_path(root, name)
     if not path.is_file() or path.stat().st_size > maximum:
         raise ValueError('scan policy must be bounded regular source')
-    return json.loads(path.read_text())
+    if path.suffix != '.toml':
+        raise ValueError('scan policy source must be TOML')
+    return tomllib.loads(path.read_text())
 
 
 def installed(name):

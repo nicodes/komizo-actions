@@ -1,8 +1,10 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: f4f7b40d34cb63c3cc287ff0a609d531d71c099b5ec83f220eaa279ebfa7d39b -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: bfe668d697dfba471f679bf4a49b3fce89ad74eac075069499ccef179da49f00 -->
 
 # komizo Actions
 
 Optional GitHub adapters for Komizo deployment, scoped connectivity, previews, release evidence and encrypted backup transport. Pin actions and reusable workflows to reviewed full commits. Callers supply their own images, targets and authorized host policy; the host independently enforces admission.
+
+Authored delivery, backup, recovery and publication declarations use TOML, including `deploy/komizo.toml`. Configuration publication emits native Compose YAML and hostnames; generated release and acceptance receipts remain JSON. Independently pinned historical cookbook adapters retain their original input protocol.
 
 ## Accepted recipe artifacts
 

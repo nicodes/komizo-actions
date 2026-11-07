@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 
 sys.dont_write_bytecode = True
 
@@ -40,7 +41,10 @@ def stamp(receipt, now=None):
 def declaration(path, project):
     if not re.fullmatch('[a-z][a-z0-9-]{0,62}', project):
         raise ValueError('invalid backup project')
-    value = json.loads(path.read_text()) if path else {}
+    if path and (path.suffix != '.toml' or path.is_symlink() or any(parent.is_symlink() for parent in path.parents)
+                 or not path.is_file() or path.stat().st_size > 65536):
+        raise ValueError('backup source must be bounded regular TOML')
+    value = tomllib.loads(path.read_text()) if path else {}
     if not isinstance(value, dict) or set(value) - {'exporter', 'proof_exporter', 'first_deployment'}:
         raise ValueError('invalid backup declaration')
     for key in ('exporter', 'proof_exporter'):
@@ -265,7 +269,7 @@ def main():
                              args.directory or root / '.artifacts/restore/download', key, pull=args.pull)
             else:
                 subprocess.run([sys.executable, str(args.tools_root / 'helpers/restore-drill.py'),
-                                '--project', args.project, '--config', str(args.restore_config or Path('deploy/restore.json')),
+                                '--project', args.project, '--config', str(args.restore_config or Path('deploy/restore.toml')),
                                 '--key', str(key), *(['--pull'] if args.pull else []), *extra], check=True)
     except (OSError, RuntimeError, AttributeError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n')

@@ -3,6 +3,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+from source_fixture import write_source
 from pathlib import Path
 import subprocess
 import tempfile
@@ -31,12 +32,12 @@ class DeployedDependencies(unittest.TestCase):
         self.contract = dict(source_lock='api/Cargo.lock', legacy_manifest='api/go.mod',
             lock_installed='/usr/share/demo/Cargo.lock', binaries=['/app/server', '/usr/local/bin/reconcile'],
             user='10001:10001', forbidden=['DEVELOPMENT_AUTHORITY'])
-        self.data = dict(version=1, deployment='deploy/scan.json', rust={'api': self.contract},
+        self.data = dict(version=1, deployment='deploy/scan.toml', rust={'api': self.contract},
                         go={'api': dict(forbidden=['DEVELOPMENT_AUTHORITY']), 'gate': dict(forbidden=[])})
         self.deployment = dict(repository='owner/demo', image_base='ghcr.io/owner/demo',
                                components=['api', 'gate'], environment='production')
-        (self.root / 'deploy/scan.json').write_text(json.dumps(self.deployment))
-        self.path = self.root / 'deploy/deployed-scan.json'
+        write_source(self.root / 'deploy/scan.toml',self.deployment)
+        self.path = self.root / 'deploy/deployed-scan.toml'
         self.reports = self.root / 'reports'
         self.reports.mkdir()
         self.info = dict(Id=self.identity, Config=dict(User=self.contract['user'],
@@ -49,7 +50,7 @@ class DeployedDependencies(unittest.TestCase):
         self.link_binary = False
 
     def write(self):
-        self.path.write_text(json.dumps(self.data))
+        write_source(self.path,self.data)
 
     def capture(self, arguments, environment, timeout=60):
         self.calls.append(arguments)
@@ -160,7 +161,7 @@ class DeployedDependencies(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 scanner.policy(self.root, self.path)
         self.path.unlink()
-        self.path.symlink_to(self.root / 'deploy/scan.json')
+        self.path.symlink_to(self.root / 'deploy/scan.toml')
         with self.assertRaises(ValueError):
             scanner.policy(self.root, self.path)
 

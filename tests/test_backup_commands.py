@@ -1,6 +1,7 @@
 from contextlib import chdir
 import importlib.util
 import json
+from source_fixture import write_source
 from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
@@ -38,9 +39,9 @@ class BackupCommands(unittest.TestCase):
 
     def test_exporter_cannot_execute_other_host_commands(self):
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / 'backup.json'
+            path = Path(temporary) / 'backup.toml'
             for command in ['export-other-backup', 'export-demo-backup;id', '/bin/sh']:
-                path.write_text(json.dumps({'exporter': command}))
+                write_source(path, {'exporter': command})
                 with self.assertRaises(ValueError):
                     backup.declaration(path, 'demo')
         with self.assertRaises(ValueError):
