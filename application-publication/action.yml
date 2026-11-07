@@ -1,9 +1,14 @@
 name: Publish accepted application images
-description: Publish exact closed images admitted by same-run full Make validation
+description: Publish exact closed images admitted by same-run full recipe validation
 inputs:
+  cookbook-ref:
+    description: Accepted standalone Cookbook source commit
+    required: false
+    default: ''
   tools-ref:
-    description: Accepted cookbook source commit
-    required: true
+    description: Historical Tools-hosted recipe SDK commit
+    required: false
+    default: ''
   komizo-ref:
     description: Accepted Komizo automation source commit
     required: true
@@ -22,16 +27,28 @@ runs:
   steps:
   - name: Require accepted immutable automation before publication
     shell: bash
-    run: "set -euo pipefail\n[[ \"$SOURCE_PREPARED\" == true || \"$SOURCE_PREPARED\" == false ]]\n[[ \"$SOURCE\" =~ ^[a-f0-9]{40}$ && \"$SOURCE\" == \"\
-      $GITHUB_SHA\" && \"$GITHUB_REF\" == refs/heads/main ]]\n[[ \"$TOOLS_REF\" =~\
-      \ ^[a-f0-9]{40}$ && \"$KOMIZO_REF\" =~ ^[a-f0-9]{40}$ && \"$PROJECT\" =~ ^[a-z][a-z0-9-]{0,62}$\
-      \ ]]\nfor pair in \"tools:$TOOLS_REF\" \"komizo-actions:$KOMIZO_REF\"; do\n\
-      \  repository=\"${pair%%:*}\"\n  revision=\"${pair#*:}\"\n  relation=\"$(gh\
-      \ api \"repos/nicodes/$repository/compare/$revision...main\" --jq .status)\"\
-      \n  [[ \"$relation\" == ahead || \"$relation\" == identical ]]\ndone\n"
+    run: |
+      set -euo pipefail
+      [[ "$SOURCE_PREPARED" == true || "$SOURCE_PREPARED" == false ]]
+      [[ "$SOURCE" =~ ^[a-f0-9]{40}$ && "$SOURCE" == "$GITHUB_SHA" && "$GITHUB_REF" == refs/heads/main ]]
+      [[ "$KOMIZO_REF" =~ ^[a-f0-9]{40}$ && "$PROJECT" =~ ^[a-z][a-z0-9-]{0,62}$ ]]
+      if [[ -n "$COOKBOOK_REF" ]]; then
+        [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ && -z "$TOOLS_REF" ]]
+        recipe_source="cookbook:$COOKBOOK_REF"
+      else
+        [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+        recipe_source="tools:$TOOLS_REF"
+      fi
+      for pair in "$recipe_source" "komizo-actions:$KOMIZO_REF"; do
+        repository="${pair%%:*}"
+        revision="${pair#*:}"
+        relation="$(gh api "repos/nicodes/$repository/compare/$revision...main" --jq .status)"
+        [[ "$relation" == ahead || "$relation" == identical ]]
+      done
     env:
       SOURCE: ${{ inputs.source }}
       TOOLS_REF: ${{ inputs.tools-ref }}
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       PROJECT: ${{ inputs.project }}
       SOURCE_PREPARED: ${{ inputs.source-prepared }}
@@ -57,16 +74,39 @@ runs:
       SOURCE: ${{ inputs.source }}
       GH_TOKEN: ${{ github.token }}
   - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    if: inputs.cookbook-ref == ''
     with:
       repository: nicodes/tools
       ref: ${{ inputs.tools-ref }}
       path: _delivery_cookbook
       persist-credentials: false
   - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    if: inputs.cookbook-ref != ''
+    with:
+      repository: nicodes/cookbook
+      ref: ${{ inputs.cookbook-ref }}
+      path: .artifacts/automation/cookbook
+      persist-credentials: false
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     with:
       repository: nicodes/komizo-actions
       ref: ${{ inputs.komizo-ref }}
       path: _komizo
+      persist-credentials: false
+  - name: Resolve the accepted Cookbook helper dependency
+    if: inputs.cookbook-ref != ''
+    id: sdk-tools
+    shell: bash
+    run: python3 -I -B _komizo/scripts/recipe_context.py dependency --cookbook-root .artifacts/automation/cookbook --cookbook-ref "$COOKBOOK_REF" --github-output
+    env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      GH_TOKEN: ${{ github.token }}
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    if: inputs.cookbook-ref != ''
+    with:
+      repository: nicodes/tools
+      ref: ${{ steps.sdk-tools.outputs.tools-ref }}
+      path: .artifacts/automation/tools
       persist-credentials: false
   - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
     with:
@@ -80,11 +120,18 @@ runs:
       password: ${{ github.token }}
   - name: Publish exact images from successful full validation
     shell: bash
-    run: python3 _komizo/scripts/application-publication.py --source "$SOURCE" --tools
-      _delivery_cookbook --tools-ref "$TOOLS_REF" --project "$PROJECT"
+    run: |
+      set -euo pipefail
+      if [[ -n "$COOKBOOK_REF" ]]; then
+        arguments=(--cookbook-root .artifacts/automation/cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/automation/tools)
+      else
+        arguments=(--tools _delivery_cookbook --tools-ref "$TOOLS_REF")
+      fi
+      python3 -I -B _komizo/scripts/application-publication.py --source "$SOURCE" "${arguments[@]}" --project "$PROJECT"
     env:
       SOURCE: ${{ inputs.source }}
       TOOLS_REF: ${{ inputs.tools-ref }}
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       PROJECT: ${{ inputs.project }}
       GH_TOKEN: ${{ github.token }}

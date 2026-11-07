@@ -10,6 +10,10 @@ import sys
 import tempfile
 import tomllib
 
+sys.dont_write_bytecode=True
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
+import recipe_context
+
 
 def literal_sha(value):
     if not isinstance(value,str) or not re.fullmatch('[a-f0-9]{40}',value):
@@ -101,22 +105,37 @@ def verify(root,entry,environment,source,release,run=execute):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation',choices=['setup','verify'])
-    parser.add_argument('--tools',type=Path,required=True)
-    parser.add_argument('--tools-ref',required=True)
+    parser.add_argument('--tools',type=Path,help='Historical Tools-hosted recipe SDK location')
+    parser.add_argument('--tools-ref',help='Historical Tools-hosted recipe SDK revision')
+    parser.add_argument('--cookbook-root',type=Path)
+    parser.add_argument('--cookbook-ref')
+    parser.add_argument('--tools-root',type=Path)
     parser.add_argument('--source',required=True)
     parser.add_argument('--release',required=True)
     parser.add_argument('--expected-source',default='')
     parser.add_argument('--runner',required=True)
     parser.add_argument('--timeout',type=int,required=True)
-    args=parser.parse_args();root=Path.cwd().resolve();tools=args.tools.resolve()
+    args=parser.parse_args();root=Path.cwd().resolve()
     try:
-        literal_sha(args.tools_ref)
-        for directory,expected in [(root,args.source),(tools,args.tools_ref)]:
+        context=None
+        if args.cookbook_root is not None or args.cookbook_ref is not None:
+            if args.cookbook_root is None or args.cookbook_ref is None or args.tools is not None or args.tools_ref is not None:
+                raise ValueError('select the complete Cookbook contract or the historical Tools SDK')
+            context=recipe_context.accepted_context(args.cookbook_root,args.cookbook_ref,
+                lambda path:json.loads(subprocess.check_output(['gh','api',path],text=True,timeout=30)),args.tools_root)
+            cookbook,revision,tools=context.cookbook,context.cookbook_revision,context.tools
+        else:
+            if args.tools is None or args.tools_ref is None or args.tools_root is not None:
+                raise ValueError('historical verification requires its explicit Tools SDK source')
+            cookbook=tools=args.tools.resolve();revision=literal_sha(args.tools_ref)
+        for directory,expected in [(root,args.source),(cookbook,revision)]:
             actual=subprocess.check_output(['git','-C',str(directory),'rev-parse','HEAD'],text=True,timeout=30).strip()
             if actual!=expected:raise ValueError('production source or cookbook differs from its immutable pin')
             if subprocess.run(['git','-C',str(directory),'diff','--quiet','HEAD','--'],timeout=30).returncode:
                 raise ValueError('production verification requires unmodified tracked source')
-        sys.path.insert(0,str(tools/'cookbook'))
+        if context is not None:
+            for name in ['configuration','godot_ci','godot_static','sdk_environment','node_component','godot_browser']:context.module(name)
+        sys.path.insert(0,str(cookbook/'cookbook'))
         from configuration import load,relative
         import godot_ci
         config=load(root)
@@ -127,6 +146,8 @@ def main():
                      expected_source,(static or {}).get('production_current_source',True))
         relative(root,entry['entry']['path'],exists=True)
         environment={**os.environ,'TOOLS_ROOT':str(tools),'MISE_AUTO_INSTALL':'false','MISE_EXEC_AUTO_INSTALL':'false'}
+        if context is not None:
+            environment.update(COOKBOOK_ROOT=str(cookbook),COOKBOOK_REF=revision,TOOLS_REF=context.tools_revision)
         if args.operation=='setup':prepare(root,config,entry,environment)
         else:verify(root,entry,environment,expected_source,args.release)
     except (OSError,ValueError,KeyError,subprocess.SubprocessError) as error:

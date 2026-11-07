@@ -18,6 +18,7 @@ sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
+import recipe_context
 SHA=re.compile('[a-f0-9]{40}')
 WORKFLOWS={'backup':'backup.yml','recovery':'recovery.yml','retention':'recovery.yml','security':'security-scan.yml','production':'production-verification.yml','paid':'production-verification.yml'}
 
@@ -55,14 +56,17 @@ def checked_checkout(checkout,name,commit,environment):
         raise ValueError('operational SDK source contains modified or unexpected files')
 
 
-def runtime_environment(root,tools,environment):
-    return dict(environment,MISE_AUTO_INSTALL='false',MISE_EXEC_AUTO_INSTALL='false',MISE_TRUSTED_CONFIG_PATHS=str(root),
+def runtime_environment(root,tools,environment,context=None):
+    values=dict(environment,MISE_AUTO_INSTALL='false',MISE_EXEC_AUTO_INSTALL='false',MISE_TRUSTED_CONFIG_PATHS=str(root),
         TOOLS_ROOT=str(tools.resolve()),KOMIZO_ACTIONS_ROOT=str(ROOT),PYTHONDONTWRITEBYTECODE='1',
         EXPECTED_REVISION=environment['GITHUB_SHA'],APP_VERSION=environment['GITHUB_SHA'],
         PLAYWRIGHT_BROWSERS_PATH=str(root/'.artifacts/playwright'))
+    if context is not None:
+        values.update(COOKBOOK_ROOT=str(context.cookbook),COOKBOOK_REF=context.cookbook_revision,TOOLS_REF=context.tools_revision)
+    return values
 
 
-def authority(root,tools,operation,selected,environment,lookup=None):
+def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_tools=None,return_context=False):
     lookup=lookup or (lambda path:capture(['gh','api',path]))
     repository=environment.get('GITHUB_REPOSITORY','')
     revision=environment.get('GITHUB_SHA','')
@@ -77,14 +81,26 @@ def authority(root,tools,operation,selected,environment,lookup=None):
         raise ValueError('operational effects require an identified Actions execution')
     if operation=='paid' and environment['GITHUB_EVENT_NAME']!='workflow_dispatch':raise ValueError('paid checks require explicit manual dispatch')
     if capture(['git','status','--porcelain','--untracked-files=no'],root,environment):raise ValueError('operational native source was modified')
-    revisions={name:environment.get(key,'') for name,key in [('tools','TOOLS_REF'),('komizo-actions','KOMIZO_REF')]}
+    context=None
+    cookbook_ref=environment.get('COOKBOOK_REF','')
+    if not cookbook_ref and supplied_tools is not None:
+        raise ValueError('an independent helper location requires the Cookbook source contract')
+    revisions={name:environment.get(key,'') for name,key in [('komizo-actions','KOMIZO_REF')]}
+    if not cookbook_ref:revisions['tools']=environment.get('TOOLS_REF','')
     for name,commit in revisions.items():
         if not SHA.fullmatch(commit):raise ValueError('operational automation requires immutable pins')
         checkout=tools if name=='tools' else ROOT
         checked_checkout(checkout,name,commit,environment)
         response=json.loads(lookup(f'repos/nicodes/{name}/compare/{commit}...main'))
         if not isinstance(response,dict) or response.get('status') not in {'ahead','identical'}:raise ValueError('operational automation must first be accepted on main')
-    workflow,_,_=tools_modules(tools)
+    if cookbook_ref:
+        context=recipe_context.accepted_context(tools,cookbook_ref,lambda path:json.loads(lookup(path)),supplied_tools)
+        if environment.get('TOOLS_REF','') not in {'',context.tools_revision}:
+            raise ValueError('operational helper identity differs from the Cookbook dependency')
+    if context is not None:
+        workflow=context.module('operational_workflows')
+        for name in ['configuration','node_component','images']:context.module(name)
+    else:workflow,_,_=tools_modules(tools)
     config=recipe_data.load(root,tools)
     data=workflow.declaration(root,config)
     if data['definition']!=environment.get('DECLARATION') or data['komizo_ref']!=revisions['komizo-actions']:
@@ -106,7 +122,7 @@ def authority(root,tools,operation,selected,environment,lookup=None):
             if inputs.get('operation')!='retain-legacy':raise ValueError('legacy retention was not explicitly requested')
             for key in ['artifact-id','run-id']:
                 if not re.fullmatch('[1-9][0-9]{0,19}',str(inputs.get(key,''))):raise ValueError('legacy retention requires immutable artifact and run IDs')
-    expected=workflow.workflow_files(root,revisions['tools'],config)
+    expected=workflow.workflow_files(root,cookbook_ref if context else revisions['tools'],config)
     path='.github/workflows/'+WORKFLOWS[operation]
     if (root/path).read_text()!=expected[path]:raise ValueError('operational caller differs from its canonical authority contract')
     if environment.get('OPERATION_RUNNER')!=record['runner'] or environment.get('OPERATION_TIMEOUT')!=str(record['timeout_minutes']):
@@ -126,7 +142,8 @@ def authority(root,tools,operation,selected,environment,lookup=None):
                 and value.get('path')=='.github/workflows/cd.yml' and value.get('event') in {'push','workflow_dispatch'}
                 and type(value.get('run_attempt')) is int and value['run_attempt']>0 for value in runs.get('workflow_runs',[])):
             raise ValueError('paid production check requires a successful deployment of this exact revision')
-    return config,data,record
+    result=(config,data,record)
+    return (*result,context) if return_context else result
 
 
 def execute(arguments,root,environment,timeout=300):
@@ -152,7 +169,7 @@ def native(root,record,environment,run=pinned):
     run(arguments,root,dict(environment,**record.get('environment',{})),record.get('timeout',180))
 
 
-def prepare(root,tools,config,record,operation,environment):
+def prepare(root,tools,config,record,operation,environment,*,helpers=None,context=None):
     _,node,images=tools_modules(tools)
     pins=tomllib.loads((root/'mise.toml').read_text())['tools']
     prepare=record.get('prepare',{}) if operation!='paid' else {'native':record.get('prepare',[])}
@@ -177,7 +194,7 @@ def prepare(root,tools,config,record,operation,environment):
         selected=packages
         for package in selected:tools_needed.add('bun' if package.get('manager','npm')=='bun' else 'node')
     if not tools_needed<=pins.keys():raise ValueError('operational SDKs require exact native Mise pins')
-    environment=runtime_environment(root,tools,environment)
+    environment=runtime_environment(root,helpers or tools,environment,context)
     execute(['mise','install',*sorted(tools_needed)],root,environment)
     manifests=sorted({check['path'] for check in checks if check['runner'].startswith('cargo-')})
     if manifests:
@@ -194,9 +211,9 @@ def prepare(root,tools,config,record,operation,environment):
         for check in prepare.get('native',[]):native(root,check,environment)
 
 
-def source_security(root,tools,config,environment):
+def source_security(root,tools,config,environment,*,helpers=None):
     _,node,images=tools_modules(tools)
-    arguments=['python3',str(tools/'helpers/source-secrets.py')]
+    arguments=['python3',str((helpers or tools)/'helpers/source-secrets.py')]
     if config.get('security',{}).get('fixtures'):arguments+=['--fixtures',config['security']['fixtures']]
     pinned(arguments,root,environment)
     node.audit(root,config.get('node',{}).get('packages',[]),environment,pinned)
@@ -214,34 +231,49 @@ def outputs(values,environment):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command',choices=['plan','prepare','run','source','deployed','report','setup-artifacts','build-artifacts','audit-artifacts','check-artifacts'])
-    parser.add_argument('--tools',type=Path,default=Path('_operation_cookbook'))
+    parser.add_argument('--tools',type=Path,help='Historical Tools-hosted recipe SDK location')
+    parser.add_argument('--cookbook-root',type=Path)
+    parser.add_argument('--cookbook-ref')
+    parser.add_argument('--tools-root',type=Path,help='Location of the exact helper dependency declared by Cookbook')
     args=parser.parse_args()
     try:
         root=Path.cwd();environment=dict(os.environ);operation=environment['OPERATION']
-        config,data,record=authority(root,args.tools,operation,environment.get('OPERATION_CHECK',''),environment)
-        environment=runtime_environment(root,args.tools,environment)
+        if args.cookbook_root is not None or args.cookbook_ref is not None:
+            if args.cookbook_root is None or args.cookbook_ref is None or args.tools is not None:
+                raise ValueError('select the complete Cookbook contract or the historical Tools SDK')
+            if environment.get('COOKBOOK_REF',args.cookbook_ref)!=args.cookbook_ref:
+                raise ValueError('Cookbook CLI revision differs from the workflow source')
+            environment['COOKBOOK_REF']=args.cookbook_ref
+            cookbook=args.cookbook_root
+        else:
+            if args.tools_root is not None or environment.get('COOKBOOK_REF'):
+                raise ValueError('Cookbook callers must select their explicit source contract')
+            cookbook=args.tools or Path('_operation_cookbook')
+        config,data,record,context=authority(root,cookbook,operation,environment.get('OPERATION_CHECK',''),environment,
+            supplied_tools=args.tools_root,return_context=True)
+        tools=context.tools if context else cookbook
+        revision=context.cookbook_revision if context else environment['TOOLS_REF']
+        environment=runtime_environment(root,tools,environment,context)
         if args.command=='plan':
-            workflow=tools_modules(args.tools)[0]
+            workflow=tools_modules(cookbook)[0]
             outputs({'project':data['project'],'backup':record.get('config',''),
                 'allowed-products':json.dumps([data['project']]),'evidence':'\n'.join(record.get('evidence',[])),
                 'deployed':str(bool(record.get('deployed_policy'))).lower(),
                 'artifact-validation':str(record.get('artifact_validation',False)).lower(),
                 'artifact-name':workflow.artifact_name(operation,record,environment),
                 'evidence-missing':record.get('evidence_missing','error' if operation in {'backup','recovery'} else 'ignore')},environment)
-        elif args.command=='prepare':prepare(root,args.tools,config,record,operation,environment)
+        elif args.command=='prepare':prepare(root,cookbook,config,record,operation,environment,helpers=tools,context=context)
         elif args.command=='report':
-            execute([sys.executable,str(args.tools/'helpers/report-failure.py')],root,environment)
+            execute([sys.executable,str(tools/'helpers/report-failure.py')],root,environment)
         elif args.command.endswith('-artifacts'):
             if operation!='security' or not record.get('artifact_validation'):
                 raise ValueError('artifact validation requires its explicit source build policy')
-            import generate
-            if (root/'Makefile').read_text()!=generate.makefile(root,environment['TOOLS_REF']):
-                raise ValueError('artifact validation requires the exact canonical source Make entrypoint')
+            recipe_data.canonical_entrypoint(root,cookbook,revision)
             commands={'setup-artifacts':'setup','build-artifacts':'build','audit-artifacts':'test:security'}
-            if args.command in commands:execute(['make',commands[args.command]],root,environment,record['timeout_minutes']*60)
+            if args.command in commands:execute(recipe_data.task_command(cookbook,commands[args.command]),root,environment,record['timeout_minutes']*60)
             else:
                 import configuration,recipe
-                config=recipe_data.load(root,args.tools,configuration)
+                config=recipe_data.load(root,cookbook,configuration)
                 os.environ.update(environment)
                 environment=recipe.configure_environment(root,config)
                 adapter=recipe.adapter(config)
@@ -251,13 +283,13 @@ def main():
                     if checks:adapter.native_tests(root,dict(config,tests={suite:checks}),environment,suite)
         elif args.command=='source':
             if operation!='security':raise ValueError('source audits require their declared security role')
-            prepare(root,args.tools,config,record,operation,environment)
-            source_security(root,args.tools,config,environment)
+            prepare(root,cookbook,config,record,operation,environment,helpers=tools,context=context)
+            source_security(root,cookbook,config,environment,helpers=tools)
             for check in record.get('checks',[]):native(root,check,environment)
         elif args.command=='deployed':
             if operation!='security' or not record.get('deployed_policy'):raise ValueError('deployed audits require their actual native image policy')
             driver=module('operational_deployed_scan',ROOT/'scripts/deployed_scan.py')
-            driver.scan(root,root/record['deployed_policy'],args.tools,environment=environment)
+            driver.scan(root,root/record['deployed_policy'],tools,environment=environment)
         elif operation=='production':
             for check in record['checks']:native(root,check,environment)
         elif operation=='paid':

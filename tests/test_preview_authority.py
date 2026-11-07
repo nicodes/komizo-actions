@@ -282,5 +282,80 @@ class PreviewAuthority(unittest.TestCase):
         response.head='f'*40
         with self.assertRaisesRegex(ValueError,'another source'):preview.verify_health(self.plan,urls,opener)
 
+    def extracted_context(self):
+        identities={'cookbook_repository':'nicodes/cookbook','cookbook_commit':'d'*40,
+            'tools_repository':'nicodes/tools','tools_commit':'e'*40}
+        context=SimpleNamespace(identities=lambda:identities,tools=self.root/'actual-tools')
+        context.require_proof=lambda proof:preview.recipe_context.Context.require_proof(context,proof)
+        return context
+
+    def test_extracted_plans_require_both_sources_and_do_not_fall_back_to_historical_shape(self):
+        context=self.extracted_context()
+        a,b,c=self.context()
+        with a,b,c:
+            result=preview.request_plan(self.root,self.root,'deploy/preview.json',self.environment,self.lookup,context=context)
+            plan=json.loads(result['plan'])
+            self.assertEqual(plan,self.plan|context.identities()|{'entrypoint_contract':'mise-v1'})
+            self.assertEqual(preview.validate_plan(result['plan'],self.root,self.root,self.environment,self.lookup,context=context),plan)
+            for change in [{'tools_commit':'d'*40},{'cookbook_repository':'nicodes/tools'},
+                           {'entrypoint_contract':'make-v0'}]:
+                with self.subTest(change=change),self.assertRaises(ValueError):
+                    preview.validate_plan(json.dumps(plan|change),self.root,self.root,self.environment,self.lookup,context=context)
+            with self.assertRaises(ValueError):
+                preview.validate_plan(json.dumps(self.plan),self.root,self.root,self.environment,self.lookup,context=context)
+            with self.assertRaises(ValueError):
+                preview.validate_plan(result['plan'],self.root,self.root,self.environment,self.lookup)
+
+    def test_extracted_publication_evidence_rejects_aliased_or_missing_helper_binding(self):
+        context=self.extracted_context()
+        plan=self.plan|context.identities()|{'entrypoint_contract':'mise-v1'}
+        evidence=self.publication_evidence()|context.identities()|{'entrypoint_contract':'mise-v1','plan':plan}
+        path=self.root/'publication.json'
+        jobs=dict(total_count=1,jobs=[dict(name='publish / Publish exact Preview images',conclusion='success',head_sha=self.base)])
+        path.write_text(json.dumps(evidence))
+        preview.publication_evidence(plan,path,self.environment,lambda _:jobs,context=context)
+        for change in [{'tools_commit':'d'*40},{'tools_repository':'nicodes/cookbook'},
+                       {'entrypoint_contract':'make-v0'}]:
+            path.write_text(json.dumps(evidence|change))
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                preview.publication_evidence(plan,path,self.environment,lambda _:jobs,context=context)
+
+    def test_extracted_publisher_releases_only_through_actual_Tools_after_full_proof_binding(self):
+        context=self.extracted_context()
+        source=self.root/'source';source.mkdir();(source/'cookbook.toml').write_text('recipe="react-native"\n')
+        incoming=self.root/'incoming';archive=incoming/'.artifacts/release';archive.mkdir(parents=True)
+        names=['images.tar.gz','images.tar.gz.sha256','images.json','release.json']
+        for name in names:(archive/name).write_bytes(b'[]' if name=='images.json' else name.encode())
+        proof=dict(version=1,source_commit=self.head,source_tree=self.tree,recipe='react-native',
+            status='passed',tracked_source_clean=True,build_verified=True,tests_verified=True,
+            test_groups=self.policy['test_groups'],head=self.head,base=self.base,
+            configuration_sha256=hashlib.sha256((source/'cookbook.toml').read_bytes()).hexdigest(),
+            execution_context=self.environment|{'GITHUB_JOB':'validate'},
+            artifacts={'.artifacts/release/'+name:hashlib.sha256((archive/name).read_bytes()).hexdigest() for name in names},
+            **context.identities(),entrypoint_contract='mise-v1')
+        path=incoming/'.artifacts/cookbook-validation.json'
+        jobs=dict(total_count=1,jobs=[dict(name='full / Full source checks / Make full',conclusion='success',head_sha=self.base,labels=['ubuntu-24.04'])])
+        def publish(command,**options):
+            self.assertEqual(command[1],str(context.tools/'helpers/release.py'))
+            self.assertEqual(options['timeout'],1800)
+            self.assertEqual(options['env']['REQUEST_HEAD'],self.head)
+            (source/'.artifacts/release/publication.json').write_text(json.dumps(self.publication_evidence()['publication']|
+                {'archive_sha256':proof['artifacts']['.artifacts/release/images.tar.gz']}))
+        execute=Mock(side_effect=publish)
+        with patch.object(preview,'git',side_effect=lambda _,*args:self.tree if args[-1]=='HEAD^{tree}' else self.head),\
+             patch.object(preview,'source_policy',return_value=({'recipe':'react-native','ci':{'runner':'ubuntu-24.04'}},{})),\
+             patch.object(preview.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
+            path.write_text(json.dumps(proof|{'tools_commit':'d'*40}))
+            with self.assertRaises(ValueError):
+                preview.publication(self.plan,self.root,source,self.root,'d'*40,incoming,self.environment,lambda _:jobs,execute,context=context)
+            execute.assert_not_called()
+            self.assertFalse((source/'.artifacts/release').exists())
+            path.write_text(json.dumps(proof))
+            preview.publication(self.plan,self.root,source,self.root,'d'*40,incoming,self.environment,
+                lambda path:jobs if '/actions/' in path else self.request,execute,context=context)
+        self.assertEqual(execute.call_count,1)
+        evidence=json.loads((self.root/'.artifacts/preview-publication.json').read_text())
+        context.require_proof(evidence)
+
 
 if __name__=='__main__':unittest.main()

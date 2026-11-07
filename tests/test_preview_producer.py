@@ -410,5 +410,67 @@ class PreviewProducer(unittest.TestCase):
                 execute.assert_not_called()
             self.jobs['jobs'][0]['started_at']=original
 
+    def extracted_context(self):
+        identities={'cookbook_repository':'nicodes/cookbook','cookbook_commit':self.tools_ref,
+            'tools_repository':'nicodes/tools','tools_commit':'e'*40}
+        context=SimpleNamespace(identities=lambda:identities)
+        context.require_proof=lambda value:producer.preview.recipe_context.Context.require_proof(context,value)
+        return context
+
+    def test_extracted_request_and_plan_bind_both_sources_without_relaxing_freshness(self):
+        context=self.extracted_context()
+        result=producer.request(self.root,self.tools,'deploy/preview-publication.json',self.environment,self.lookup,context=context)
+        plan=json.loads(result['plan'])
+        self.assertEqual(plan,self.plan|context.identities()|{'entrypoint_contract':'mise-v1'})
+        self.assertEqual(producer.validate_plan(result['plan'],self.root,self.tools,self.environment,self.lookup,context=context),plan)
+        for changes in [{'tools_commit':self.tools_ref},{'cookbook_repository':'nicodes/tools'},
+                        {'entrypoint_contract':'make-v0'}]:
+            with self.subTest(changes=changes),self.assertRaises(ValueError):
+                producer.validate_plan(json.dumps(plan|changes),self.root,self.tools,self.environment,self.lookup,context=context)
+        self.pr['head']['sha']='f'*40
+        with self.assertRaisesRegex(ValueError,'stale'):
+            producer.validate_plan(result['plan'],self.root,self.tools,self.environment,self.lookup,context=context)
+
+    def test_extracted_bootstrap_derives_actual_Tools_and_refuses_tampered_binding_before_git(self):
+        import base64
+        workflow=yaml.safe_load((ROOT/'.github/workflows/cookbook-preview-producer-publish.yml').read_text())
+        body=workflow['jobs']['publish']['steps'][0]['run']
+        program=body.split("python3 - <<'PYTHON'\n",1)[1].rsplit('\nPYTHON',1)[0]
+        cookie='f'*40
+        identities={'cookbook_repository':'nicodes/cookbook','cookbook_commit':cookie,
+            'tools_repository':'nicodes/tools','tools_commit':self.tools_ref,'entrypoint_contract':'mise-v1'}
+        original_plan=self.plan|identities
+        manifest=('[vars]\ntools_ref="'+self.tools_ref+'"\n').encode()
+        helper=b'def adopt_descendants(): pass\ndef stop_descendants(child): pass\n'
+        def file_record(raw):
+            return {'type':'file','encoding':'base64','size':len(raw),'content':base64.b64encode(raw).decode(),
+                'sha':hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()}
+        queries=[]
+        def response(request,**_):
+            url=request.full_url;queries.append(url)
+            if '/jobs?' in url:value=self.jobs
+            elif '/compare/' in url:value={'status':'behind' if kind=='unaccepted-tools' and '/nicodes/tools/' in url else 'ahead'}
+            elif '/nicodes/cookbook/contents/mise.toml?' in url:
+                value=file_record(manifest)
+                if kind=='changed-manifest':value['sha']='0'*40
+            else:value=file_record(helper)
+            return io.BytesIO(json.dumps(value).encode())
+        for kind in ['accepted','changed-manifest','unaccepted-tools','aliased-plan']:
+            plan=original_plan|({'tools_commit':cookie} if kind=='aliased-plan' else {})
+            environment=self.environment|{'PLAN':json.dumps(plan),'COOKBOOK_REF':cookie,'TOOLS_REF':'',
+                'KOMIZO_REF':'d'*40,'RUNNER_TEMP':str(self.directory)}
+            with self.subTest(kind=kind),patch.dict(os.environ,environment,clear=True),\
+                 patch('urllib.request.urlopen',side_effect=response),\
+                 patch('subprocess.Popen',side_effect=RuntimeError('verified bootstrap reached bounded retrieval')) as execute:
+                if kind=='accepted':
+                    with self.assertRaisesRegex(RuntimeError,'verified bootstrap reached'):
+                        exec(compile(program,'extracted-actual-writer-bootstrap','exec'),{})
+                    self.assertEqual(execute.call_count,1)
+                else:
+                    with self.assertRaises(ValueError):exec(compile(program,'extracted-actual-writer-bootstrap','exec'),{})
+                    execute.assert_not_called()
+        self.assertTrue(any('/nicodes/cookbook/contents/mise.toml?ref='+cookie in path for path in queries))
+        self.assertTrue(any('/nicodes/tools/contents/helpers/dev.py?ref='+self.tools_ref in path for path in queries))
+
 
 if __name__=='__main__':unittest.main()

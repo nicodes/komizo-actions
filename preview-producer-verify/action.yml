@@ -1,9 +1,14 @@
 name: Revalidate an exact-HEAD Preview request
 description: Refuse stale source or authorization immediately before protected host effects
 inputs:
+  cookbook-ref:
+    description: Accepted immutable nicodes/cookbook source
+    required: false
+    default: ''
   tools-ref:
-    description: Accepted immutable cookbook source
-    required: true
+    description: Historical Tools-hosted recipe SDK only
+    required: false
+    default: ''
   komizo-ref:
     description: Accepted immutable producer source
     required: true
@@ -13,11 +18,47 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Require one exact recipe source contract
+      shell: bash
+      env:
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+        TOOLS_REF: ${{ inputs.tools-ref }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          [[ -z "$TOOLS_REF" && "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
+        else
+          [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+        fi
+    - name: Bootstrap Python for protected SDK sources
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      id: sdk-private-python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      with:
+        python-version: '3.13.11'
+        check-latest: false
+    - name: Prepare the private artifact parent with actual pinned Python
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      shell: bash
+      env:
+        PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        set -euo pipefail
+        "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+        printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+        printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        repository: nicodes/tools
-        ref: ${{ inputs.tools-ref }}
-        path: _preview_producer_tools
+        repository: ${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}
+        ref: ${{ inputs.cookbook-ref || inputs.tools-ref }}
+        path: ${{ inputs.cookbook-ref && '.artifacts/recipe-sdks/_cookbook' || '_preview_producer_tools' }}
         persist-credentials: false
         fetch-depth: 0
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -27,11 +68,24 @@ runs:
         path: _preview_producer_actions
         persist-credentials: false
         fetch-depth: 0
+    - name: Prepare accepted recipe SDKs
+      if: ${{ inputs.cookbook-ref != '' }}
+      uses: ./_preview_producer_actions/recipe-setup
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+        tools: python
     - name: Revalidate trusted controller and current authorized source
       shell: bash
       env:
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
         TOOLS_REF: ${{ inputs.tools-ref }}
         KOMIZO_REF: ${{ inputs.komizo-ref }}
         PLAN: ${{ inputs.plan }}
         GH_TOKEN: ${{ github.token }}
-      run: python3 _preview_producer_actions/scripts/preview-producer.py verify
+      run: |
+        set -euo pipefail
+        sdk=(--tools _preview_producer_tools)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        python3 _preview_producer_actions/scripts/preview-producer.py verify "${sdk[@]}"

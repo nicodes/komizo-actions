@@ -2,9 +2,12 @@ name: Publish accepted application images
 'on':
   workflow_call:
     inputs:
+      cookbook-ref:
+        type: string
+        default: ''
       tools-ref:
         type: string
-        required: true
+        default: ''
       komizo-ref:
         type: string
         required: true
@@ -44,6 +47,7 @@ jobs:
         persist-credentials: false
     - uses: ./_publication_actions/application-publication
       with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
         tools-ref: ${{ inputs.tools-ref }}
         komizo-ref: ${{ inputs.komizo-ref }}
         source: ${{ inputs.source }}

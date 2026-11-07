@@ -2,9 +2,15 @@ name: Run owned production acceptance
 'on':
   workflow_call:
     inputs:
-      tools-ref:
+      cookbook-ref:
         type: string
-        required: true
+        required: false
+        default: ''
+      tools-ref:
+        description: Historical Tools-hosted recipe SDK only
+        type: string
+        required: false
+        default: ''
       komizo-ref:
         type: string
         required: true
@@ -40,6 +46,7 @@ jobs:
       actions: read
       attestations: read
     env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       TOOLS_REF: ${{ inputs.tools-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       DECLARATION: ${{ inputs.declaration }}
@@ -56,20 +63,59 @@ jobs:
       MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.artifacts/playwright
     steps:
+    - name: Require one exact recipe source contract
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).plan }}
+      shell: bash
+      env:
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+        TOOLS_REF: ${{ inputs.tools-ref }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          [[ -z "$TOOLS_REF" && "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
+        else
+          [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+        fi
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
         fetch-depth: 0
+    - name: Bootstrap Python for protected SDK sources
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      id: sdk-private-python
+      timeout-minutes: 5
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      with:
+        python-version: '3.13.11'
+        check-latest: false
+    - name: Prepare the private artifact parent with actual pinned Python
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      timeout-minutes: 1
+      shell: bash
+      env:
+        PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        set -euo pipefail
+        "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+        printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+        printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
-        repository: nicodes/tools
-        ref: ${{ inputs.tools-ref }}
+        repository: ${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}
+        ref: ${{ inputs.cookbook-ref || inputs.tools-ref }}
         persist-credentials: false
         fetch-depth: 0
-        path: _operation_cookbook
+        path: ${{ inputs.cookbook-ref && '.artifacts/recipe-sdks/_cookbook' || '_operation_cookbook' }}
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
@@ -79,23 +125,49 @@ jobs:
         fetch-depth: 0
         path: _operation_actions
     - name: Prepare the pinned configuration parser
+      if: ${{ inputs.cookbook-ref == '' }}
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
       uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
       with:
+        tools: python
+    - name: Prepare accepted recipe SDKs
+      if: ${{ inputs.cookbook-ref != '' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
+      uses: ./_operation_actions/recipe-setup
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
         tools: python
     - name: Admit exact trusted main and bounded native operational policy
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).plan }}
       id: plan
       shell: bash
-      run: python3 _operation_actions/scripts/operational.py plan
+      run: |
+        set -euo pipefail
+        sdk=(--tools _operation_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        python3 _operation_actions/scripts/operational.py plan "${sdk[@]}"
     - name: Prepare only declared operational SDKs and frozen dependencies
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).prepare }}
       shell: bash
-      run: mise exec -- python3 _operation_actions/scripts/operational.py prepare
+      run: |
+        set -euo pipefail
+        sdk=(--tools _operation_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        mise exec -- python3 _operation_actions/scripts/operational.py prepare "${sdk[@]}"
     - name: Run owned production assertions
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).run }}
       shell: bash
-      run: mise exec -- python3 _operation_actions/scripts/operational.py run
+      run: |
+        set -euo pipefail
+        sdk=(--tools _operation_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        mise exec -- python3 _operation_actions/scripts/operational.py run "${sdk[@]}"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
       if: ${{ always() && (steps.plan.outputs.evidence != '' || false) }}

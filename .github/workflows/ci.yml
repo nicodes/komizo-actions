@@ -69,6 +69,24 @@ jobs:
         path: .artifacts/recipe-source-test-sdk
         fetch-depth: 1
         persist-credentials: false
+    - name: Prepare the accepted Cookbook source for current entrypoint controls
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: 1
+      with:
+        repository: nicodes/cookbook
+        ref: d68b54a178d84cd206a68af3e947a6d8c223286f
+        path: .artifacts/recipe-task-sdk
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Prepare the provider-derived accepted Tools source for current entrypoint controls
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: 1
+      with:
+        repository: nicodes/tools
+        ref: 315ad17652ce264be3b91cd50868ee1199952f12
+        path: .artifacts/recipe-task-tools
+        fetch-depth: 1
+        persist-credentials: false
     - name: Test
       shell: bash
       run: |-
@@ -84,3 +102,6 @@ jobs:
       RECIPE_CONTRACT_TEST_SDK_REF: 6391cdae4f0ead355a43de161f0dbadd22168f62
       RECIPE_SOURCE_SDK: ${{ github.workspace }}/.artifacts/recipe-source-test-sdk
       RECIPE_SOURCE_SDK_REF: 39666e8d26d2bd0e1c7e5fee6f289fd0fd3a5202
+      RECIPE_TASK_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
+      RECIPE_TASK_SDK_REF: d68b54a178d84cd206a68af3e947a6d8c223286f
+      RECIPE_TASK_TOOLS: ${{ github.workspace }}/.artifacts/recipe-task-tools

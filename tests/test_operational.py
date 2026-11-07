@@ -287,11 +287,11 @@ class OperationalAuthority(unittest.TestCase):
         original_authority=driver.authority
         with chdir(self.root), patch.dict(os.environ,self.environment | {'OPERATION':'security'},clear=True), \
                 patch.object(driver,'ROOT',self.actions), \
-                patch.object(driver,'authority',side_effect=lambda root,tools,operation,selected,environment:
-                    original_authority(root,tools,operation,selected,environment,self.lookup)), \
+                patch.object(driver,'authority',side_effect=lambda root,tools,operation,selected,environment,**kwargs:
+                    original_authority(root,tools,operation,selected,environment,self.lookup,**kwargs)), \
                 patch.object(driver,'tools_modules',return_value=(workflows,None,None)), \
-                patch.object(driver,'prepare',side_effect=lambda *args:effects.append('prepare')), \
-                patch.object(driver,'source_security',side_effect=lambda *args:effects.append('source')), \
+                patch.object(driver,'prepare',side_effect=lambda *args,**kwargs:effects.append('prepare')), \
+                patch.object(driver,'source_security',side_effect=lambda *args,**kwargs:effects.append('source')), \
                 patch.object(driver,'module',return_value=deployed):
             with patch.object(sys,'argv',['operational.py','source','--tools',str(self.tools)]):
                 driver.main()

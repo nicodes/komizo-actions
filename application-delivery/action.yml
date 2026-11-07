@@ -1,9 +1,14 @@
 name: Deliver accepted application
 description: Serialized current-main admission, encrypted backup, immutable release activation and health checks
 inputs:
+  cookbook-ref:
+    description: Accepted nicodes/cookbook source commit
+    required: false
+    default: ''
   tools-ref:
-    description: Accepted full cookbook source commit
-    required: true
+    description: Historical Tools-hosted recipe SDK only
+    required: false
+    default: ''
   project:
     description: Caller-owned application slug
     required: true
@@ -38,22 +43,90 @@ runs:
     - name: Require accepted cookbook authority
       shell: bash
       env:
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
         TOOLS_REF: ${{ inputs.tools-ref }}
       run: |
         set -euo pipefail
-        [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
-        relation="$(gh api "repos/nicodes/tools/compare/$TOOLS_REF...main" --jq .status)"
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          [[ -z "$TOOLS_REF" && "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
+          repository=cookbook; revision="$COOKBOOK_REF"
+        else
+          [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+          repository=tools; revision="$TOOLS_REF"
+        fi
+        relation="$(gh api "repos/nicodes/$repository/compare/$revision...main" --jq .status)"
         [[ "$relation" == ahead || "$relation" == identical ]]
+    - name: Bootstrap Python for protected SDK sources
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' && (inputs.sdk-prepared != 'true') }}
+      id: sdk-private-python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      with:
+        python-version: '3.13.11'
+        check-latest: false
+    - name: Prepare the private artifact parent with actual pinned Python
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' && (inputs.sdk-prepared != 'true') }}
+      shell: bash
+      env:
+        PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        set -euo pipefail
+        "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+        printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+        printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       if: inputs.sdk-prepared != 'true'
       with:
-        repository: nicodes/tools
-        ref: ${{ inputs.tools-ref }}
-        path: _delivery_cookbook
+        repository: ${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}
+        ref: ${{ inputs.cookbook-ref || inputs.tools-ref }}
+        path: ${{ inputs.cookbook-ref && '.artifacts/recipe-sdks/_cookbook' || '_delivery_cookbook' }}
         persist-credentials: false
     - name: Prepare the pinned native configuration interpreter
-      if: inputs.sdk-prepared != 'true'
+      if: ${{ (inputs.sdk-prepared != 'true') && inputs.cookbook-ref == '' }}
       uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
+      with:
+        tools: python
+    - name: Inspect the host configuration parser without SDK imports
+      id: recipe_host
+      if: ${{ inputs.cookbook-ref != '' && inputs.sdk-prepared != 'true' }}
+      shell: bash
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        "${COOKBOOK_BOOTSTRAP_PYTHON:-python3}" -I -B -c 'import sys; print("bootstrap-python=" + str(sys.version_info < (3, 11)).lower())' >> "$GITHUB_OUTPUT"
+    - name: Bootstrap the exact supported configuration parser
+      if: ${{ (inputs.cookbook-ref != '' && inputs.sdk-prepared != 'true') && steps.recipe_host.outputs.bootstrap-python == 'true' }}
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      with:
+        python-version: '3.13.11'
+        check-latest: false
+    - name: Admit both real sources before Cookbook SDK execution
+      if: ${{ inputs.cookbook-ref != '' && inputs.sdk-prepared != 'true' }}
+      shell: bash
+      env:
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+        GH_TOKEN: ${{ github.token }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        "${COOKBOOK_BOOTSTRAP_PYTHON:-python3}" -I -B "$GITHUB_ACTION_PATH/../scripts/recipe_context.py" dependency --cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF"
+    - name: Prepare only the checked Cookbook provider dependency
+      if: ${{ inputs.cookbook-ref != '' && inputs.sdk-prepared != 'true' }}
+      uses: ./.artifacts/recipe-sdks/_cookbook/sdk-dependencies
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+    - name: Explicitly prepare the selected exact caller SDKs
+      if: ${{ inputs.cookbook-ref != '' && inputs.sdk-prepared != 'true' }}
+      uses: ./.artifacts/recipe-sdks/_cookbook/sdk-setup
       with:
         tools: python
     - name: Read bounded native delivery declaration
@@ -62,7 +135,21 @@ runs:
       env:
         PROJECT: ${{ inputs.project }}
         DECLARATION: ${{ inputs.declaration }}
-      run: python3 "$GITHUB_ACTION_PATH/plan.py"
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+        SDK_PREPARED: ${{ inputs.sdk-prepared }}
+      run: |
+        set -euo pipefail
+        sdk=()
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          cookbook=.artifacts/recipe-sdks/_cookbook; tools=.artifacts/recipe-sdks/_tools
+          if [[ "$SDK_PREPARED" == true ]]; then
+            [[ "${TOOLS_REF:-}" =~ ^[a-f0-9]{40}$ ]]
+            cookbook="${COOKBOOK_ROOT:?Prepare the exact Cookbook source first}"
+            tools="${TOOLS_ROOT:?Prepare the derived Tools source first}"
+          fi
+          sdk=(--cookbook-root "$cookbook" --cookbook-ref "$COOKBOOK_REF" --tools-root "$tools")
+        fi
+        python3 "$GITHUB_ACTION_PATH/plan.py" "${sdk[@]}"
     - uses: nicodes/komizo-actions/connect@6aebd7bde3aa5a68efd9c79df0cee3a29beb1be8
       if: inputs.plan-only != 'true'
       with:
@@ -74,7 +161,8 @@ runs:
       env:
         PROJECT: ${{ inputs.project }}
         BACKUP_CONFIG: ${{ steps.plan.outputs.backup }}
-        TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
+        COOKBOOK_ROOT: ${{ steps.plan.outputs.cookbook-root || '' }}
+        TOOLS_ROOT: ${{ steps.plan.outputs.tools-root || format('{0}/_delivery_cookbook', github.workspace) }}
         BACKUP_S3_ACCESS_KEY: ''
         BACKUP_S3_SECRET_KEY: ''
         BACKUP_S3_HOSTNAME: ''
@@ -88,7 +176,8 @@ runs:
       env:
         PROJECT: ${{ inputs.project }}
         BACKUP_ALLOWED_SLUGS: ${{ steps.plan.outputs.allowed-products }}
-        TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
+        COOKBOOK_ROOT: ${{ steps.plan.outputs.cookbook-root || '' }}
+        TOOLS_ROOT: ${{ steps.plan.outputs.tools-root || format('{0}/_delivery_cookbook', github.workspace) }}
       run: timeout --foreground --kill-after=10s 600s python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" upload --project "$PROJECT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: inputs.plan-only != 'true' && inputs.prepare-only != 'true' && steps.plan.outputs.backup != ''

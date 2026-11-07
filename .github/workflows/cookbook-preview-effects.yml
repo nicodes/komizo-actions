@@ -2,9 +2,15 @@ name: Apply verified Preview lifecycle
 'on':
   workflow_call:
     inputs:
-      tools-ref:
+      cookbook-ref:
         type: string
-        required: true
+        required: false
+        default: ''
+      tools-ref:
+        description: Historical Tools-hosted recipe SDK only
+        type: string
+        required: false
+        default: ''
       komizo-ref:
         type: string
         required: true
@@ -44,23 +50,59 @@ jobs:
       pull-requests: write
       attestations: read
     env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       TOOLS_REF: ${{ inputs.tools-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       PLAN: ${{ inputs.plan }}
       GH_TOKEN: ${{ github.token }}
     steps:
+    - name: Require one exact recipe source contract
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          [[ -z "$TOOLS_REF" && "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
+        else
+          [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+        fi
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
         fetch-depth: 0
+    - name: Bootstrap Python for protected SDK sources
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      id: sdk-private-python
+      timeout-minutes: 5
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      with:
+        python-version: '3.13.11'
+        check-latest: false
+    - name: Prepare the private artifact parent with actual pinned Python
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      timeout-minutes: 1
+      shell: bash
+      env:
+        PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        set -euo pipefail
+        "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+        printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+        printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        repository: nicodes/tools
-        ref: ${{ inputs.tools-ref }}
+        repository: ${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}
+        ref: ${{ inputs.cookbook-ref || inputs.tools-ref }}
         persist-credentials: false
         fetch-depth: 0
-        path: _preview_cookbook
+        path: ${{ inputs.cookbook-ref && '.artifacts/recipe-sdks/_cookbook' || '_preview_cookbook' }}
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         repository: nicodes/komizo-actions
@@ -68,10 +110,22 @@ jobs:
         persist-credentials: false
         fetch-depth: 0
         path: _preview_actions
+    - name: Prepare accepted recipe SDKs
+      if: ${{ inputs.cookbook-ref != '' }}
+      uses: ./_preview_actions/recipe-setup
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+        tools: python
     - name: Revalidate trusted request before host access
       id: plan
       shell: bash
-      run: python3 _preview_actions/scripts/preview.py plan
+      run: |
+        set -euo pipefail
+        sdk=(--tools _preview_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        python3 _preview_actions/scripts/preview.py plan "${sdk[@]}"
     - name: Download successful same-run publication evidence
       if: ${{ steps.plan.outputs.action == 'up' }}
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -81,7 +135,13 @@ jobs:
     - name: Require successful exact-source publisher before effects
       if: ${{ steps.plan.outputs.action == 'up' }}
       shell: bash
-      run: python3 _preview_actions/scripts/preview.py evidence
+      run: |
+        set -euo pipefail
+        sdk=(--tools _preview_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        python3 _preview_actions/scripts/preview.py evidence "${sdk[@]}"
     - name: Connect only trusted lifecycle code
       uses: ./_preview_actions/connect
       timeout-minutes: 3
@@ -103,7 +163,13 @@ jobs:
     - name: Write bounded development tenant and resolved origin settings
       if: ${{ steps.plan.outputs.action == 'up' && steps.plan.outputs.backend == 'true' }}
       shell: bash
-      run: python3 _preview_actions/scripts/preview.py environment
+      run: |
+        set -euo pipefail
+        sdk=(--tools _preview_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        python3 _preview_actions/scripts/preview.py environment "${sdk[@]}"
       env:
         PREVIEW_URL: ${{ steps.target.outputs['preview-url'] }}
         API_URL: ${{ steps.target.outputs['api-url'] }}
@@ -113,7 +179,13 @@ jobs:
     - name: Recheck current source immediately before preview up
       if: ${{ steps.plan.outputs.action == 'up' }}
       shell: bash
-      run: python3 _preview_actions/scripts/preview.py evidence
+      run: |
+        set -euo pipefail
+        sdk=(--tools _preview_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        python3 _preview_actions/scripts/preview.py evidence "${sdk[@]}"
     - name: Apply preview up or down
       id: preview
       uses: ./_preview_actions/preview
@@ -127,13 +199,25 @@ jobs:
     - name: Verify exact source readiness on verified routes
       if: ${{ steps.plan.outputs.action == 'up' }}
       shell: bash
-      run: python3 _preview_actions/scripts/preview.py health
+      run: |
+        set -euo pipefail
+        sdk=(--tools _preview_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        python3 _preview_actions/scripts/preview.py health "${sdk[@]}"
       env:
         PREVIEW_URL: ${{ steps.preview.outputs['preview-url'] }}
         API_URL: ${{ steps.preview.outputs['api-url'] }}
     - name: Retain label and sticky comment lifecycle
       shell: bash
-      run: python3 _preview_actions/scripts/preview.py report
+      run: |
+        set -euo pipefail
+        sdk=(--tools _preview_cookbook)
+        if [[ -n "$COOKBOOK_REF" ]]; then
+          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        fi
+        python3 _preview_actions/scripts/preview.py report "${sdk[@]}"
       env:
         PREVIEW_URL: ${{ steps.preview.outputs['preview-url'] }}
         API_URL: ${{ steps.preview.outputs['api-url'] }}
