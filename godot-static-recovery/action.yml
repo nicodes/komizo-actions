@@ -1,9 +1,14 @@
 name: Restore verified static Godot release
 description: Copy the exact historical config manifest and retain the established source-tag host policy
 inputs:
+  cookbook-ref:
+    description: Accepted nicodes/cookbook source commit
+    required: false
+    default: ''
   tools-ref:
-    description: Accepted cookbook source commit
-    required: true
+    description: Historical Tools-hosted recipe SDK only
+    required: false
+    default: ''
   proof-sha256:
     description: Same-run verifier output hash for the exact historical acceptance packet
     required: true
@@ -18,20 +23,52 @@ runs:
   - name: Require accepted immutable recovery cookbook
     shell: bash
     env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       TOOLS_REF: ${{ inputs.tools-ref }}
       GH_TOKEN: ${{ github.token }}
     run: |
       set -euo pipefail
-      [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
-      relation="$(gh api "repos/nicodes/tools/compare/$TOOLS_REF...main" --jq .status)"
+      if [[ -n "$COOKBOOK_REF" ]]; then
+        [[ -z "$TOOLS_REF" && "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
+        repository=cookbook; revision="$COOKBOOK_REF"
+      else
+        [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
+        repository=tools; revision="$TOOLS_REF"
+      fi
+      relation="$(gh api "repos/nicodes/$repository/compare/$revision...main" --jq .status)"
       [[ "$relation" == ahead || "$relation" == identical ]]
+  - name: Bootstrap Python for protected SDK sources
+    if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+    id: sdk-private-python
+    uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+    env:
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    with:
+      python-version: '3.13.11'
+      check-latest: false
+  - name: Prepare the private artifact parent with actual pinned Python
+    if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+    shell: bash
+    env:
+      PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    run: |
+      set -euo pipefail
+      "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+      printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+      printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
   - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
     with:
-      repository: nicodes/tools
-      ref: ${{ inputs.tools-ref }}
-      path: _godot_recovery_cookbook
+      repository: ${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}
+      ref: ${{ inputs.cookbook-ref || inputs.tools-ref }}
+      path: ${{ inputs.cookbook-ref && '.artifacts/recipe-sdks/_cookbook' || '_godot_recovery_cookbook' }}
       persist-credentials: false
   - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+    if: ${{ inputs.cookbook-ref == '' }}
     with:
       install_args: python
       cache: true
@@ -39,6 +76,43 @@ runs:
       MISE_AUTO_INSTALL: 'false'
       MISE_EXEC_AUTO_INSTALL: 'false'
       MISE_GITHUB_TOKEN: ${{ github.token }}
+  - name: Inspect the host configuration parser without SDK imports
+    id: recipe_host
+    if: ${{ inputs.cookbook-ref != '' }}
+    shell: bash
+    env:
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    run: |
+      "${COOKBOOK_BOOTSTRAP_PYTHON:-python3}" -I -B -c 'import sys; print("bootstrap-python=" + str(sys.version_info < (3, 11)).lower())' >> "$GITHUB_OUTPUT"
+  - name: Bootstrap the exact supported configuration parser
+    if: ${{ (inputs.cookbook-ref != '') && steps.recipe_host.outputs.bootstrap-python == 'true' }}
+    uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+    with:
+      python-version: '3.13.11'
+      check-latest: false
+  - name: Admit both real sources before Cookbook SDK execution
+    if: ${{ inputs.cookbook-ref != '' }}
+    shell: bash
+    env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      GH_TOKEN: ${{ github.token }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    run: |
+      "${COOKBOOK_BOOTSTRAP_PYTHON:-python3}" -I -B "$GITHUB_ACTION_PATH/../scripts/recipe_context.py" dependency --cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF"
+  - name: Prepare only the checked Cookbook provider dependency
+    if: ${{ inputs.cookbook-ref != '' }}
+    uses: ./.artifacts/recipe-sdks/_cookbook/sdk-dependencies
+    with:
+      cookbook-ref: ${{ inputs.cookbook-ref }}
+  - name: Explicitly prepare the selected exact caller SDKs
+    if: ${{ inputs.cookbook-ref != '' }}
+    uses: ./.artifacts/recipe-sdks/_cookbook/sdk-setup
+    with:
+      tools: python
   - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
     with:
       name: rollback-verification-${{ github.run_id }}-${{ github.run_attempt }}
@@ -47,6 +121,7 @@ runs:
     id: copy
     shell: bash
     env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       TOOLS_REF: ${{ inputs.tools-ref }}
       PROOF_SHA256: ${{ inputs.proof-sha256 }}
       GH_TOKEN: ${{ github.token }}
@@ -54,7 +129,11 @@ runs:
       MISE_EXEC_AUTO_INSTALL: 'false'
     run: |
       set -euo pipefail
-      mise exec -- python3 "$GITHUB_ACTION_PATH/recovery.py" restore --tools _godot_recovery_cookbook --tools-ref "$TOOLS_REF" --proof-sha256 "$PROOF_SHA256"
+      sdk=(--tools _godot_recovery_cookbook --tools-ref "$TOOLS_REF")
+      if [[ -n "$COOKBOOK_REF" ]]; then
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+      fi
+      mise exec -- python3 "$GITHUB_ACTION_PATH/recovery.py" restore "${sdk[@]}" --proof-sha256 "$PROOF_SHA256"
   - name: Restore through the original admitted source-tag deployment contract
     uses: nicodes/komizo-actions/deploy@22a128034be007614021467201be5924cfacc88b
     with:
@@ -65,10 +144,15 @@ runs:
   - name: Verify original public payload and source over ordinary TLS
     shell: bash
     env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       TOOLS_REF: ${{ inputs.tools-ref }}
       RELEASE_MANIFEST_URL: ${{ steps.copy.outputs.manifest-url }}
       EXPECTED_RELEASE_ID: ${{ steps.copy.outputs.release_id }}
       EXPECTED_SOURCE_COMMIT: ${{ steps.copy.outputs.sha }}
       MISE_AUTO_INSTALL: 'false'
       MISE_EXEC_AUTO_INSTALL: 'false'
-    run: mise exec -- python3 _godot_recovery_cookbook/helpers/public_release.py
+    run: |
+      set -euo pipefail
+      helpers=_godot_recovery_cookbook
+      if [[ -n "$COOKBOOK_REF" ]]; then helpers=.artifacts/recipe-sdks/_tools; fi
+      mise exec -- python3 "$helpers/helpers/public_release.py"

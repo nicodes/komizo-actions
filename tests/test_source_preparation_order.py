@@ -65,7 +65,7 @@ class SourcePreparationOrder(unittest.TestCase):
                     script=ast.literal_eval(program.args[0])
                     self.assertEqual(hashlib.sha256(script.encode()).hexdigest(),SCRIPT_SHA256)
                     scripts.add(parent['run'])
-        self.assertEqual(found,23)
+        self.assertEqual(found,24)
         self.assertEqual(len(scripts),1)
 
     def private_command(self):

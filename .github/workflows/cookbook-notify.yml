@@ -2,9 +2,14 @@ name: Notify application delivery
 'on':
   workflow_call:
     inputs:
-      tools-ref:
+      cookbook-ref:
+        description: Recipe identity metadata only; notification loads no recipe SDK
         type: string
-        required: true
+        default: ''
+      tools-ref:
+        description: Historical recipe identity metadata only; notification loads no recipe SDK
+        type: string
+        default: ''
       komizo-ref:
         type: string
         required: true
