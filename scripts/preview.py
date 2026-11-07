@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trusted Preview controller; native application code runs only in readonly Make jobs."""
+"""Trusted Preview controller; native application code runs only in readonly validation jobs."""
 import argparse
 import base64
 from contextlib import contextmanager
@@ -16,8 +16,10 @@ from urllib.parse import urlsplit
 import urllib.request
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.dont_write_bytecode=True
 sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
+import recipe_context
 SHA=re.compile('[a-f0-9]{40}')
 REPOSITORY=re.compile('[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}')
 
@@ -69,7 +71,24 @@ def controller(environment):
     return repository,source
 
 
-def accepted_automation(tools,tools_ref,komizo_ref,lookup=api):
+def accepted_automation(tools,tools_ref,komizo_ref,lookup=api,*,cookbook_ref=None,supplied_tools=None):
+    if cookbook_ref is not None:
+        if tools_ref is not None or not SHA.fullmatch(komizo_ref):
+            raise ValueError('select one real Cookbook source without a historical Tools alias')
+        if (git(ROOT,'rev-parse','HEAD')!=komizo_ref
+                or Path(git(ROOT,'rev-parse','--show-toplevel')).resolve()!=ROOT.resolve()
+                or ROOT.is_symlink() or any(parent.is_symlink() for parent in ROOT.parents)
+                or (ROOT/'.git').is_symlink()
+                or recipe_context.discovery_module().canonical_origin(git(ROOT,'config','--local','--get-all','remote.origin.url'))!='nicodes/komizo-actions'
+                or git(ROOT,'status','--porcelain','--untracked-files=all','--ignored=matching')):
+            raise ValueError('Preview execution source differs from its exact clean owning checkout')
+        if lookup(f'repos/nicodes/komizo-actions/compare/{komizo_ref}...main').get('status') not in {'ahead','identical'}:
+            raise ValueError('Preview automation has not been accepted on main')
+        context=recipe_context.accepted_context(tools,cookbook_ref,lookup,supplied_tools)
+        for name in ['preview_workflows','configuration','images']:context.module(name)
+        return context
+    if supplied_tools is not None:
+        raise ValueError('an independent helper location requires the Cookbook source contract')
     if not SHA.fullmatch(tools_ref) or not SHA.fullmatch(komizo_ref):
         raise ValueError('Preview automation requires immutable source pins')
     if git(tools,'rev-parse','HEAD')!=tools_ref or git(ROOT,'rev-parse','HEAD')!=komizo_ref:
@@ -79,13 +98,35 @@ def accepted_automation(tools,tools_ref,komizo_ref,lookup=api):
             raise ValueError('Preview automation has not been accepted on main')
 
 
+def sdk_arguments(parser):
+    parser.add_argument('--tools',type=Path,help='Historical Tools-hosted recipe SDK location')
+    parser.add_argument('--cookbook-root',type=Path)
+    parser.add_argument('--cookbook-ref')
+    parser.add_argument('--tools-root',type=Path)
+
+
+def automation(args,environment,default,lookup=api):
+    if args.cookbook_root is not None or args.cookbook_ref is not None:
+        if args.cookbook_root is None or args.cookbook_ref is None or args.tools is not None:
+            raise ValueError('select the complete Cookbook contract or the historical Tools SDK')
+        if environment.get('COOKBOOK_REF',args.cookbook_ref)!=args.cookbook_ref:
+            raise ValueError('Preview Cookbook CLI revision differs from its trusted workflow source')
+        context=accepted_automation(args.cookbook_root,None,environment['KOMIZO_REF'],lookup,
+            cookbook_ref=args.cookbook_ref,supplied_tools=args.tools_root)
+        return context.cookbook,context.tools,context.cookbook_revision,context,context.environment(environment)
+    if args.tools_root is not None or environment.get('COOKBOOK_REF'):
+        raise ValueError('Cookbook callers must select their explicit source contract')
+    tools=args.tools or Path(default)
+    accepted_automation(tools,environment['TOOLS_REF'],environment['KOMIZO_REF'],lookup)
+    return tools,tools,environment['TOOLS_REF'],None,environment
+
+
 def native_policy(root,tools,declaration):
     preview,configuration,_=tools_modules(tools)
     config=recipe_data.load(root,tools,configuration)
     if config.get('preview')!={'definition':declaration}:
         raise ValueError('Preview input differs from its trusted native declaration')
-    reference=re.search(r'^COOKBOOK_REF := ([a-f0-9]{40})$',(root/'Makefile').read_text(),re.M)
-    if not reference or reference[1]!=git(tools,'rev-parse','HEAD'):
+    if recipe_data.entrypoint_revision(root,tools)!=git(tools,'rev-parse','HEAD'):
         raise ValueError('Preview controller must use its exact reviewed cookbook')
     result=preview.declaration(root,config)
     preview.auth_contract(root,config)
@@ -121,7 +162,7 @@ def require_current(plan,request):
         raise ValueError('the current pull request no longer carries the Preview label')
 
 
-def request_plan(root,tools,declaration,environment,lookup=api):
+def request_plan(root,tools,declaration,environment,lookup=api,*,context=None):
     repository,source=controller(environment)
     if git(root,'rev-parse','HEAD')!=source:
         raise ValueError('Preview policy checkout differs from its trusted controller')
@@ -142,6 +183,7 @@ def request_plan(root,tools,declaration,environment,lookup=api):
     plan={'version':1,'repository':repository,'controller':source,'controller_tree':git(root,'rev-parse','HEAD^{tree}'),
           'trigger':environment['GITHUB_EVENT_NAME'],'pr':number,'head':head,'base':base,
           'action':decision['action'],'policy':policy}
+    if context is not None:plan.update(context.identities(),entrypoint_contract='mise-v1')
     if plan['action']=='up':
         if decision['sha']!=head or base!=source:
             raise ValueError('Preview request is stale; request the current head and main base')
@@ -150,11 +192,15 @@ def request_plan(root,tools,declaration,environment,lookup=api):
             'reason':decision['reason'],'plan':json.dumps(plan,sort_keys=True,separators=(',',':'))}
 
 
-def validate_plan(raw,root,tools,environment,lookup=api,*,fresh=True):
+def validate_plan(raw,root,tools,environment,lookup=api,*,fresh=True,context=None):
     if not isinstance(raw,str) or len(raw.encode())>131072:
         raise ValueError('Preview plan exceeds its bound')
     plan=json.loads(raw)
     expected={'version','repository','controller','controller_tree','trigger','pr','head','base','action','policy'}
+    if context is not None:
+        expected.update([*context.identities(),'entrypoint_contract'])
+        if not isinstance(plan,dict):raise ValueError('invalid Preview controller plan')
+        context.require_proof(plan)
     if (not isinstance(plan,dict) or set(plan)!=expected or plan.get('version')!=1
             or type(plan.get('pr')) is not int or not 1<=plan['pr']<=9999999999
             or plan.get('action') not in {'up','down'}
@@ -201,7 +247,7 @@ def source_policy(plan,source_root,tools):
     return config,definition
 
 
-def publication(plan,root,source_root,tools,tools_ref,incoming,environment,lookup=api,execute=subprocess.run):
+def publication(plan,root,source_root,tools,tools_ref,incoming,environment,lookup=api,execute=subprocess.run,*,context=None):
     if plan['action']!='up' or git(source_root,'rev-parse','HEAD')!=plan['head']:
         raise ValueError('Preview publication requires the exact requested head checkout')
     if subprocess.run(['git','-C',str(source_root),'diff','--quiet','HEAD','--'],timeout=30).returncode:
@@ -209,6 +255,7 @@ def publication(plan,root,source_root,tools,tools_ref,incoming,environment,looku
     config,definition=source_policy(plan,source_root,tools)
     authority=module('komizo_application_publication',ROOT/'scripts/application-publication.py')
     proof=authority.read(incoming/'.artifacts/cookbook-validation.json')
+    if context is not None:context.require_proof(proof)
     if (proof.get('head')!=plan['head'] or proof.get('base')!=plan['base']
             or proof.get('configuration_sha256')!=hashlib.sha256((source_root/'cookbook.toml').read_bytes()).hexdigest()):
         raise ValueError('Preview acceptance does not bind the exact requested head/base/configuration')
@@ -229,7 +276,8 @@ def publication(plan,root,source_root,tools,tools_ref,incoming,environment,looku
     # package lifecycle, test or build step executes with package-write access.
     values=dict(environment,COOKBOOK_PREVIEW_NUMBER=str(plan['pr']),REQUEST_HEAD=plan['head'],REQUEST_BASE=plan['base'])
     require_current(plan,current_pr(repository,plan['pr'],lookup))
-    execute([sys.executable,str(tools.resolve()/'helpers/release.py'),'publish','--project',plan['policy']['project'],
+    helpers=context.tools if context is not None else tools
+    execute([sys.executable,str(helpers.resolve()/'helpers/release.py'),'publish','--project',plan['policy']['project'],
              '--revision',plan['head'],'--components',*plan['policy']['shipping_components'],
              '--definition',plan['policy']['artifact_definition'],'--test-job','validate',
              '--test-evidence-directory',str((incoming/'.artifacts/verification').resolve())],
@@ -240,7 +288,8 @@ def publication(plan,root,source_root,tools,tools_ref,incoming,environment,looku
         raise ValueError('Preview publisher did not retain exact validated source and archive evidence')
     evidence=root/'.artifacts/preview-publication.json'
     evidence.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
-    evidence.write_text(json.dumps({'version':1,'plan':plan,'publication':published},sort_keys=True)+'\n')
+    evidence.write_text(json.dumps({'version':1,'plan':plan,'publication':published,
+        **({**context.identities(),'entrypoint_contract':'mise-v1'} if context is not None else {})},sort_keys=True)+'\n')
 
 
 def targets(plan,app_url,api_url):
@@ -272,10 +321,15 @@ def targets(plan,app_url,api_url):
     return values
 
 
-def publication_evidence(plan,path,environment,lookup=api):
+def publication_evidence(plan,path,environment,lookup=api,*,context=None):
     authority=module('komizo_application_publication',ROOT/'scripts/application-publication.py')
     value=authority.read(path)
-    if not isinstance(value,dict) or set(value)!={'version','plan','publication'} or value.get('version')!=1 or value.get('plan')!=plan:
+    expected={'version','plan','publication'}
+    if context is not None:
+        expected.update([*context.identities(),'entrypoint_contract'])
+        if not isinstance(value,dict):raise ValueError('invalid Preview publication evidence')
+        context.require_proof(value)
+    if not isinstance(value,dict) or set(value)!=expected or value.get('version')!=1 or value.get('plan')!=plan:
         raise ValueError('Preview host effects require this exact same-run publication plan')
     published=value['publication']
     if (published.get('revision')!=plan['head'] or published.get('tested_commit')!=plan['head']
@@ -399,30 +453,30 @@ def output(values,environment):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation',choices=['request','plan','publish','evidence','environment','health','report'])
-    parser.add_argument('--tools',type=Path,default=Path('_preview_cookbook'))
+    sdk_arguments(parser)
     parser.add_argument('--declaration',default='')
     parser.add_argument('--source-root',type=Path,default=Path('_preview_source'))
     parser.add_argument('--incoming',type=Path,default=Path('.artifacts/preview-input'))
     args=parser.parse_args()
     try:
         environment=dict(os.environ);root=Path.cwd()
-        accepted_automation(args.tools,environment['TOOLS_REF'],environment['KOMIZO_REF'])
+        cookbook,tools,revision,context,environment=automation(args,environment,'_preview_cookbook')
         if args.operation=='request':
-            output(request_plan(root,args.tools,args.declaration,environment),environment)
+            output(request_plan(root,cookbook,args.declaration,environment,context=context),environment)
             return
-        plan=validate_plan(environment['PLAN'],root,args.tools,environment)
+        plan=validate_plan(environment['PLAN'],root,cookbook,environment,context=context)
         if args.operation=='plan':
             policy=plan['policy']
             output({'project':policy['project'],'pr':plan['pr'],'head':plan['head'],'base':plan['base'],
                 'action':plan['action'],'images':' '.join(policy['image_base']+'-'+name+':'+plan['head'] for name in policy['components']),
                 'backend':str(policy['backend']).lower(),'openrouter':str('OPENROUTER_API_KEY' in policy['secrets']).lower()},environment)
         elif args.operation=='publish':
-            publication(plan,root,args.source_root,args.tools,environment['TOOLS_REF'],args.incoming,environment)
+            publication(plan,root,args.source_root,cookbook,revision,args.incoming,environment,context=context)
         elif args.operation=='evidence':
-            publication_evidence(plan,root/'.artifacts/preview-publication.json',environment)
+            publication_evidence(plan,root/'.artifacts/preview-publication.json',environment,context=context)
         else:
             if plan['action']=='up':
-                publication_evidence(plan,root/'.artifacts/preview-publication.json',environment)
+                publication_evidence(plan,root/'.artifacts/preview-publication.json',environment,context=context)
             urls=targets(plan,environment.get('PREVIEW_URL',''),environment.get('API_URL','')) if plan['action']=='up' else {}
             if args.operation=='environment':write_environment(plan,urls,environment)
             elif args.operation=='health':verify_health(plan,urls)

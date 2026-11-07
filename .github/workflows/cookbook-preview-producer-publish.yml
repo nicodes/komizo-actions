@@ -2,9 +2,14 @@ name: Publish selected exact-HEAD Preview images
 'on':
   workflow_call:
     inputs:
+      cookbook-ref:
+        type: string
+        required: false
+        default: ''
       tools-ref:
         type: string
-        required: true
+        required: false
+        default: ''
       komizo-ref:
         type: string
         required: true
@@ -32,6 +37,7 @@ jobs:
       pull-requests: read
       packages: write
     env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       TOOLS_REF: ${{ inputs.tools-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       PLAN: ${{ inputs.plan }}
@@ -45,7 +51,7 @@ jobs:
       shell: bash
       run: |
         python3 - <<'PYTHON'
-        import base64,hashlib,importlib.util,json,math,os,re,signal,subprocess,sys,tempfile
+        import base64,hashlib,importlib.util,json,math,os,re,signal,subprocess,sys,tempfile,tomllib
         from datetime import datetime,timedelta,timezone
         from pathlib import Path
         from urllib.request import Request,urlopen
@@ -58,10 +64,16 @@ jobs:
                 or environment.get('GITHUB_WORKFLOW_REF')!=repository+'/.github/workflows/pr-preview.yml@refs/heads/main'
                 or environment.get('GITHUB_EVENT_NAME') not in {'pull_request_target','issue_comment'}
                 or environment.get('GITHUB_JOB')!='publish'
-                or any(not re.fullmatch('[a-f0-9]{40}',environment.get(k,'')) for k in ['GITHUB_SHA','TOOLS_REF','KOMIZO_REF'])
+                or any(not re.fullmatch('[a-f0-9]{40}',environment.get(k,'')) for k in ['GITHUB_SHA','KOMIZO_REF'])
                 or any(not re.fullmatch('[1-9][0-9]{0,19}',environment.get(k,'')) for k in ['GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'])
                 or len(environment.get('PLAN','').encode())>131072):
             raise ValueError('producer bootstrap requires its immutable trusted-main controller')
+        cookbook_ref=environment.get('COOKBOOK_REF','')
+        if cookbook_ref:
+            if not re.fullmatch('[a-f0-9]{40}',cookbook_ref) or environment.get('TOOLS_REF'):
+                raise ValueError('producer bootstrap requires one real Cookbook source without a historical Tools alias')
+        elif not re.fullmatch('[a-f0-9]{40}',environment.get('TOOLS_REF','')):
+            raise ValueError('historical producer bootstrap requires its immutable Tools SDK')
         plan=json.loads(environment['PLAN']);total=plan['policy']['producer_timeout_minutes']
         if type(total) is not int or not 1<=total<=180 or str(total)!=environment['PRODUCER_TIMEOUT']:
             raise ValueError('producer bootstrap must preserve its declared job ceiling')
@@ -90,9 +102,28 @@ jobs:
         if started.tzinfo is None or started>datetime.now(timezone.utc)+timedelta(seconds=5):raise ValueError('invalid source job timing')
         deadline=started+timedelta(minutes=total)
         environment['PREVIEW_PRODUCER_DEADLINE']=deadline.isoformat()
-        for name,key in [('tools','TOOLS_REF'),('komizo-actions','KOMIZO_REF')]:
+        sources=[('cookbook','COOKBOOK_REF'),('komizo-actions','KOMIZO_REF')] if cookbook_ref else [('tools','TOOLS_REF'),('komizo-actions','KOMIZO_REF')]
+        for name,key in sources:
             if fetch('repos/nicodes/'+name+'/compare/'+environment[key]+'...main').get('status') not in {'ahead','identical'}:
                 raise ValueError('producer execution source is not accepted on main')
+        if cookbook_ref:
+            provider=fetch('repos/nicodes/cookbook/contents/mise.toml?ref='+cookbook_ref)
+            if provider.get('encoding')!='base64' or provider.get('type')!='file' or type(provider.get('size')) is not int or not 0<provider['size']<=262144:
+                raise ValueError('producer Cookbook dependency requires its bounded immutable source manifest')
+            raw=base64.b64decode(provider['content'],validate=False)
+            if len(raw)!=provider['size'] or hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()!=provider.get('sha'):
+                raise ValueError('producer Cookbook manifest differs from its immutable Git blob')
+            variables=tomllib.loads(raw.decode('utf-8').replace('\r\n','\n').replace('\r','\n')).get('vars',{})
+            tools_ref=variables.get('tools_ref') if isinstance(variables,dict) else None
+            if not isinstance(tools_ref,str) or not re.fullmatch('[a-f0-9]{40}',tools_ref):
+                raise ValueError('producer Cookbook provider requires one literal immutable Tools dependency')
+            if fetch('repos/nicodes/tools/compare/'+tools_ref+'...main').get('status') not in {'ahead','identical'}:
+                raise ValueError('producer Tools helper source is not accepted on main')
+            environment['TOOLS_REF']=tools_ref
+            identity={'cookbook_repository':'nicodes/cookbook','cookbook_commit':cookbook_ref,
+                'tools_repository':'nicodes/tools','tools_commit':tools_ref,'entrypoint_contract':'mise-v1'}
+            if any(plan.get(key)!=value for key,value in identity.items()):
+                raise ValueError('producer plan differs from its actual Cookbook and Tools sources')
         record=fetch('repos/nicodes/tools/contents/helpers/dev.py?ref='+environment['TOOLS_REF'])
         if record.get('encoding')!='base64' or record.get('type')!='file' or record.get('size',1<<21)>1<<20:
             raise ValueError('producer ownership helper must be a bounded immutable SDK file')
@@ -122,7 +153,9 @@ jobs:
                 run(['git',*arguments],source,clone_environment)
             actual=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True,timeout=10).strip()
             if actual!=environment['KOMIZO_REF']:raise ValueError('retrieved producer differs from its accepted source')
-            run([sys.executable,str(source/'scripts/preview-producer.py'),'run'],Path.cwd(),environment)
+            sdk=['--cookbook-root',str(Path('.artifacts/recipe-sdks/_cookbook')),'--cookbook-ref',cookbook_ref,
+                 '--tools-root',str(Path('.artifacts/recipe-sdks/_tools'))] if cookbook_ref else []
+            run([sys.executable,str(source/'scripts/preview-producer.py'),'run',*sdk],Path.cwd(),environment)
         PYTHON
     - name: Retain exact native producer and selected publication evidence
       timeout-minutes: ${{ fromJSON(steps.producer.outputs.remaining_minutes) }}

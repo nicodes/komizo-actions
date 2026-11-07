@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.dont_write_bytecode=True
 
 
 def module(name, path):
@@ -90,8 +91,10 @@ def native_policy(root, tools, name):
     caller = tracked(root, '.github/workflows/pr-preview.yml')
     if not isinstance(data['workflow_sha256'], str) or not DIGEST.fullmatch(data['workflow_sha256']) or hashlib.sha256(caller).hexdigest() != data['workflow_sha256']:
         raise ValueError('Preview caller differs from its reviewed native byte contract')
-    reference = re.search(rb'^COOKBOOK_REF := ([a-f0-9]{40})$', tracked(root, 'Makefile'), re.M)
-    if not reference or reference[1].decode() != git(tools, 'rev-parse', 'HEAD'):
+    tracked(root, 'mise.toml')
+    if (root / 'Makefile').exists() or (root / 'Makefile').is_symlink():
+        tracked(root, 'Makefile')
+    if preview.recipe_data.entrypoint_revision(root, tools) != git(tools, 'rev-parse', 'HEAD'):
         raise ValueError('Preview producer must use its exact source-declared SDK')
     return {**data, 'definition': name, 'recipe': config['recipe'], 'image_base': definition['image_base'],
             'shipping_components': images.components(definition), 'test_groups': definition['tests'],
@@ -120,7 +123,7 @@ def resolve(environment, lookup=api):
         return {'enabled': 'false', 'reason': str(error)}
 
 
-def request(root, tools, name, environment, lookup=api):
+def request(root, tools, name, environment, lookup=api, *, context=None):
     repository, source = controller(root, environment)
     event = preview.read_event(environment)
     resolver = module('producer_request', ROOT / 'preview-request/request.py')
@@ -140,6 +143,7 @@ def request(root, tools, name, environment, lookup=api):
             'controller_tree': git(root, 'rev-parse', 'HEAD^{tree}'),
             'trigger': environment['GITHUB_EVENT_NAME'], 'pr': int(decision['pr']),
             'head': decision['sha'], 'base': current.get('base', {}).get('sha'), 'policy': policy}
+    if context is not None:plan.update(context.identities(),entrypoint_contract='mise-v1')
     fresh(plan, environment, lookup)
     result.update(plan=json.dumps(plan, sort_keys=True, separators=(',', ':')), base=plan['base'],
                   build_runner=policy['build']['runner'], build_timeout=str(policy['build']['timeout_minutes']),
@@ -167,11 +171,15 @@ def fresh(plan, environment, lookup=api):
         raise ValueError('Preview is no longer the authorized selected-head request')
 
 
-def validate_plan(raw, root, tools, environment, lookup=api):
+def validate_plan(raw, root, tools, environment, lookup=api, *, context=None):
     if not isinstance(raw, str) or len(raw.encode()) > 131072:
         raise ValueError('Preview producer plan exceeds its bound')
     plan = json.loads(raw)
     keys = {'version', 'repository', 'controller', 'controller_tree', 'trigger', 'pr', 'head', 'base', 'policy'}
+    if context is not None:
+        keys.update([*context.identities(),'entrypoint_contract'])
+        if not isinstance(plan,dict):raise ValueError('invalid closed Preview producer plan')
+        context.require_proof(plan)
     if (not isinstance(plan, dict) or set(plan) != keys or plan.get('version') != 1
             or type(plan.get('pr')) is not int or not 1 <= plan['pr'] <= 9999999999
             or any(not isinstance(plan.get(k), str) or not SHA.fullmatch(plan[k]) for k in ['controller', 'controller_tree', 'head', 'base'])
@@ -363,7 +371,7 @@ def retrieve(root, repository, revision, values, tools, deadline, execute=bounde
         raise ValueError('Preview retrieval returned another commit')
 
 
-def run_writer(root, tools, source_root, incoming, environment, lookup=api, execute=bounded):
+def run_writer(root, tools, source_root, incoming, environment, lookup=api, execute=bounded, *, cookbook_root=None,cookbook_ref=None):
     # The immutable workflow bootstraps this trusted process under the actual
     # source job deadline. Its supervisor owns every descendant, including
     # checkout, metadata reads, decompression and final publication.
@@ -376,9 +384,24 @@ def run_writer(root, tools, source_root, incoming, environment, lookup=api, exec
     if deadline != actual_deadline:
         raise ValueError('Preview bootstrap deadline differs from the actual source job')
     retrieve(root, environment['GITHUB_REPOSITORY'], environment['GITHUB_SHA'], environment, tools, deadline, execute)
-    retrieve(tools, 'nicodes/tools', environment['TOOLS_REF'], environment, tools, deadline, execute)
-    preview.accepted_automation(tools, environment['TOOLS_REF'], environment['KOMIZO_REF'], lookup)
-    plan = validate_plan(raw, root, tools, environment, lookup)
+    context=None
+    if cookbook_root is not None:
+        if not isinstance(cookbook_ref,str) or not SHA.fullmatch(cookbook_ref) or environment.get('COOKBOOK_REF')!=cookbook_ref:
+            raise ValueError('Preview writer requires its exact trusted Cookbook source')
+        retrieve(cookbook_root,'nicodes/cookbook',cookbook_ref,environment,tools,deadline,execute)
+        expected=preview.recipe_context.helper_reference(cookbook_root,cookbook_ref)
+        if environment.get('TOOLS_REF')!=expected['revision']:
+            raise ValueError('Preview bootstrap helper identity differs from its retrieved Cookbook provider')
+        retrieve(tools,'nicodes/tools',expected['revision'],environment,tools,deadline,execute)
+        context=preview.accepted_automation(cookbook_root,None,environment['KOMIZO_REF'],lookup,
+            cookbook_ref=cookbook_ref,supplied_tools=tools)
+        cookbook,revision= context.cookbook,context.cookbook_revision
+        environment=context.environment(environment)
+    else:
+        retrieve(tools, 'nicodes/tools', environment['TOOLS_REF'], environment, tools, deadline, execute)
+        preview.accepted_automation(tools, environment['TOOLS_REF'], environment['KOMIZO_REF'], lookup)
+        cookbook,revision=tools,environment['TOOLS_REF']
+    plan = validate_plan(raw, root, cookbook, environment, lookup,context=context) if context else validate_plan(raw,root,cookbook,environment,lookup)
     retrieve(source_root, plan['repository'], plan['head'], environment, tools, deadline, execute)
     artifacts = lookup(f"repos/{plan['repository']}/actions/runs/{environment['GITHUB_RUN_ID']}/artifacts?per_page=100")
     if artifacts.get('total_count') != len(artifacts.get('artifacts', [])):
@@ -402,14 +425,15 @@ def run_writer(root, tools, source_root, incoming, environment, lookup=api, exec
         if packet.stat().st_size != metadata['size_in_bytes'] or 'sha256:' + digest != metadata['digest']:
             raise ValueError('Preview native packet differs from its immutable Actions artifact')
         extract_packet(packet, incoming)
-    publication(plan, root, source_root, tools, environment['TOOLS_REF'], incoming, environment, lookup, execute)
+    if context is not None:publication(plan,root,source_root,cookbook,revision,incoming,environment,lookup,execute,context=context)
+    else:publication(plan, root, source_root, tools, environment['TOOLS_REF'], incoming, environment, lookup, execute)
     seconds, _ = remaining(plan, lookup(f"repos/{plan['repository']}/actions/runs/{environment['GITHUB_RUN_ID']}/attempts/{environment['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100"))
     if seconds < 120:
         raise ValueError('Preview producer has insufficient original budget to retain publication evidence')
     preview.output({'head': plan['head'], 'remaining_minutes': str(seconds // 60 - 1)}, environment)
 
 
-def publication(plan, root, source_root, tools, tools_ref, incoming, environment, lookup=api, execute=bounded):
+def publication(plan, root, source_root, tools, tools_ref, incoming, environment, lookup=api, execute=bounded, *, context=None):
     # Every helper path must survive the deliberate switch to the data-only
     # source checkout as cwd; the standalone CLI accepts relative paths.
     tools, source_root, incoming = tools.resolve(), source_root.resolve(), incoming.resolve()
@@ -427,6 +451,7 @@ def publication(plan, root, source_root, tools, tools_ref, incoming, environment
             or images.components(definition) != policy['shipping_components'] or definition['tests'] != policy['test_groups']):
         raise ValueError('selected source cannot override trusted build, SDK, artifact or component authority')
     proof = authority.read(incoming / '.artifacts/cookbook-validation.json')
+    if context is not None:context.require_proof(proof)
     jobs = lookup(f"repos/{plan['repository']}/actions/runs/{environment['GITHUB_RUN_ID']}/attempts/{environment['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")
     writers = [job for job in jobs.get('jobs', []) if job.get('name', '').endswith('/ Publish selected Preview images')]
     if (environment.get('GITHUB_JOB') != 'publish'
@@ -484,6 +509,7 @@ def publication(plan, root, source_root, tools, tools_ref, incoming, environment
     remaining(plan, jobs)
     fresh(plan, environment, lookup)
     values = dict(environment, COOKBOOK_PREVIEW_NUMBER=str(plan['pr']), REQUEST_HEAD=plan['head'], REQUEST_BASE=plan['base'])
+    helpers=context.tools if context is not None else tools
     token = environment.get('GH_TOKEN', '')
     if not token or len(token) > 512 or any(c.isspace() or c == '\0' for c in token):
         raise ValueError('Preview publisher requires its bounded registry token')
@@ -491,26 +517,27 @@ def publication(plan, root, source_root, tools, tools_ref, incoming, environment
         values['DOCKER_CONFIG'] = directory
         # The aggregate starts at the actual readonly source job, including all setup/download time.
         execute(['docker', 'login', 'ghcr.io', '--username', environment['GITHUB_REPOSITORY'].split('/')[0], '--password-stdin'],
-                tools=tools, deadline=deadline, cwd=root, env=values, input=token+'\n')
+                tools=helpers, deadline=deadline, cwd=root, env=values, input=token+'\n')
         fresh(plan, environment, lookup)
         publication_deadline = min(deadline, datetime.now(timezone.utc) + timedelta(minutes=policy['publish']['timeout_minutes']))
-        execute([sys.executable, str(tools / 'helpers/release.py'), 'publish', '--project', policy['project'],
+        execute([sys.executable, str(helpers / 'helpers/release.py'), 'publish', '--project', policy['project'],
                  '--revision', plan['head'], '--components', *policy['components'], '--definition', policy['artifact_definition'],
                  '--directory', str(selected), '--test-job', 'validate', '--test-evidence-directory', str((incoming / '.artifacts/verification').resolve())],
-                tools=tools, deadline=publication_deadline, cwd=source_root, env=values)
+                tools=helpers, deadline=publication_deadline, cwd=source_root, env=values)
     published = authority.read(selected / 'publication.json')
     if published.get('revision') != plan['head'] or published.get('tested_commit') != plan['head'] or published.get('images') != derived['selected_images']:
         raise ValueError('Preview publication did not retain exact selected-HEAD image identities')
     report = root / '.artifacts/preview-producer-publication.json'
     report.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     report.write_text(json.dumps({'version': 1, 'plan': plan, 'derivation': derived, 'publication': published,
-                                 'aggregate_deadline': deadline.isoformat()}, indent=2) + '\n')
+                                 'aggregate_deadline': deadline.isoformat(),
+        **({**context.identities(),'entrypoint_contract':'mise-v1'} if context is not None else {})}, indent=2) + '\n')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation', choices=['resolve', 'request', 'plan', 'verify', 'publish', 'run'])
-    parser.add_argument('--tools', type=Path, default=Path('_preview_producer_tools'))
+    preview.sdk_arguments(parser)
     parser.add_argument('--declaration', default='')
     parser.add_argument('--source-root', type=Path, default=Path('_preview_producer_source'))
     parser.add_argument('--incoming', type=Path, default=Path('.artifacts/preview-producer-input'))
@@ -521,17 +548,25 @@ def main():
             preview.output(resolve(environment), environment)
             return
         if args.operation == 'run':
-            run_writer(root, args.tools.resolve(), args.source_root.resolve(), args.incoming.resolve(), environment)
+            if args.cookbook_root is not None or args.cookbook_ref is not None:
+                if args.cookbook_root is None or args.cookbook_ref is None or args.tools is not None:
+                    raise ValueError('select the complete Cookbook writer contract or its historical Tools SDK')
+                run_writer(root,(args.tools_root or Path('_preview_producer_tools')).resolve(),args.source_root.resolve(),
+                    args.incoming.resolve(),environment,cookbook_root=args.cookbook_root.resolve(),cookbook_ref=args.cookbook_ref)
+            else:
+                if args.tools_root is not None or environment.get('COOKBOOK_REF'):
+                    raise ValueError('Cookbook writers must retain their explicit source contract')
+                run_writer(root, (args.tools or Path('_preview_producer_tools')).resolve(), args.source_root.resolve(), args.incoming.resolve(), environment)
             return
-        preview.accepted_automation(args.tools, environment['TOOLS_REF'], environment['KOMIZO_REF'])
+        cookbook,tools,revision,context,environment=preview.automation(args,environment,'_preview_producer_tools')
         if args.operation == 'request':
-            preview.output(request(root, args.tools, args.declaration, environment), environment)
+            preview.output(request(root,cookbook,args.declaration,environment,context=context) if context else request(root,cookbook,args.declaration,environment),environment)
             return
-        plan = validate_plan(environment['PLAN'], root, args.tools, environment)
+        plan = validate_plan(environment['PLAN'],root,cookbook,environment,context=context) if context else validate_plan(environment['PLAN'],root,cookbook,environment)
         if args.operation in {'verify', 'plan'}:
             preview.output({'head': plan['head'], 'base': plan['base'], 'pr': plan['pr']}, environment)
         else:
-            publication(plan, root, args.source_root, args.tools, environment['TOOLS_REF'], args.incoming, environment)
+            publication(plan,root,args.source_root,cookbook,revision,args.incoming,environment,context=context)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n')
 

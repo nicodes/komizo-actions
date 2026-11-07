@@ -12,6 +12,8 @@ import sys
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
+import recipe_context
 SHA = re.compile(r'[a-f0-9]{40}\Z')
 MAX_BYTES = 4 << 20
 
@@ -80,7 +82,7 @@ def ancestry(lookup, repository, older, newer):
         raise ValueError('historical release and SDK sources must be accepted main ancestors')
 
 
-def authority(root, tools, actions, environment, lookup=None):
+def authority(root, tools, actions, environment, lookup=None, *, supplied_tools=None):
     root, tools, actions = root.absolute(), tools.absolute(), actions.absolute()
     lookup = lookup or (lambda path: capture(['gh', 'api', path], root, environment))
     repository, revision, version = (environment.get(key, '') for key in
@@ -105,17 +107,28 @@ def authority(root, tools, actions, environment, lookup=None):
         raise ValueError('historical deployment source must be exact and clean')
     if any(key.startswith(('KOMIZO_SECRET_', 'KOMIZO_SCOPED_')) for key in environment):
         raise ValueError('historical scoped deployment transports no profile values')
-    pins = {name: environment.get(key, '') for name, key in [('tools', 'TOOLS_REF'), ('komizo-actions', 'KOMIZO_REF')]}
+    context=None
+    cookbook_ref=environment.get('COOKBOOK_REF','')
+    if not cookbook_ref and supplied_tools is not None:
+        raise ValueError('an independent helper location requires the Cookbook source contract')
+    pins = {name: environment.get(key, '') for name, key in [('komizo-actions', 'KOMIZO_REF')]}
+    if not cookbook_ref:pins['tools']=environment.get('TOOLS_REF','')
     for name, pin in pins.items():
         if not SHA.fullmatch(pin):
             raise ValueError('historical deployment requires immutable SDK pins')
         checked_checkout(tools if name == 'tools' else actions, name, pin, environment)
         ancestry(lookup, 'nicodes/'+name, pin, 'main')
+    if cookbook_ref:
+        context=recipe_context.accepted_context(tools,cookbook_ref,lambda path:document(lookup(path)),supplied_tools)
+        if environment.get('TOOLS_REF','') not in {'',context.tools_revision}:
+            raise ValueError('historical helper identity differs from the Cookbook dependency')
     current = document(lookup(f'repos/{repository}/git/ref/heads/main'))
     if not isinstance(current, dict) or current.get('object', {}).get('sha') != revision:
         raise ValueError('historical controller source is no longer current main')
     ancestry(lookup, repository, version, revision)
-    workflow, generator, configuration = tools_modules(tools)
+    if context is not None:
+        workflow,generator,configuration=[context.module(name) for name in ['delivery_workflows','generate','configuration']]
+    else:workflow, generator, configuration = tools_modules(tools)
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import recipe_data
     regular(root/'cookbook.toml', 262144)
@@ -135,12 +148,13 @@ def authority(root, tools, actions, environment, lookup=None):
             or environment.get('HISTORICAL_ENVIRONMENT') != data.get('environment', 'production')
             or document(environment.get('HISTORICAL_STEP_TIMEOUTS', '{}')) != workflow.historical_deadlines(data)):
         raise ValueError('historical deployment runner, approval or deadlines differ from native policy')
-    expected = generator.workflow_files(root, pins['tools'])
-    if (regular(root/'.github/workflows/cd.yml') != expected['.github/workflows/cd.yml']
-            or regular(root/'Makefile') != generator.makefile(root, pins['tools'])):
+    recipe_revision=cookbook_ref if context else pins['tools']
+    expected = generator.workflow_files(root, recipe_revision)
+    if regular(root/'.github/workflows/cd.yml') != expected['.github/workflows/cd.yml']:
         raise ValueError('historical deployment caller differs from its canonical source contract')
+    entrypoints = recipe_data.canonical_entrypoint(root, tools, recipe_revision, generator)
     definition_name = recipe_data.effective_definition(tools, config, configuration)
-    for name in ['cookbook.toml', 'Makefile', '.github/workflows/cd.yml', environment['DECLARATION'], definition_name]:
+    for name in ['cookbook.toml', *entrypoints, '.github/workflows/cd.yml', environment['DECLARATION'], definition_name]:
         git(root, environment, 'ls-files', '--error-unmatch', '--', name)
     definition_path = Path(definition_name)
     if definition_path.is_absolute() or '..' in definition_path.parts:
@@ -161,8 +175,9 @@ def authority(root, tools, actions, environment, lookup=None):
             'project': data['project'], 'health-urls': health, 'service-env-profile': data['service_env_profile'],
             'expected-generation': data['expected_generation'], 'diagnostics': str(data.get('diagnostics', False)).lower(),
             'images': [ref.replace('{revision}', version) for ref in references],
-            'tools_ref': pins['tools'], 'komizo_ref': pins['komizo-actions'], 'full_source_acceptance': False,
-            'host_admission': 'Existing native host policy remains final authority; no release proof is fabricated'}
+            'tools_ref': context.tools_revision if context else pins['tools'], 'komizo_ref': pins['komizo-actions'], 'full_source_acceptance': False,
+            'host_admission': 'Existing native host policy remains final authority; no release proof is fabricated',
+            **({**context.identities(),'entrypoint_contract':'mise-v1'} if context else {})}
 
 
 def inspect_images(plan, root, environment, inspect=None):
@@ -194,11 +209,25 @@ def outputs(values, environment):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['plan', 'inspect'])
-    parser.add_argument('--tools', type=Path, default=Path('_historical_cookbook'))
+    parser.add_argument('--tools', type=Path, help='Historical Tools-hosted recipe SDK location')
+    parser.add_argument('--cookbook-root',type=Path)
+    parser.add_argument('--cookbook-ref')
+    parser.add_argument('--tools-root',type=Path)
     args = parser.parse_args()
     try:
         root = Path.cwd(); environment = dict(os.environ)
-        plan = authority(root, args.tools, ROOT, environment)
+        if args.cookbook_root is not None or args.cookbook_ref is not None:
+            if args.cookbook_root is None or args.cookbook_ref is None or args.tools is not None:
+                raise ValueError('select the complete Cookbook contract or the historical Tools SDK')
+            if environment.get('COOKBOOK_REF',args.cookbook_ref)!=args.cookbook_ref:
+                raise ValueError('Cookbook CLI revision differs from the workflow source')
+            environment['COOKBOOK_REF']=args.cookbook_ref
+            cookbook=args.cookbook_root
+        else:
+            if args.tools_root is not None or environment.get('COOKBOOK_REF'):
+                raise ValueError('Cookbook callers must select their explicit source contract')
+            cookbook=args.tools or Path('_historical_cookbook')
+        plan = authority(root, cookbook, ROOT, environment,supplied_tools=args.tools_root)
         if args.command == 'inspect':
             plan = inspect_images(plan, root, environment)
         directory = root/'.artifacts/historical-deployment'

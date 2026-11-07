@@ -13,6 +13,10 @@ import sys
 import tomllib
 from urllib.parse import urljoin
 
+sys.dont_write_bytecode=True
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
+import recipe_context
+
 STATE=Path('.artifacts/godot-recovery')
 CONTEXT=['GITHUB_SERVER_URL','GITHUB_REPOSITORY','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_SHA','GITHUB_WORKFLOW_REF','GITHUB_WORKFLOW_SHA','GITHUB_EVENT_NAME']
 
@@ -35,7 +39,7 @@ def helper(tools,name):
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 
-def identity(root,tools,tools_ref,environment):
+def identity(root,tools,tools_ref,environment,*,context=None):
     if (environment.get('GITHUB_REF')!='refs/heads/main' or environment.get('GITHUB_EVENT_NAME')!='workflow_dispatch'
             or not re.fullmatch('[a-f0-9]{40}',tools_ref)
             or capture(['git','rev-parse','HEAD'],root,environment).strip()!=environment.get('GITHUB_SHA')
@@ -44,6 +48,8 @@ def identity(root,tools,tools_ref,environment):
     expected_workflow=environment['GITHUB_REPOSITORY']+'/.github/workflows/recovery.yml@refs/heads/main'
     if environment.get('GITHUB_WORKFLOW_REF')!=expected_workflow:raise ValueError('recovery controller must retain its original source recovery.yml identity')
     execute(['git','diff','--exit-code','HEAD','--'],root,environment,30)
+    if context is not None:
+        for name in ['configuration','godot_static','node_component','godot_browser','godot_security','native_tests']:context.module(name)
     sys.path.insert(0,str(tools/'cookbook'))
     from configuration import load
     import godot_static
@@ -99,7 +105,7 @@ def historical_contract(root,record,environment):
     return destination
 
 
-def verify(root,tools,tools_ref,config,selected,run_id,environment):
+def verify(root,tools,tools_ref,config,selected,run_id,environment,*,context=None):
     import godot_browser,godot_security
     from native_tests import run_entries
     run,record=authenticated_record(root,tools,run_id,environment)
@@ -125,16 +131,18 @@ def verify(root,tools,tools_ref,config,selected,run_id,environment):
       'cookbook_commit':tools_ref,'configuration_sha256':sha(root/'cookbook.toml'),'source_run':run,'record':record,
       'context':{key:environment.get(key,'') for key in CONTEXT},'checks':['trusted-successful-main-cd','immutable-original-release-record','historical-constrained-config',
       'native-shipping-contract','ordinary-game-browser-matrix','historical-cargo-current-advisories','historical-image-current-security-and-sbom']}
+    if context is not None:proof.update(context.identities(),entrypoint_contract='mise-v1')
     destination=root/STATE/'acceptance.json';destination.parent.mkdir(parents=True,exist_ok=True);destination.write_text(json.dumps(proof,sort_keys=True)+'\n')
     return {**record,'proof_sha256':sha(destination)}
 
 
-def accept_restore(proof,digest,root,tools_ref,configuration_hash,environment,jobs):
+def accept_restore(proof,digest,root,tools_ref,configuration_hash,environment,jobs,*,context=None):
     if (not re.fullmatch('[a-f0-9]{64}',digest) or proof.get('version')!=1 or proof.get('coverage')!='historical-static-release'
             or proof.get('status')!='passed' or proof.get('controller_source')!=environment.get('GITHUB_SHA')
             or proof.get('cookbook_commit')!=tools_ref or proof.get('configuration_sha256')!=configuration_hash
             or proof.get('context')!={key:environment.get(key,'') for key in CONTEXT}):
         raise ValueError('restore requires successful same-controller same-run historical verification')
+    if context is not None:context.require_proof(proof)
     if jobs.get('total_count')!=len(jobs.get('jobs',[])):raise ValueError('restore requires complete actual current-attempt job metadata')
     expected_checks={'trusted-successful-main-cd','immutable-original-release-record','historical-constrained-config','native-shipping-contract',
         'ordinary-game-browser-matrix','historical-cargo-current-advisories','historical-image-current-security-and-sbom'}
@@ -145,13 +153,13 @@ def accept_restore(proof,digest,root,tools_ref,configuration_hash,environment,jo
     return proof['record']
 
 
-def restore(root,tools,tools_ref,config,environment,expected):
+def restore(root,tools,tools_ref,config,environment,expected,*,context=None):
     path=root/STATE/'acceptance.json'
     proof=read(path)
     if sha(path)!=expected:raise ValueError('restore proof bytes differ from the successful verifier output')
     repository,run,attempt=(environment[key] for key in ['GITHUB_REPOSITORY','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'])
     jobs=json.loads(capture(['gh','api',f'repos/{repository}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100'],root,environment))
-    record=accept_restore(proof,expected,root,tools_ref,sha(root/'cookbook.toml'),environment,jobs)
+    record=accept_restore(proof,expected,root,tools_ref,sha(root/'cookbook.toml'),environment,jobs,context=context)
     schema=helper(tools,'godot_release_record');schema.REPO=repository;schema.validate_record(record,proof['source_run'])
     copier=helper(tools,'registry_manifest')
     values={'CONFIG_REF':record['config_ref'],'RESTORE_REVISION':record['sha']}
@@ -170,17 +178,31 @@ def output(values,environment):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('operation',choices=['source','setup','verify','restore'])
-    parser.add_argument('--tools',type=Path,required=True);parser.add_argument('--tools-ref',required=True)
+    parser.add_argument('--tools',type=Path);parser.add_argument('--tools-ref')
+    parser.add_argument('--cookbook-root',type=Path);parser.add_argument('--cookbook-ref')
+    parser.add_argument('--tools-root',type=Path)
     parser.add_argument('--source-run',default='');parser.add_argument('--proof-sha256',default='')
-    args=parser.parse_args();root=Path.cwd();tools=args.tools.resolve();environment=dict(os.environ)
+    args=parser.parse_args();root=Path.cwd();environment=dict(os.environ)
     try:
-        config,selected=identity(root,tools,args.tools_ref,environment)
+        context=None
+        if args.cookbook_root is not None or args.cookbook_ref is not None:
+            if args.cookbook_root is None or args.cookbook_ref is None or args.tools is not None or args.tools_ref is not None:
+                raise ValueError('select the complete Cookbook contract or the historical Tools SDK')
+            context=recipe_context.accepted_context(args.cookbook_root,args.cookbook_ref,
+                lambda path:json.loads(capture(['gh','api',path],root,environment,30)),args.tools_root)
+            cookbook,revision,tools=context.cookbook,context.cookbook_revision,context.tools
+            environment.update(COOKBOOK_ROOT=str(cookbook),COOKBOOK_REF=revision,TOOLS_ROOT=str(tools),TOOLS_REF=context.tools_revision)
+        else:
+            if args.tools is None or args.tools_ref is None or args.tools_root is not None:
+                raise ValueError('historical recovery requires its explicit Tools SDK source')
+            cookbook=tools=args.tools.resolve();revision=args.tools_ref
+        config,selected=identity(root,cookbook,revision,environment,context=context)
         if args.operation=='source':
             run=source_run(environment['GITHUB_REPOSITORY'],args.source_run,tools,root,environment)
             output({'sha':run['head_sha']},environment)
         elif args.operation=='setup':setup(root,config,environment)
-        elif args.operation=='verify':output(verify(root,tools,args.tools_ref,config,selected,args.source_run,environment),environment)
-        else:output(restore(root,tools,args.tools_ref,config,environment,args.proof_sha256),environment)
+        elif args.operation=='verify':output(verify(root,tools,revision,config,selected,args.source_run,environment,context=context),environment)
+        else:output(restore(root,tools,revision,config,environment,args.proof_sha256,context=context),environment)
     except (OSError,ValueError,KeyError,subprocess.SubprocessError) as error:parser.exit(1,str(error)+'\n')
 
 

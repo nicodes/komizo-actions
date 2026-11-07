@@ -116,5 +116,18 @@ class HistoricalAcceptance(unittest.TestCase):
         config['tests']['integration'].append(entry)
         with self.assertRaises(ValueError):recovery.fixture(config,{'recovery_test':'shipping'})
 
+    def test_extracted_restore_proof_requires_both_real_sources_and_current_entrypoint(self):
+        proof,env,jobs=self.proof()
+        identities={'cookbook_repository':'nicodes/cookbook','cookbook_commit':SDK,
+            'tools_repository':'nicodes/tools','tools_commit':'c'*40}
+        context=SimpleNamespace(identities=lambda:identities)
+        context.require_proof=lambda value:recovery.recipe_context.Context.require_proof(context,value)
+        proof.update(identities,entrypoint_contract='mise-v1')
+        self.assertEqual(recovery.accept_restore(proof,'a'*64,Path('.'),SDK,'f'*64,env,jobs,context=context),record())
+        for change in [{'tools_commit':SDK},{'tools_repository':'nicodes/cookbook'},
+                       {'cookbook_repository':'nicodes/tools'},{'entrypoint_contract':'make-v0'}]:
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                recovery.accept_restore(proof|change,'a'*64,Path('.'),SDK,'f'*64,env,jobs,context=context)
+
 
 if __name__=='__main__':unittest.main()

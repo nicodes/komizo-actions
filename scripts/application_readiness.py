@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Prepare and run the actual post-deployment policy under its caller deadline."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import recipe_data
+import recipe_context
 
 sys.dont_write_bytecode = True
 
 
-def readiness(root, tools, environment, driver=None):
+def readiness(root, tools, environment, driver=None, *, context=None):
+    if context is not None:
+        for name in ['delivery_workflows','operational_workflows','configuration','node_component','images']:context.module(name)
     sys.path.insert(0, str(tools.resolve() / 'cookbook'))
     import delivery_workflows
     import operational_workflows
@@ -29,8 +33,12 @@ def readiness(root, tools, environment, driver=None):
             spec = importlib.util.spec_from_file_location('delivery_operational', path)
             driver = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(driver)
-        environment = driver.runtime_environment(root, tools, environment)
-        driver.prepare(root, tools, config, record, 'production', environment)
+        if context is not None:
+            environment=driver.runtime_environment(root,context.tools,environment,context)
+            driver.prepare(root,tools,config,record,'production',environment,helpers=context.tools,context=context)
+        else:
+            environment = driver.runtime_environment(root, tools, environment)
+            driver.prepare(root, tools, config, record, 'production', environment)
         for check in record['checks']:
             driver.native(root, check, environment)
     elif data.get('readiness'):
@@ -42,8 +50,17 @@ def readiness(root, tools, environment, driver=None):
         raise ValueError('delivery has no native readiness assertions')
 
 
-if __name__ == '__main__':
+def main():
     try:
-        readiness(Path.cwd(), Path('_delivery_cookbook'), dict(os.environ))
+        environment=dict(os.environ)
+        context=None
+        if environment.get('COOKBOOK_REF'):
+            context=recipe_context.accepted_context(Path(environment['COOKBOOK_ROOT']),environment['COOKBOOK_REF'],
+                lambda path:json.loads(subprocess.check_output(['gh','api',path],text=True,timeout=30)),
+                Path(environment['TOOLS_ROOT']))
+        readiness(Path.cwd(),context.cookbook if context else Path('_delivery_cookbook'),environment,context=context)
     except (KeyError, OSError, ValueError, subprocess.SubprocessError) as error:
         raise SystemExit(str(error)) from error
+
+
+if __name__=='__main__':main()
