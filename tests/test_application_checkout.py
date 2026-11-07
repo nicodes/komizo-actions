@@ -47,7 +47,7 @@ else:
             GITHUB_WORKSPACE=str(self.root), GITHUB_REPOSITORY='owner/example',
             GITHUB_SERVER_URL='https://github.com', GITHUB_SHA=self.source,
             GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='push', SOURCE=self.source,
-            SOURCE_PREPARED='true', TOOLS_REF='b'*40, KOMIZO_REF='c'*40,
+            SOURCE_PREPARED='true', COOKBOOK_REF='', TOOLS_REF='b'*40, KOMIZO_REF='c'*40,
             PROJECT='example', FIXTURE_MAIN=self.source)
 
     def git(self, *args):
