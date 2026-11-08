@@ -19,5 +19,5 @@ runs:
       env:
         PROJECT: ${{ inputs.project }}
         BACKUP_CONFIG: ${{ inputs.config }}
-        TOOLS_ROOT: ${{ github.workspace }}/_delivery_cookbook
+        TOOLS_ROOT: ${{ env.COOKBOOK_ROOT && env.TOOLS_ROOT || format('{0}/_delivery_cookbook', github.workspace) }}
       run: python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"
