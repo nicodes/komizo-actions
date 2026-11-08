@@ -36,7 +36,7 @@ class AtomicBackupPublication(unittest.TestCase):
         for path in (self.directory / 'export').iterdir(): self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_existing_output_identities_never_trigger_capture_or_replace_evidence(self):
-        for name in ['export', 'export.tar', 'first-deployment.json']:
+        for name in ['export', 'export.tar', 'first-deployment.json', 'stopped.json']:
             for kind in ['file', 'directory', 'symlink', 'fifo']:
                 with self.subTest(name=name, kind=kind):
                     target = self.directory / name

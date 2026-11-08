@@ -38,6 +38,9 @@ outputs:
   expected-secret-generations:
     description: Exact owner-installed alias generation expectations
     value: ${{ steps.plan.outputs.expected-secret-generations }}
+  godot-production:
+    description: The declared public Godot browser gate needs its accepted payload identity
+    value: ${{ steps.plan.outputs.godot-production }}
 runs:
   using: composite
   steps:

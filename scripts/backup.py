@@ -68,6 +68,7 @@ def export(project, config, tools, directory, environment):
     if environment.get('GITHUB_OUTPUT'):
         with open(environment['GITHUB_OUTPUT'], 'a') as output:
             output.write('has-export=' + str(role == 'export').lower() + '\n')
+            output.write('capture-status=' + {'export': 'ready', 'first-deployment.json': 'absent', 'stopped.json': 'skipped-stopped'}[role] + '\n')
 
 
 def upload(project, tools, directory):

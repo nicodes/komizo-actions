@@ -42,6 +42,7 @@ def plan(root, project, path, *, context=None):
             'diagnostics': str(data.get('diagnostics', False)).lower(),
             'allowed-products': json.dumps([project]),
             'readiness-operation': str(data.get('readiness_operation', False)).lower(),
+            'godot-production': str(data.get('godot_production', False)).lower(),
             'expected-secret-generations': json.dumps(data.get('expected_secret_generations', {}), sort_keys=True)}
 
 
