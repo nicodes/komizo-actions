@@ -69,5 +69,23 @@ class CiphertextTransfer(unittest.TestCase):
         absent = core | {'release_digest': 'absent', 'backup': {'status': 'absent'}}
         self.assertEqual(submission.receipt(registry.canonical(absent), absent_body), absent)
 
+    def test_observed_stopped_intent_skips_all_backup_and_export_effects(self):
+        inspection = {'kind': 'komizo.instance', 'version': 1, 'application': 'mailroom', 'instance': 'production',
+                      'installed': {'release_digest': 'sha256:'+'a'*64, 'desired_running': False, 'operation_id': 'c'*32}}
+        with tempfile.TemporaryDirectory() as temporary, patch.object(submission, 'request', return_value={'action': 'inspect'}) as request, \
+                patch.object(submission, 'submit', return_value=inspection) as submit, patch.object(backup, 'download') as download:
+            root = Path(temporary)
+            result = backup.capture('mailroom', root, {'KOMIZO_SSH_CONFIG': 'owned-config'})
+            self.assertEqual(result, 'stopped.json')
+            self.assertEqual(request.call_count, 1)
+            self.assertEqual(request.call_args.args[2], 'inspect')
+            self.assertEqual(submit.call_count, 1)
+            download.assert_not_called()
+            observed = json.loads((root / result).read_text())
+            self.assertEqual(observed, {'kind': 'komizo.backup-skip', 'version': 1, 'reason': 'desired_stopped', 'inspection': inspection})
+            self.assertEqual((root / result).stat().st_mode & 0o777, 0o600)
+            self.assertFalse((root / 'export').exists())
+            self.assertFalse((root / 'first-deployment.json').exists())
+
 
 if __name__ == '__main__': unittest.main()

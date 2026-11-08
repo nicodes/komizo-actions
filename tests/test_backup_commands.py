@@ -38,7 +38,7 @@ class NativeBackupCommands(unittest.TestCase):
             import backup_submission
             with patch.object(backup_submission, 'capture', produce):
                 backup.export('mailroom', {'version': 1}, root, root / '.artifacts/backup', {'GITHUB_OUTPUT': str(output)})
-            self.assertEqual(output.read_text(), 'has-export=false\n')
+            self.assertEqual(output.read_text(), 'has-export=false\ncapture-status=absent\n')
             self.assertEqual((root / '.artifacts/backup/first-deployment.json').stat().st_mode & 0o777, 0o600)
 
     def test_upload_uses_exact_project_and_authenticated_receipt_time(self):

@@ -56,7 +56,7 @@ def open_directory(name, parent):
 
 
 def refuse_prior_output(backup):
-    for name in ('export', 'export.tar', 'first-deployment.json'):
+    for name in ('export', 'export.tar', 'first-deployment.json', 'stopped.json'):
         try:
             os.stat(name, dir_fd=backup, follow_symlinks=False)
         except FileNotFoundError:
@@ -126,7 +126,7 @@ def capture(root, directory, project, produce, *, timeout=900):
         stage_path = Path(tempfile.mkdtemp(prefix='.export-', dir=f'/proc/self/fd/{backup}'))
         stage = stage_path.name
         role = produce(stage_path, (backup,))
-        if role not in {'export', 'first-deployment.json'}:
+        if role not in {'export', 'first-deployment.json', 'stopped.json'}:
             raise ValueError('backup receiver returned an unsupported publication role')
         accepted = stage_path / role
         if accepted.is_symlink() or not (accepted.is_dir() if role == 'export' else accepted.is_file()):

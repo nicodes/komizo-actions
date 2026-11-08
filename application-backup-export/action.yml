@@ -11,6 +11,9 @@ outputs:
   has-export:
     description: Verified encrypted pair is available for runner transport
     value: ${{ steps.capture.outputs.has-export }}
+  capture-status:
+    description: Ready encrypted pair, proven absent instance, or observed stopped intent
+    value: ${{ steps.capture.outputs.capture-status }}
 runs:
   using: composite
   steps:

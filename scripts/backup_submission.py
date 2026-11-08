@@ -89,7 +89,18 @@ def capture(project, stage, environment, *, pass_fds=(), timeout=900):
     instance = 'production'
     config = environment['KOMIZO_SSH_CONFIG']
     current = submission.request(project, instance, 'inspect', environment, release_digest='current', timeout_seconds=remaining())
-    installed = submission.submit(config, current, timeout=remaining())['installed']
+    inspection = submission.submit(config, current, timeout=remaining())
+    installed = inspection['installed']
+    if installed is not None and installed['desired_running'] is False:
+        # This is an observed stop intent, not a completed backup or an empty host.
+        # Activation independently requires a fresh backup if an owner starts the
+        # instance after this inspection and before candidate admission.
+        path = Path(stage) / 'stopped.json'
+        with path.open('x') as output:
+            os.fchmod(output.fileno(), 0o600)
+            json.dump({'kind': 'komizo.backup-skip', 'version': 1,
+                       'reason': 'desired_stopped', 'inspection': inspection}, output, sort_keys=True)
+        return 'stopped.json'
     target = installed['release_digest'] if installed is not None else 'absent'
     body = submission.request(project, instance, 'backup', environment, release_digest=target, timeout_seconds=remaining())
     result = submission.submit(config, body, timeout=remaining())
