@@ -10,36 +10,36 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Inspect the host configuration parser without loading SDK code
-      id: host
-      shell: bash
-      env:
-        MISE_AUTO_INSTALL: 'false'
-        MISE_EXEC_AUTO_INSTALL: 'false'
-        MISE_TASK_RUN_AUTO_INSTALL: 'false'
-      run: |
-        "${COOKBOOK_BOOTSTRAP_PYTHON:-python3}" -I -B -c 'import sys; print("bootstrap-python=" + str(sys.version_info < (3, 11)).lower())' >> "$GITHUB_OUTPUT"
-    - name: Bootstrap the exact supported configuration parser
-      if: steps.host.outputs.bootstrap-python == 'true'
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-      with:
-        python-version: '3.13.11'
-        check-latest: false
-    - name: Admit both real sources before executing Cookbook SDK code
-      shell: bash
-      env:
-        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
-        GH_TOKEN: ${{ github.token }}
-        MISE_AUTO_INSTALL: 'false'
-        MISE_EXEC_AUTO_INSTALL: 'false'
-        MISE_TASK_RUN_AUTO_INSTALL: 'false'
-      run: |
-        "${COOKBOOK_BOOTSTRAP_PYTHON:-python3}" -I -B "$GITHUB_ACTION_PATH/../scripts/recipe_context.py" dependency --cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF"
-    - name: Prepare only the checked Cookbook provider dependency
-      uses: ./.artifacts/recipe-sdks/_cookbook/sdk-dependencies
-      with:
-        cookbook-ref: ${{ inputs.cookbook-ref }}
-    - name: Explicitly prepare the selected exact caller SDKs
-      uses: ./.artifacts/recipe-sdks/_cookbook/sdk-setup
-      with:
-        tools: ${{ inputs.tools }}
+  - name: Inspect the host configuration parser without loading SDK code
+    id: host
+    shell: bash
+    env:
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    run: |
+      "${COOKBOOK_BOOTSTRAP_PYTHON:-python3}" -I -B -c 'import sys; print("bootstrap-python=" + str(sys.version_info < (3, 11)).lower())' >> "$GITHUB_OUTPUT"
+  - name: Bootstrap the exact supported configuration parser
+    if: steps.host.outputs.bootstrap-python == 'true'
+    uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+    with:
+      python-version: 3.13.11
+      check-latest: false
+  - name: Admit both real sources before executing Cookbook SDK code
+    shell: bash
+    env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      GH_TOKEN: ${{ github.token }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    run: |
+      "${COOKBOOK_BOOTSTRAP_PYTHON:-python3}" -I -B "$GITHUB_ACTION_PATH/../scripts/recipe_context.py" dependency --cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF"
+  - name: Prepare only the checked Cookbook provider dependency
+    uses: ./.artifacts/recipe-sdks/_cookbook/sdk-dependencies
+    with:
+      cookbook-ref: ${{ inputs.cookbook-ref }}
+  - name: Explicitly prepare the selected exact caller SDKs
+    uses: ./.artifacts/recipe-sdks/_cookbook/sdk-setup
+    with:
+      tools: ${{ inputs.tools }}

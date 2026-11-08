@@ -20,7 +20,7 @@ class PostgresRestore(unittest.TestCase):
     def setUp(self):
         temporary=tempfile.TemporaryDirectory(prefix='scratch recovery ')
         self.addCleanup(temporary.cleanup);self.root=Path(temporary.name)
-        self.config=dict(version=1,project='demo',image='postgres@sha256:'+'a'*64,minimum_rows=1,maximum_tables=500)
+        self.config=dict(version=1,project='demo',image='docker.io/library/postgres@sha256:'+'a'*64,minimum_rows=1,maximum_tables=500)
         self.driver=recovery.Drill('demo',self.config,self.root)
 
     def test_closed_declaration_keeps_engine_digest_project_and_row_floor(self):
@@ -32,7 +32,7 @@ class PostgresRestore(unittest.TestCase):
             with self.subTest(field=field),self.assertRaises(ValueError):recovery.declaration(path,'demo')
         with self.assertRaises(ValueError):self.driver.row_requirement(0)
 
-    def test_only_local_docker_endpoint_receives_redacted_failure_and_binary_stdin(self):
+    def test_only_declared_native_runtime_receives_redacted_failure_and_binary_stdin(self):
         dump=self.root/'database.dump';dump.write_bytes(b'PGDMPsynthetic')
         calls=[]
         def run(command,**options):
@@ -40,55 +40,58 @@ class PostgresRestore(unittest.TestCase):
             if options.get('stdin') is not None:self.assertEqual(options['stdin'].read(),b'PGDMPsynthetic')
             return SimpleNamespace(returncode=0,stdout='fixture')
         with patch.dict(os.environ,dict(DOCKER_HOST='tcp://foreign',DOCKER_CONTEXT='foreign',DOCKER_TLS_VERIFY='1',DOCKER_CERT_PATH='/foreign')),\
-             patch.object(recovery.subprocess,'run',side_effect=run):
+             patch.object(self.driver,'native',return_value=SimpleNamespace(run=run)):
             self.driver.restore_dump('owned-container',dump)
-            self.driver.docker('inspect','owned-container')
+            self.driver.podman('inspect','owned-container')
         for command,options in calls:
-            self.assertEqual(command[:3],['docker','--host','unix:///var/run/docker.sock'])
-            self.assertFalse(set(options['env'])&recovery.DOCKER_ENV_EXCLUDE)
+            self.assertIn(command[0], ['exec','inspect'])
             self.assertNotIn(str(dump),command)
             self.assertNotIn('--publish',command)
-        with patch.object(recovery.subprocess,'run',return_value=SimpleNamespace(returncode=1,stdout='password=private')):
-            with self.assertRaisesRegex(RuntimeError,'scratch PostgreSQL inspect failed') as failure:self.driver.docker('inspect','owned')
+        with patch.object(self.driver,'native',return_value=SimpleNamespace(run=Mock(return_value=SimpleNamespace(returncode=1,stdout='password=private')))):
+            with self.assertRaisesRegex(RuntimeError,'scratch PostgreSQL inspect failed') as failure:self.driver.podman('inspect','owned')
         self.assertNotIn('password',str(failure.exception))
 
     def test_all_official_pull_fallbacks_bind_the_same_declared_digest(self):
         attempts=[]
-        def docker(*arguments,**options):
+        def podman(*arguments,**options):
             attempts.append((arguments,options))
             if len(attempts)<3:raise RuntimeError('unavailable')
             return ''
-        with patch.object(self.driver,'docker',side_effect=docker):self.assertEqual(self.driver.pull_engine(),self.config['image'])
+        with patch.object(self.driver,'podman',side_effect=podman):self.assertEqual(self.driver.pull_engine(),self.config['image'])
         self.assertEqual(len(attempts),3)
         self.assertTrue(all(arguments[1].endswith('@sha256:'+'a'*64) for arguments,_ in attempts))
         self.assertTrue(all(options['timeout']==300 for _,options in attempts))
 
-    def test_generated_scratch_resources_have_internal_network_no_ports_and_owned_cleanup(self):
+    def test_generated_scratch_resources_have_no_network_no_ports_and_owned_cleanup(self):
         commands=[];name=None
-        def docker(*arguments,**options):
+        def podman(*arguments,**options):
             nonlocal name
             commands.append(arguments)
             if arguments[0]=='run':name=arguments[arguments.index('--name')+1]
             if arguments[0]=='inspect':return json.dumps([dict(Id='b'*64,State={'Running':True},Config={'Labels':{'nicodes.restore':name}})])
             return ''
         with patch.object(self.driver,'pull_engine',return_value=self.config['image']),\
-             patch.object(self.driver,'docker',side_effect=docker),patch.object(self.driver,'sql',return_value='*'):
+             patch.object(self.driver,'podman',side_effect=podman),patch.object(self.driver,'sql',return_value='*'):
             with self.driver.scratch_postgres() as container:self.assertTrue(container.startswith('demo-restore-pg-'))
         run=next(command for command in commands if command[0]=='run')
         self.assertIn('--cap-drop',run);self.assertIn('no-new-privileges:true',run)
         self.assertIn('512m',run);self.assertIn('128',run)
         self.assertIn(('rm','-f','-v','b'*64),commands)
         self.assertFalse(any(value in run for value in ['--publish','-p','--volume','-v']))
-        self.assertIn('--internal',commands[0])
+        self.assertIn('--network=none',run)
+        self.assertFalse(any(command[0]=='network' for command in commands))
+        self.assertFalse(any('POSTGRES_PASSWORD=' in value for value in run))
+        self.assertIn('--env-file',run)
+        self.assertFalse(Path(run[run.index('--env-file')+1]).exists())
 
     def test_foreign_cleanup_identity_is_refused_without_removing_container(self):
         commands=[]
-        def docker(*arguments,**options):
+        def podman(*arguments,**options):
             commands.append(arguments)
             if arguments[0]=='inspect':return json.dumps([dict(Id='b'*64,State={'Running':True},Config={'Labels':{'nicodes.restore':'foreign'}})])
             return ''
         with patch.object(self.driver,'pull_engine',return_value=self.config['image']),\
-             patch.object(self.driver,'docker',side_effect=docker),patch.object(self.driver,'sql',return_value='*'):
+             patch.object(self.driver,'podman',side_effect=podman),patch.object(self.driver,'sql',return_value='*'):
             with self.assertRaisesRegex(RuntimeError,'ownership'):
                 with self.driver.scratch_postgres():pass
         self.assertFalse(any(command[0]=='rm' for command in commands))

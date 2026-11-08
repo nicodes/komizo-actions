@@ -1,0 +1,99 @@
+name: Verify product readiness
+'on':
+  workflow_call:
+    inputs:
+      cookbook-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      source:
+        type: string
+        required: true
+      declaration:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      timeout-minutes:
+        type: number
+        required: true
+permissions: {}
+jobs:
+  verify:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      GH_TOKEN: ${{ github.token }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.source }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _readiness_actions
+        persist-credentials: false
+    - name: Bootstrap Python for protected SDK sources
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      id: sdk-private-python
+      timeout-minutes: 5
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      with:
+        python-version: 3.13.11
+        check-latest: false
+    - name: Prepare the private artifact parent with actual pinned Python
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      timeout-minutes: 1
+      shell: bash
+      env:
+        PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        set -euo pipefail
+        "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+        printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+        printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/cookbook
+        ref: ${{ inputs.cookbook-ref }}
+        path: .artifacts/recipe-sdks/_cookbook
+        persist-credentials: false
+    - uses: ./_readiness_actions/recipe-setup
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+        tools: python
+    - name: Retain the original delivery deadline after queue and setup
+      id: budget
+      shell: bash
+      env:
+        TOTAL_MINUTES: ${{ inputs.timeout-minutes }}
+      run: python3 -I -B _readiness_actions/scripts/operation_budget.py --job deliver --completed --total-minutes "$TOTAL_MINUTES"
+    - name: Run actual product assertions without host or identity authority
+      timeout-minutes: ${{ fromJSON(steps.budget.outputs.minutes) }}
+      shell: bash
+      env:
+        DECLARATION: ${{ inputs.declaration }}
+        EXPECTED_REVISION: ${{ inputs.source }}
+        SECONDS_LEFT: ${{ steps.budget.outputs.seconds }}
+      run: timeout --kill-after=5s "${SECONDS_LEFT}s" python3 -I -B _readiness_actions/scripts/application_readiness.py

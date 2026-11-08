@@ -1,0 +1,223 @@
+name: Deliver accepted native release
+'on':
+  workflow_call:
+    inputs:
+      cookbook-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      project:
+        type: string
+        required: true
+      declaration:
+        type: string
+        required: true
+      source:
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      timeout-minutes:
+        type: number
+        required: true
+      environment:
+        type: string
+        required: true
+      step-timeouts:
+        type: string
+        required: true
+      combined:
+        type: boolean
+        default: false
+    secrets:
+      KOMIZO_DEPLOY_KEY:
+        required: true
+      BACKUP_S3_ACCESS_KEY:
+        required: false
+      BACKUP_S3_SECRET_KEY:
+        required: false
+jobs:
+  deliver:
+    name: Deliver exact release
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: ${{ inputs.environment }}
+    env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      KOMIZO_REF: ${{ inputs.komizo-ref }}
+      GH_TOKEN: ${{ github.token }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    steps:
+    - name: Require exact protected main source
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.source }}
+      run: |
+        set -euo pipefail
+        [[ "$GITHUB_REF" == refs/heads/main && "$SOURCE" =~ ^[a-f0-9]{40}$ && "$SOURCE" == "$GITHUB_SHA" ]]
+        [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+        [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ && "$KOMIZO_REF" =~ ^[a-f0-9]{40}$ ]]
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).checkout }}
+      with:
+        ref: ${{ inputs.source }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _delivery_actions
+        persist-credentials: false
+    - name: Bootstrap Python for protected SDK sources
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      id: sdk-private-python
+      timeout-minutes: 5
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      with:
+        python-version: 3.13.11
+        check-latest: false
+    - name: Prepare the private artifact parent with actual pinned Python
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      timeout-minutes: 1
+      shell: bash
+      env:
+        PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        set -euo pipefail
+        "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+        printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+        printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup }}
+      with:
+        repository: nicodes/cookbook
+        ref: ${{ inputs.cookbook-ref }}
+        path: .artifacts/recipe-sdks/_cookbook
+        persist-credentials: false
+    - uses: ./_delivery_actions/recipe-sources
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup }}
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+    - uses: ./_delivery_actions/application-delivery
+      id: plan
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan }}
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+        project: ${{ inputs.project }}
+        declaration: ${{ inputs.declaration }}
+    - uses: ./_delivery_actions/application-publication
+      if: inputs.combined
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+        komizo-ref: ${{ inputs.komizo-ref }}
+        source: ${{ inputs.source }}
+        project: ${{ inputs.project }}
+        source-prepared: 'true'
+    - name: Retain the original protected operation deadline
+      shell: bash
+      env:
+        TOTAL_MINUTES: ${{ inputs.timeout-minutes }}
+      run: python3 -I -B _delivery_actions/scripts/operation_budget.py --job deliver --total-minutes "$TOTAL_MINUTES"
+    - uses: ./_delivery_actions/connect
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).connect }}
+      env:
+        KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
+        KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
+        KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
+    - uses: ./_delivery_actions/application-backup-export
+      id: backup
+      if: steps.plan.outputs.backup != ''
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).capture }}
+      with:
+        project: ${{ inputs.project }}
+        config: ${{ steps.plan.outputs.backup }}
+    - uses: ./_delivery_actions/application-backup-upload
+      if: steps.backup.outputs.has-export == 'true' && steps.plan.outputs.upload == 'true'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).upload }}
+      with:
+        project: ${{ inputs.project }}
+      env:
+        BACKUP_ALLOWED_SLUGS: ${{ steps.plan.outputs.allowed-products }}
+        BACKUP_S3_ACCESS_KEY: ${{ secrets.BACKUP_S3_ACCESS_KEY }}
+        BACKUP_S3_SECRET_KEY: ${{ secrets.BACKUP_S3_SECRET_KEY }}
+        BACKUP_S3_HOSTNAME: ${{ vars.BACKUP_S3_HOSTNAME }}
+        BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
+    - name: Bound deployment to its remaining native phase budget
+      shell: bash
+      env:
+        TOTAL_MINUTES: ${{ inputs.timeout-minutes }}
+        PHASE_MINUTES: ${{ fromJSON(inputs.step-timeouts).deploy }}
+      run: python3 -I -B _delivery_actions/scripts/operation_budget.py --job deliver --total-minutes "$TOTAL_MINUTES" --phase-seconds
+        "$((PHASE_MINUTES * 60))"
+    - name: Re-admit accepted publication and mint fresh release authority
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).download }}
+      shell: bash
+      env:
+        APPLICATION: ${{ inputs.project }}
+        SOURCE: ${{ inputs.source }}
+        COMBINED: ${{ inputs.combined }}
+      run: |
+        set -euo pipefail
+        arguments=()
+        if [[ "$COMBINED" == true ]]; then arguments+=(--combined); fi
+        python3 -I -B _delivery_actions/scripts/authorize.py --application "$APPLICATION" --source "$SOURCE" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT" "${arguments[@]}"
+    - uses: ./_delivery_actions/deploy
+      id: deploy
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).deploy }}
+      with:
+        application: ${{ inputs.project }}
+        registry-user: ${{ github.repository_owner }}
+        registry-token: ${{ github.token }}
+        expected-secret-generations: ${{ steps.plan.outputs.expected-secret-generations || '{}' }}
+    - uses: ./_delivery_actions/health-check
+      if: steps.deploy.outputs.phase == 'ready' && steps.plan.outputs.health-urls != ''
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness }}
+      with:
+        urls: ${{ steps.plan.outputs.health-urls }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: always()
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).artifact }}
+      with:
+        name: delivery-${{ inputs.source }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          .artifacts/komizo-operation.json
+          .artifacts/backup/
+        include-hidden-files: true
+        if-no-files-found: warn
+        retention-days: 30
+    outputs:
+      readiness-required: ${{ steps.deploy.outputs.phase == 'ready' && (steps.plan.outputs.readiness != '' || steps.plan.outputs.readiness-operation
+        == 'true') }}
+  readiness:
+    needs: deliver
+    if: needs.deliver.outputs.readiness-required == 'true'
+    uses: ./.github/workflows/cookbook-readiness.yml
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+    with:
+      cookbook-ref: ${{ inputs.cookbook-ref }}
+      komizo-ref: ${{ inputs.komizo-ref }}
+      source: ${{ inputs.source }}
+      declaration: ${{ inputs.declaration }}
+      runner: ${{ inputs.runner }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false

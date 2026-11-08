@@ -1,28 +1,49 @@
-name: "Run task"
-description: >
-  Invoke a fixed komizo host task after connect. This action intentionally has
-  no generic command, path, service, image, executable, environment, or secret
-  input. The host wrapper remains the authoritative privilege boundary.
-
+name: Submit lifecycle action
+description: Submit one independently authorized lifecycle action against an exact installed release
 inputs:
-  app:
-    description: App whose root-owned komizo task wrapper is invoked.
-    required: false
-    default: ""
-  task:
-    description: Fixed task name; release-identity-backfill or production-data.
+  application:
+    description: Application identity
     required: true
-  mode:
-    description: Bounded mode paired with the selected fixed task.
+  instance:
+    description: Isolated instance
+    default: production
+  action:
+    description: start, stop, restart, inspect, backup or remove
     required: true
-
+  release-digest:
+    description: Exact installed release identity
+    required: true
+  operation:
+    description: Exact durable operation for inspect
+    default: ''
+  timeout-seconds:
+    description: Completion deadline up to twenty-five minutes
+    default: '1500'
+outputs:
+  proposed-operation-id:
+    description: Client-derived recovery identity; admission requires a host receipt or inspection
+    value: ${{ steps.submit.outputs.proposed-operation-id }}
+  operation-id:
+    description: Durable host operation identity
+    value: ${{ steps.submit.outputs.operation-id }}
+  phase:
+    description: Verified terminal phase
+    value: ${{ steps.submit.outputs.phase }}
 runs:
   using: composite
   steps:
-    - name: Validate and invoke the named task
+    - name: Submit bounded lifecycle action
+      id: submit
       shell: bash
       env:
-        APP: ${{ inputs.app }}
-        TASK: ${{ inputs.task }}
-        MODE: ${{ inputs.mode }}
-      run: bash "$GITHUB_ACTION_PATH/run.sh"
+        APPLICATION: ${{ inputs.application }}
+        INSTANCE: ${{ inputs.instance }}
+        ACTION: ${{ inputs.action }}
+        RELEASE_DIGEST: ${{ inputs.release-digest }}
+        OPERATION: ${{ inputs.operation }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+      run: |
+        set -euo pipefail
+        arguments=()
+        if [[ -n "$OPERATION" ]]; then arguments+=(--operation "$OPERATION"); fi
+        python3 -I -B "$GITHUB_ACTION_PATH/../scripts/submission.py" --application "$APPLICATION" --instance "$INSTANCE" --action "$ACTION" --release-digest "$RELEASE_DIGEST" --timeout "$TIMEOUT_SECONDS" "${arguments[@]}"

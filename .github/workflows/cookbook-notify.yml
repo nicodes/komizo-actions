@@ -5,11 +5,7 @@ name: Notify application delivery
       cookbook-ref:
         description: Recipe identity metadata only; notification loads no recipe SDK
         type: string
-        default: ''
-      tools-ref:
-        description: Historical recipe identity metadata only; notification loads no recipe SDK
-        type: string
-        default: ''
+        required: true
       komizo-ref:
         type: string
         required: true
@@ -58,26 +54,27 @@ name: Notify application delivery
 permissions: {}
 jobs:
   notify:
-    if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure')
+    if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
+      || inputs.deployment == 'failure')
     runs-on: ${{ inputs.notify-runner }}
     timeout-minutes: ${{ inputs.notify-timeout }}
     environment: ${{ inputs.environment }}
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).checkout }}
-        with:
-          repository: nicodes/komizo-actions
-          ref: ${{ inputs.komizo-ref }}
-          path: _komizo
-          persist-credentials: false
-      - uses: ./_komizo/notify-discord
-        continue-on-error: true
-        timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).notify }}
-        with:
-          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          deployment-url: ${{ inputs.deployment-url }}
-          environment: ${{ inputs.environment }}
-          status: ${{ inputs.deployment == 'success' && 'success' || 'failure' }}
-          revision: ${{ inputs.revision || github.sha }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).checkout }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _komizo
+        persist-credentials: false
+    - uses: ./_komizo/notify-discord
+      continue-on-error: true
+      timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).notify }}
+      with:
+        webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        deployment-url: ${{ inputs.deployment-url }}
+        environment: ${{ inputs.environment }}
+        status: ${{ inputs.deployment == 'success' && 'success' || 'failure' }}
+        revision: ${{ inputs.revision || github.sha }}

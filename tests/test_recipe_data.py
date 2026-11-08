@@ -166,7 +166,7 @@ print(json.dumps(result))
         self.assertEqual((actual['runner'], actual['timeout_minutes']), ('ubuntu-24.04', 30))
 
     def test_existing_prepared_sdk_retains_flat_declared_contract(self):
-        legacy = Path(os.environ['TOOLS_ROOT']).resolve()
+        legacy = Path(os.environ['RECIPE_LEGACY_TEST_SDK']).resolve()
         config = self.native()
         config['ci'] = {'runner': 'ubuntu-22.04', 'timeout_minutes': 40}
         body = self.write(config)
@@ -198,23 +198,12 @@ print(json.dumps(result))
         raw['artifacts']['release_metadata'] = metadata
         self.write(raw)
         self.assertEqual(self.read()['config'], config, 'legacy explicit static metadata remains compatible')
-        source = self.root / 'incoming/.artifacts/release'
-        source.mkdir(parents=True)
-        names = ['images.tar.gz', 'images.tar.gz.sha256', 'images.json', 'release.json',
-                 *[Path(name).name for name in metadata]]
-        for name in names:
-            (source / name).write_bytes(b'{}')
-        proof = {'artifacts': {'.artifacts/release/' + name: hashlib.sha256(b'{}').hexdigest() for name in names}}
-        publication.stage(self.root / 'incoming', proof, self.root / 'accepted', metadata)
-        self.assertEqual({path.name for path in (self.root / 'accepted').iterdir()}, set(names))
-        (source / 'static-config.json').write_text('{"changed":true}')
-        with self.assertRaisesRegex(ValueError, 'bytes differ'):
-            publication.stage(self.root / 'incoming', proof, self.root / 'changed', metadata)
-        (source / 'static-config.json').unlink()
-        with self.assertRaisesRegex(ValueError, 'closed validated'):
-            publication.stage(self.root / 'incoming', proof, self.root / 'missing', metadata)
-        self.assertFalse((self.root / 'changed').exists())
-        self.assertFalse((self.root / 'missing').exists())
+        # The native publisher no longer accepts the historical config-image packet.
+        source = self.root / 'incoming/.artifacts/release';source.mkdir(parents=True)
+        (source/'release.json').write_bytes(b'{}')
+        with self.assertRaises((ValueError,OSError)):
+            publication.stage(self.root/'incoming',{'artifacts':{}},self.root/'refused')
+        self.assertFalse((self.root/'refused').exists())
 
     def test_nonstatic_game_keeps_explicit_metadata_without_acquiring_static_outputs(self):
         config = self.native('godot-game')
@@ -225,7 +214,7 @@ print(json.dumps(result))
 
     def test_foreign_cached_configuration_or_static_module_refuses_the_other_sdk(self):
         self.write(self.static())
-        legacy = Path(os.environ['TOOLS_ROOT']).resolve()
+        legacy = Path(os.environ['RECIPE_LEGACY_TEST_SDK']).resolve()
         self.assertNotEqual(legacy, self.sdk, 'prepare distinct old/new SDK sources for the cache-origin control')
         program = '''import importlib,sys
 from pathlib import Path

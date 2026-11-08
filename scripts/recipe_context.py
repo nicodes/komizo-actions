@@ -132,14 +132,25 @@ def accepted_dependency(cookbook, revision, lookup):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['dependency'])
+    parser.add_argument('command', choices=['dependency', 'sources'])
     parser.add_argument('--cookbook-root', type=Path, required=True)
     parser.add_argument('--cookbook-ref', required=True)
     parser.add_argument('--github-output', action='store_true')
+    parser.add_argument('--tools-root', type=Path)
     args = parser.parse_args()
     try:
         tools = accepted_dependency(args.cookbook_root, args.cookbook_ref,
             lambda path: json.loads(subprocess.check_output(['gh', 'api', path], timeout=30)))
+        if args.command == 'sources':
+            if args.tools_root is None:
+                raise ValueError('source admission requires its exact prepared generic helper location')
+            context = Context(args.cookbook_root, args.cookbook_ref, args.tools_root)
+            values = context.environment()
+            with open(os.environ['GITHUB_ENV'], 'a') as output:
+                for key in ['COOKBOOK_ROOT', 'COOKBOOK_REF', 'TOOLS_ROOT', 'TOOLS_REF']:
+                    if any(char in values[key] for char in '\r\n\0'):
+                        raise ValueError('source locations must be bounded literal metadata')
+                    output.write(key + '=' + values[key] + '\n')
         if args.github_output:
             destination = Path(os.environ['GITHUB_OUTPUT'])
             if not destination.is_absolute() or destination.is_symlink() or not destination.is_file():

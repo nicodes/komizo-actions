@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-TOOLS = Path(os.environ['TOOLS_ROOT'])
+TOOLS = Path(os.environ['RECIPE_LEGACY_TEST_SDK'])
 sys.path.insert(0, str(TOOLS / 'cookbook'))
 import operational_workflows as workflows
 
@@ -244,7 +244,7 @@ class OperationalAuthority(unittest.TestCase):
         for name in ['backup', 'recovery', 'security-audit', 'production-check', 'public-production-check']:
             text = (root / ('cookbook-' + name + '.yml')).read_text()
             with self.subTest(workflow=name):
-                self.assertLess(text.index('Prepare the pinned configuration parser'), text.index('Admit exact trusted main'))
+                self.assertLess(text.index('Prepare accepted recipe SDKs'), text.index('Admit exact trusted main'))
                 self.assertNotIn('install_args: python', text)
                 self.assertIn("PYTHONDONTWRITEBYTECODE: '1'", text)
         production = (root / 'cookbook-production-check.yml').read_text()

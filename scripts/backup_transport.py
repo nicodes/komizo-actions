@@ -90,21 +90,14 @@ def refuse_storage_credentials(environment=None):
         if environment.get(name):raise ValueError('refusing host export with '+name+' in environment')
 
 
-def capture(root, directory, project, exporter, receive, *, proof=None, timeout=900):
-    """Receive into a private FD-anchored stage; callback returns one canonical role.
-
-    ``receive(archive, stage, pass_fds)`` must validate all ciphertext or the
-    typed initialization proof and return 'export' or 'first-deployment.json'.
-    The callback's child processes must inherit ``pass_fds`` when using stage
-    paths. Only the returned role is published, using RENAME_NOREPLACE.
-    """
+def capture(root, directory, project, produce, *, timeout=900):
+    """Publish a typed encrypted export under an FD-anchored exclusive directory lock."""
     refuse_storage_credentials()
     if sys.platform != 'linux':
         raise RuntimeError('backup export requires a Linux runner')
     if (not isinstance(project, str) or not re.fullmatch('[a-z][a-z0-9-]{0,62}', project)
-            or exporter not in {f'export-{project}-backup', f'export-backup-{project}'}
             or type(timeout) is not int or not 1 <= timeout <= 900):
-        raise ValueError('backup capture requires a fixed project exporter and bounded deadline')
+        raise ValueError('backup capture requires an app identity and bounded deadline')
     root = Path(root).absolute()
     directory = Path(directory)
     if directory.is_absolute():
@@ -132,23 +125,7 @@ def capture(root, directory, project, exporter, receive, *, proof=None, timeout=
         refuse_prior_output(backup)
         stage_path = Path(tempfile.mkdtemp(prefix='.export-', dir=f'/proc/self/fd/{backup}'))
         stage = stage_path.name
-        incoming = None
-        try:
-            if proof is not None:
-                proof = Path(proof)
-                if (not proof.is_absolute() or proof.is_symlink() or any(p.is_symlink() for p in proof.parents)
-                        or not proof.is_file() or proof.stat().st_mode & 0o077):
-                    raise ValueError('backup operation frame must be a private regular absolute file')
-                incoming = proof.open('rb')
-            with (stage_path / 'export.tar').open('xb') as archive:
-                os.fchmod(archive.fileno(), 0o600)
-                run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
-                     'deploy-target', 'doas', '/usr/local/bin/' + exporter],
-                    stdin=incoming or subprocess.DEVNULL, stdout=archive, timeout=timeout)
-        finally:
-            if incoming is not None:
-                incoming.close()
-        role = receive(stage_path / 'export.tar', stage_path, (backup,))
+        role = produce(stage_path, (backup,))
         if role not in {'export', 'first-deployment.json'}:
             raise ValueError('backup receiver returned an unsupported publication role')
         accepted = stage_path / role
@@ -179,24 +156,3 @@ def capture(root, directory, project, exporter, receive, *, proof=None, timeout=
             for fd in (backup, artifacts, root):
                 if fd is not None:
                     os.close(fd)
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--project', required=True)
-    parser.add_argument('--exporter', required=True)
-    parser.add_argument('--tools-root', required=True, type=Path)
-    args = parser.parse_args()
-    receiver = args.tools_root / 'helpers/receive-backup.py'
-    def receive(archive, stage, descriptors):
-        run([sys.executable, str(receiver), str(archive), str(stage/'export')], pass_fds=descriptors)
-        return 'export'
-    try:
-        with signals():
-            capture(Path.cwd(), Path('.artifacts/backup'), args.project, args.exporter, receive)
-    except (OSError, RuntimeError, AttributeError, ValueError) as error:
-        parser.exit(1, f'backup export refused or failed: {error}\n')
-
-
-if __name__ == '__main__':
-    main()

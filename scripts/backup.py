@@ -15,6 +15,7 @@ import tempfile
 import tomllib
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def helper(tools, name):
@@ -44,16 +45,9 @@ def declaration(path, project):
     if path and (path.suffix != '.toml' or path.is_symlink() or any(parent.is_symlink() for parent in path.parents)
                  or not path.is_file() or path.stat().st_size > 65536):
         raise ValueError('backup source must be bounded regular TOML')
-    value = tomllib.loads(path.read_text()) if path else {}
-    if not isinstance(value, dict) or set(value) - {'exporter', 'proof_exporter', 'first_deployment'}:
-        raise ValueError('invalid backup declaration')
-    for key in ('exporter', 'proof_exporter'):
-        if key in value and value[key] not in {f'export-{project}-backup', f'export-backup-{project}'}:
-            raise ValueError('backup exporter must name this project fixed host command')
-    absent = value.get('first_deployment', [])
-    if not isinstance(absent, list) or len(set(absent)) != len(absent) or not set(absent) <= {
-            'database_volume_absent', 'media_volume_absent', 'containers_absent'}:
-        raise ValueError('invalid first deployment absence policy')
+    value = tomllib.loads(path.read_text()) if path else {'version': 1}
+    if (not isinstance(value, dict) or set(value) != {'version'} or type(value.get('version')) is not int or value['version'] != 1):
+        raise ValueError('backup declaration requires native version 1; execution belongs to protected host policy')
     return value
 
 
@@ -65,31 +59,12 @@ spec.loader.exec_module(transport)
 
 def export(project, config, tools, directory, environment):
     transport.refuse_storage_credentials(environment)
-    frame = environment.get('KOMIZO_BACKUP_PROOF_FILE')
-    command = (config.get('proof_exporter') if frame else None) or config.get('exporter', f'export-{project}-backup')
-
-    def receive(archive, stage, descriptors):
-        with archive.open('rb') as stream:
-            is_absence = stream.read(1) == b'{'
-        if is_absence:
-            if not config.get('first_deployment') or archive.stat().st_size > 1024:
-                raise ValueError('unexpected or oversized initialization proof')
-            expected = {'version': 1, 'project': project, 'first_deployment': True,
-                        **dict.fromkeys(config['first_deployment'], True)}
-            actual = json.loads(archive.read_text())
-            if actual != expected or any(type(actual[key]) is not type(value) for key, value in expected.items()):
-                raise ValueError('invalid first deployment absence proof')
-            destination = stage / 'first-deployment.json'
-            with destination.open('x') as output:
-                output.write(json.dumps(actual, indent=2) + '\n')
-                os.fchmod(output.fileno(), 0o600)
-            return 'first-deployment.json'
-        helper(tools, 'receive-backup').receive(archive, stage / 'export')
-        return 'export'
-
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import backup_submission
+    def produce(stage, descriptors):
+        return backup_submission.capture(project, stage, environment, pass_fds=descriptors)
     with transport.signals():
-        role = transport.capture(Path.cwd(), directory, project, command, receive,
-            proof=Path(frame) if frame and config.get('proof_exporter') else None)
+        role = transport.capture(Path.cwd(), directory, project, produce)
     if environment.get('GITHUB_OUTPUT'):
         with open(environment['GITHUB_OUTPUT'], 'a') as output:
             output.write('has-export=' + str(role == 'export').lower() + '\n')
@@ -174,15 +149,43 @@ def local_recipe_context(root, *, cookbook_root=None, cookbook_ref=None, tools_r
 
 
 def restore_report(value, project):
+    from release_packet import COMMIT, NUMBER
+    from oci_registry import DIGEST
     if (not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] != 1
             or value.get('project') != project or value.get('published_ports') != []
             or value.get('database_integrity') != 'ok'
-            or any(value.get(key) != 'passed' for key in ['database_boot', 'api_boot', 'frontend_artifact', 'cleanup'])):
+            or value.get('scope') != 'disposable authenticated snapshot restoration'
+            or value.get('current_source_ci_acceptance') is not False
+            or value.get('network') != 'none; shared isolated loopback only'
+            or value.get('http_assertions') != {'api_health': 'passed', 'frontend_document': 'passed', 'unknown_host_refusal': 'passed'}
+            or any(value.get(key) != 'passed' for key in ['database_restore', 'database_boot', 'api_boot', 'frontend_artifact', 'media_integrity', 'cleanup'])):
         raise ValueError('local restore did not establish the original project, isolation, boot, integrity and cleanup assertions')
+    snapshot = value.get('snapshot_release')
+    if (not isinstance(snapshot, dict) or set(snapshot) != {'digest', 'source', 'provider'}
+            or not isinstance(snapshot['digest'], str) or not DIGEST.fullmatch(snapshot['digest'])):
+        raise ValueError('owner restore report lacks its exact installed release identity')
+    source, providers = snapshot['source'], snapshot['provider']
+    if (not isinstance(source, dict) or set(source) != {'repository', 'repository_id', 'revision'}
+            or not isinstance(source['repository'], str) or not re.fullmatch('[A-Za-z0-9-]+/[A-Za-z0-9_.-]+', source['repository'])
+            or not isinstance(source['repository_id'], str) or not NUMBER.fullmatch(source['repository_id'])
+            or not isinstance(source['revision'], str) or not COMMIT.fullmatch(source['revision'])
+            or value.get('revision') != source['revision'] or not isinstance(providers, dict)
+            or set(providers) != {'cookbook_revision', 'tools_revision', 'core_revision'}
+            or any(not isinstance(item, str) or not COMMIT.fullmatch(item) for item in providers.values())):
+        raise ValueError('owner restore report lacks authenticated snapshot source and provider facts')
+    for key in ['images', 'static_artifacts']:
+        records = value.get(key)
+        if (not isinstance(records, dict) or not 1 <= len(records) <= 32
+                or any(not isinstance(item, str) or not DIGEST.fullmatch(item) for item in records.values())):
+            raise ValueError('owner restore report lacks its exact database, API and frontend artifact identities')
+    if (type(value.get('files_restored')) is not int or value['files_restored'] < 0
+            or any(not isinstance(value.get(key), str) or not re.fullmatch('[a-f0-9]{64}', value[key])
+                   for key in ['archive_sha256', 'ciphertext_sha256'])):
+        raise ValueError('owner restore report lacks authenticated data and media integrity')
     return value
 
 
-def restore_pair(root, project, config, tools, directory, key, *, pull=False):
+def restore_pair(root, project, config, tools, directory, key, *, cookbook, pull=False, packet=None):
     """Package only ciphertext, then retain a fully checked local restore report."""
     if (not key.is_absolute() or key.is_symlink() or not key.is_file()
             or key.stat().st_mode & 0o077 or not os.access(key, os.R_OK)):
@@ -191,9 +194,10 @@ def restore_pair(root, project, config, tools, directory, key, *, pull=False):
         raise ValueError('encrypted restore inputs must be a real local directory')
     if not config.is_file() or config.is_symlink():
         raise ValueError('restore profile configuration must be a regular source file')
-    native = helper(tools, 'restore-drill')
-    if native.load_config(config)['project'] != project:
-        raise ValueError('restore configuration differs from the selected historical project')
+    driver = Path(cookbook) / 'cookbook/application_restore.py'
+    if (driver.is_symlink() or any(parent.is_symlink() for parent in driver.parents)
+            or not driver.is_file() or driver.stat().st_size > 1 << 20):
+        raise ValueError('owner restoration requires the explicitly selected authenticated Cookbook verifier')
     reports = root / '.artifacts/restore'
     if any(path.is_symlink() for path in [reports, *reports.parents]):
         raise ValueError('restore reports must not traverse links')
@@ -220,12 +224,15 @@ def restore_pair(root, project, config, tools, directory, key, *, pull=False):
         finally:
             os.close(parent)
         output = temporary / 'report.json'
-        command = [sys.executable, str(tools / 'helpers/restore-drill.py'), '--project', project,
+        command = [sys.executable, '-I', '-B', str(driver), '--project', project,
                    '--config', str(config), '--export', str(archive), '--key', str(key)]
+        if packet is not None:
+            command += ['--packet', str(packet)]
         if pull:
             command.append('--pull')
         environment = dict(os.environ)
         environment.pop('BACKUP_RECOVERY_KEY_FILE', None)
+        environment.update(COOKBOOK_ROOT=str(cookbook), TOOLS_ROOT=str(tools))
         with output.open('xb') as report:
             os.fchmod(report.fileno(), 0o600)
             child = subprocess.Popen(command, stdout=report, env=environment)
@@ -270,7 +277,8 @@ def main():
     parser.add_argument('--restore-config', type=Path)
     parser.add_argument('--profile', help='explicit native local restore profile')
     parser.add_argument('--pull', action='store_true', help='pull the authenticated exact restore images')
-    args, extra = parser.parse_known_args()
+    parser.add_argument('--packet', type=Path, help='accepted exact installed release packet for explicit owner restoration')
+    args = parser.parse_args()
     try:
         config = declaration(args.config, args.project)
         context = local_recipe_context(Path.cwd(), cookbook_root=args.cookbook_root,
@@ -284,32 +292,31 @@ def main():
                 args.tools_root = Path(os.environ['TOOLS_ROOT'])
             else:
                 raise ValueError('a pinned cookbook root is required')
-        if args.operation != 'restore' and (args.profile or args.pull):
+        if args.operation != 'restore' and (args.profile or args.pull or args.restore_config or args.packet):
             raise ValueError('restore options belong only to explicit local restoration')
         if args.operation == 'export':
-            if extra:
-                raise ValueError('export accepts no additional arguments')
             export(args.project, config, args.tools_root, args.directory or Path('.artifacts/backup'), os.environ)
         elif args.operation == 'upload':
-            if extra:
-                raise ValueError('upload accepts no additional arguments')
             upload(args.project, args.tools_root, args.directory or Path('.artifacts/backup'))
         else:
             key = Path(os.environ.get('BACKUP_RECOVERY_KEY_FILE', ''))
             if not key.is_absolute():
                 raise ValueError('set an absolute local BACKUP_RECOVERY_KEY_FILE')
+            if context is None:
+                raise ValueError('owner restoration requires its explicitly selected accepted Cookbook and helper providers')
             if args.profile:
-                if extra or args.restore_config is not None:
+                if args.restore_config is not None:
                     raise ValueError('a named native profile selects its configuration and encrypted pair')
                 root = Path.cwd()
                 selected = restore_profile(root, context.cookbook if context else args.tools_root,
                     args.profile, args.project, context=context)
                 restore_pair(root, args.project, selected, args.tools_root,
-                             args.directory or root / '.artifacts/restore/download', key, pull=args.pull)
+                             args.directory or root / '.artifacts/restore/download', key, cookbook=context.cookbook,
+                             pull=args.pull, packet=args.packet)
             else:
-                subprocess.run([sys.executable, str(args.tools_root / 'helpers/restore-drill.py'),
-                                '--project', args.project, '--config', str(args.restore_config or Path('deploy/restore.toml')),
-                                '--key', str(key), *(['--pull'] if args.pull else []), *extra], check=True)
+                restore_pair(Path.cwd(), args.project, args.restore_config or Path('deploy/restore.toml'), args.tools_root,
+                             args.directory or Path.cwd() / '.artifacts/restore/download', key, cookbook=context.cookbook,
+                             pull=args.pull, packet=args.packet)
     except (OSError, RuntimeError, AttributeError, ValueError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n')
 

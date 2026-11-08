@@ -4,12 +4,7 @@ name: Report application delivery
     inputs:
       cookbook-ref:
         type: string
-        required: false
-        default: ''
-      tools-ref:
-        type: string
-        required: false
-        default: ''
+        required: true
       komizo-ref:
         type: string
         required: true
@@ -65,108 +60,96 @@ jobs:
       contents: read
       issues: write
     steps:
-      - name: Require one exact recipe source contract
-        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).setup }}
-        shell: bash
-        env:
-          COOKBOOK_REF: ${{ inputs.cookbook-ref }}
-          TOOLS_REF: ${{ inputs.tools-ref }}
-        run: |
-          set -euo pipefail
-          if [[ -n "$COOKBOOK_REF" ]]; then
-            [[ -z "$TOOLS_REF" && "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
-          else
-            [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
-          fi
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Bootstrap Python for protected SDK sources
-        if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
-        id: sdk-private-python
-        timeout-minutes: 5
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        env:
-          MISE_AUTO_INSTALL: 'false'
-          MISE_EXEC_AUTO_INSTALL: 'false'
-          MISE_TASK_RUN_AUTO_INSTALL: 'false'
-        with:
-          python-version: '3.13.11'
-          check-latest: false
-      - name: Prepare the private artifact parent with actual pinned Python
-        if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
-        timeout-minutes: 1
-        shell: bash
-        env:
-          PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
-          MISE_AUTO_INSTALL: 'false'
-          MISE_EXEC_AUTO_INSTALL: 'false'
-          MISE_TASK_RUN_AUTO_INSTALL: 'false'
-        run: |
-          set -euo pipefail
-          "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
-          printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
-          printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
-        with:
-          repository: ${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}
-          ref: ${{ inputs.cookbook-ref || inputs.tools-ref }}
-          path: ${{ inputs.cookbook-ref && '.artifacts/recipe-sdks/_cookbook' || '_delivery_cookbook' }}
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        if: ${{ inputs.cookbook-ref != '' }}
-        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
-        with:
-          repository: nicodes/komizo-actions
-          ref: ${{ inputs.komizo-ref }}
-          path: _delivery_actions
-          persist-credentials: false
-      - name: Prepare the pinned report interpreter
-        if: ${{ inputs.cookbook-ref == '' }}
-        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).setup }}
-        uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
-        with:
-          tools: python
-      - name: Prepare accepted recipe SDKs
-        if: ${{ inputs.cookbook-ref != '' }}
-        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).setup }}
-        uses: ./_delivery_actions/recipe-setup
-        with:
-          cookbook-ref: ${{ inputs.cookbook-ref }}
-          tools: python
-      - name: Report failure
-        timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).report }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          COOKBOOK_REF: ${{ inputs.cookbook-ref }}
-        run: |
-          tools=_delivery_cookbook
-          if [[ -n "$COOKBOOK_REF" ]]; then tools=.artifacts/recipe-sdks/_tools; fi
-          python3 "$tools/helpers/report-failure.py"
+    - name: Require one exact recipe source contract
+      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).setup }}
+      shell: bash
+      env:
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      run: |
+        set -euo pipefail
+        [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Bootstrap Python for protected SDK sources
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      id: sdk-private-python
+      timeout-minutes: 5
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      with:
+        python-version: 3.13.11
+        check-latest: false
+    - name: Prepare the private artifact parent with actual pinned Python
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      timeout-minutes: 1
+      shell: bash
+      env:
+        PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        set -euo pipefail
+        "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+        printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+        printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
+      with:
+        repository: nicodes/cookbook
+        ref: ${{ inputs.cookbook-ref }}
+        path: .artifacts/recipe-sdks/_cookbook
+        persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _delivery_actions
+        persist-credentials: false
+    - name: Prepare accepted recipe SDKs
+      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).setup }}
+      uses: ./_delivery_actions/recipe-setup
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+        tools: python
+    - name: Report failure
+      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).report }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      run: |
+        tools=_delivery_cookbook
+        if [[ -n "$COOKBOOK_REF" ]]; then tools=.artifacts/recipe-sdks/_tools; fi
+        python3 -I -B "$tools/helpers/report-failure.py"
   notify:
-    if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure')
+    if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
+      || inputs.deployment == 'failure')
     runs-on: ${{ inputs.notify-runner }}
     timeout-minutes: ${{ inputs.notify-timeout }}
     environment: ${{ inputs.environment }}
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).checkout }}
-        with:
-          repository: nicodes/komizo-actions
-          ref: ${{ inputs.komizo-ref }}
-          path: _komizo
-          persist-credentials: false
-      - uses: ./_komizo/notify-discord
-        continue-on-error: true
-        timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).notify }}
-        with:
-          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          deployment-url: ${{ inputs.deployment-url }}
-          environment: ${{ inputs.environment }}
-          status: ${{ inputs.deployment == 'success' && 'success' || 'failure' }}
-          revision: ${{ inputs.revision || github.sha }}
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).checkout }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _komizo
+        persist-credentials: false
+    - uses: ./_komizo/notify-discord
+      continue-on-error: true
+      timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).notify }}
+      with:
+        webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        deployment-url: ${{ inputs.deployment-url }}
+        environment: ${{ inputs.environment }}
+        status: ${{ inputs.deployment == 'success' && 'success' || 'failure' }}
+        revision: ${{ inputs.revision || github.sha }}

@@ -34,7 +34,7 @@ class DeployedDependencies(unittest.TestCase):
             user='10001:10001', forbidden=['DEVELOPMENT_AUTHORITY'])
         self.data = dict(version=1, deployment='deploy/scan.toml', rust={'api': self.contract},
                         go={'api': dict(forbidden=['DEVELOPMENT_AUTHORITY']), 'gate': dict(forbidden=[])})
-        self.deployment = dict(repository='owner/demo', image_base='ghcr.io/owner/demo',
+        self.deployment = dict(repository='owner/demo', application='demo',workflow='.github/workflows/cd.yml',
                                components=['api', 'gate'], environment='production')
         write_source(self.root / 'deploy/scan.toml',self.deployment)
         self.path = self.root / 'deploy/deployed-scan.toml'
@@ -52,18 +52,18 @@ class DeployedDependencies(unittest.TestCase):
     def write(self):
         write_source(self.path,self.data)
 
-    def capture(self, arguments, environment, timeout=60):
+    def capture(self, arguments, environment, timeout=60, **kwargs):
         self.calls.append(arguments)
-        if arguments[:3] == ['docker', 'image', 'inspect']:
+        if arguments[:3] == ['podman', 'image', 'inspect']:
             return json.dumps([self.info])
-        if arguments[:2] == ['docker', 'create']:
+        if arguments[:2] == ['podman', 'create']:
             self.assertEqual(arguments[-1], self.identity)
             return self.container
         raise AssertionError('unexpected inspection command: ' + repr(arguments))
 
     def run_command(self, arguments, environment, timeout=60, **kwargs):
         self.calls.append(arguments)
-        if arguments[:2] == ['docker', 'cp']:
+        if arguments[:2] == ['podman', 'cp']:
             destination = Path(arguments[-1])
             if arguments[-2].endswith('/Cargo.lock'):
                 destination.write_bytes(self.runtime_lock)
@@ -73,7 +73,7 @@ class DeployedDependencies(unittest.TestCase):
                 destination.write_bytes(self.native + self.marker)
         elif arguments[:2] == ['trivy', 'fs']:
             Path(arguments[arguments.index('--output') + 1]).write_text(json.dumps(self.findings))
-        elif arguments[:2] != ['docker', 'rm']:
+        elif arguments[:2] != ['podman', 'rm']:
             raise AssertionError('unexpected scanner effect: ' + repr(arguments))
 
     def inspect(self):
@@ -108,7 +108,7 @@ class DeployedDependencies(unittest.TestCase):
         inventory = next(args for args in self.calls if args[:2] == ['trivy', 'fs'])
         self.assertIn('--include-dev-deps', inventory)
         self.assertIn('--list-all-pkgs', inventory)
-        self.assertEqual(self.calls[-1], ['docker', 'rm', '-v', self.container])
+        self.assertEqual(self.calls[-1], ['podman', 'rm', '-v', self.container])
         self.assertFalse(any('build' in args for args in self.calls))
 
     def test_native_binary_lock_and_inventory_refusals_always_remove_owned_container(self):
@@ -126,7 +126,7 @@ class DeployedDependencies(unittest.TestCase):
             elif name == 'link': self.link_binary = True
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.inspect()
-            self.assertEqual(self.calls[-1], ['docker', 'rm', '-v', self.container])
+            self.assertEqual(self.calls[-1], ['podman', 'rm', '-v', self.container])
 
     def test_uid_and_revision_mismatch_refuse_before_container_creation(self):
         original = copy.deepcopy(self.info)
@@ -136,7 +136,7 @@ class DeployedDependencies(unittest.TestCase):
             self.calls = []
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.inspect()
-            self.assertFalse(any(args[:2] == ['docker', 'create'] for args in self.calls))
+            self.assertFalse(any(args[:2] == ['podman', 'create'] for args in self.calls))
 
     def test_policy_paths_component_capabilities_and_links_fail_closed(self):
         self.data['go']['gate']['expected_go'] = '1.27.3'
@@ -168,8 +168,9 @@ class DeployedDependencies(unittest.TestCase):
     def pipeline(self, legacy=False, fail=False):
         self.write()
         deployed = SimpleNamespace(load_config=lambda path: self.deployment,
-            deployed_revisions=lambda repository, environment: [self.revision],
-            product_images=lambda config, revision: ['ghcr.io/owner/demo-api:' + revision, 'ghcr.io/owner/demo-gate:' + revision])
+            deployed_releases=lambda repository, environment: [{'revision':self.revision}],
+            release_for_deployment=lambda config,deployment,environment: {'source':{'revision':self.revision}},
+            product_images=lambda config, revision: ['ghcr.io/owner/demo-api@'+self.identity, 'ghcr.io/owner/demo-gate@'+self.identity])
         go = SimpleNamespace(scan=Mock(return_value=dict(inventory='go')))
         native = Mock(return_value=dict(inventory='cargo'))
         effects = []
@@ -177,13 +178,14 @@ class DeployedDependencies(unittest.TestCase):
             effects.append(arguments)
             if fail and arguments[:2] == ['trivy', 'image']:
                 raise subprocess.CalledProcessError(1, arguments)
-        def capture(arguments, environment, timeout=60):
+        def capture(arguments, environment, timeout=60, **kwargs):
             return json.dumps([dict(Id=self.identity)])
         with patch.object(scanner, 'helper', side_effect=lambda tools, name: deployed if name == 'scan-deployed' else go), \
                 patch.object(scanner, 'source_tree', return_value=self.tree), \
                 patch.object(scanner, 'source_lock', return_value=None if legacy else self.lock), \
                 patch.object(scanner, 'rust_image', native), \
-                patch.object(scanner, 'run', side_effect=execute), patch.object(scanner, 'capture', side_effect=capture):
+                patch.object(scanner, 'run', side_effect=execute), patch.object(scanner, 'capture', side_effect=capture), \
+                patch.object(scanner,'scan_os',side_effect=lambda image,identity,report,environment,*_:execute(['trivy','image','--input','/verified/oci/layout',identity],environment)):
             result = scanner.scan(self.root, self.path, self.root / 'tools', environment={'GITHUB_REPOSITORY': 'owner/demo'})
         return result, effects, native, go
 

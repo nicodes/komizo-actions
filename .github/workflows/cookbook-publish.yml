@@ -4,10 +4,7 @@ name: Publish accepted application images
     inputs:
       cookbook-ref:
         type: string
-        default: ''
-      tools-ref:
-        type: string
-        default: ''
+        required: true
       komizo-ref:
         type: string
         required: true
@@ -48,7 +45,6 @@ jobs:
     - uses: ./_publication_actions/application-publication
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
-        tools-ref: ${{ inputs.tools-ref }}
         komizo-ref: ${{ inputs.komizo-ref }}
         source: ${{ inputs.source }}
         project: ${{ inputs.project }}

@@ -1,0 +1,37 @@
+name: Admit recipe sources
+description: Admit immutable Cookbook and generic helper sources with a fixed controller interpreter and no caller setup execution
+inputs:
+  cookbook-ref:
+    description: Exact accepted standalone Cookbook commit
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Prepare the fixed protocol interpreter
+      id: python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      with:
+        python-version: 3.13.11
+        check-latest: false
+    - name: Bind the protocol interpreter
+      shell: bash
+      env:
+        PROTOCOL_PYTHON: ${{ steps.python.outputs.python-path }}
+      run: printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PROTOCOL_PYTHON" >> "$GITHUB_ENV"
+    - name: Resolve the accepted provider-owned helper revision
+      id: dependency
+      shell: bash
+      env:
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      run: python3 -I -B "$GITHUB_ACTION_PATH/../scripts/recipe_context.py" dependency --cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --github-output
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: nicodes/tools
+        ref: ${{ steps.dependency.outputs.tools-ref }}
+        path: .artifacts/recipe-sdks/_tools
+        persist-credentials: false
+    - name: Admit and bind exact source roots without caller task activation
+      shell: bash
+      env:
+        COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      run: python3 -I -B "$GITHUB_ACTION_PATH/../scripts/recipe_context.py" sources --cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools

@@ -42,6 +42,14 @@ jobs:
         if-no-files-found: error
         retention-days: 7
         include-hidden-files: true
+    - name: Prepare the frozen source-reader compatibility fixture
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: 1
+      with:
+        repository: nicodes/tools
+        ref: d475b54c402754a5a37a44fbd65328551995025c
+        path: .artifacts/recipe-legacy-test-sdk
+        persist-credentials: false
     - name: Prepare the accepted recipe SDK for canonical reader controls
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: 1
@@ -97,6 +105,7 @@ jobs:
       attestations: read
     env:
       MISE_GITHUB_TOKEN: ${{ github.token }}
+      RECIPE_LEGACY_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-legacy-test-sdk
       RECIPE_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-test-sdk
       RECIPE_CONTRACT_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-contract-test-sdk
       RECIPE_CONTRACT_TEST_SDK_REF: 6391cdae4f0ead355a43de161f0dbadd22168f62

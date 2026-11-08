@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Restore sealed or authenticated plaintext PostgreSQL dumps into owned scratch containers.
 
-No live containers/volumes, exposed ports, external Docker endpoints or recovery
+No live containers/volumes, exposed ports, remote container endpoints or recovery
 keys in containers. The caller declares the reviewed official engine digest.
 """
 import argparse
@@ -18,8 +18,7 @@ import tempfile
 import time
 import tomllib
 
-PIN = re.compile(r'(?:docker\.io/library/)?postgres@sha256:[a-f0-9]{64}')
-DOCKER_ENV_EXCLUDE = {'DOCKER_HOST','DOCKER_CONTEXT','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH'}
+PIN = re.compile(r'docker\.io/library/postgres@sha256:[a-f0-9]{64}')
 
 
 def declaration(path, project):
@@ -43,8 +42,6 @@ def validate(value, project):
     return value
 
 
-def docker_environment():
-    return {key:value for key,value in os.environ.items() if key not in DOCKER_ENV_EXCLUDE}
 
 
 class Drill:
@@ -66,16 +63,24 @@ class Drill:
             raise ValueError('row requirement cannot weaken the declared recovery check')
         return value
 
-    def docker(self, *args, timeout=120):
-        result = subprocess.run(['docker', '--host', 'unix:///var/run/docker.sock', *args],
-                                capture_output=True, text=True, timeout=timeout, env=docker_environment())
+    def native(self):
+        path=self.tools_root/'helpers/container_runtime.py'
+        spec=importlib.util.spec_from_file_location('_restore_native_runtime',path)
+        runtime=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runtime)
+        return runtime
+
+    def podman(self, *args, timeout=120):
+        try:
+            result=self.native().run(list(args),capture_output=True,text=True,timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f'scratch PostgreSQL {args[0]} timed out') from None
         if result.returncode:
-            # Never disclose generated passwords, SQL output or dump contents.
             raise RuntimeError(f'scratch PostgreSQL {args[0]} failed')
         return result.stdout.strip()
 
     def sql(self, container, statement, timeout=60):
-        return self.docker('exec', container, 'psql', '-X', '-qAt', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1',
+        return self.podman('exec', container, 'psql', '-X', '-qAt', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1',
                       '-c', statement, timeout=timeout)
 
     def pull_engine(self):
@@ -83,10 +88,10 @@ class Drill:
         # Finish the pull before creating scratch resources or starting readiness.
         digest = self.image.split('@', 1)[1]
         for registry in ['mirror.gcr.io/library/postgres',
-                         'public.ecr.aws/docker/library/postgres', 'postgres']:
+                         'public.ecr.aws/docker/library/postgres', 'docker.io/library/postgres']:
             candidate = registry + '@' + digest
             try:
-                self.docker('pull', candidate, timeout=300)
+                self.podman('pull', candidate, timeout=300)
                 return candidate
             except (RuntimeError, subprocess.TimeoutExpired):
                 pass
@@ -97,29 +102,31 @@ class Drill:
         """Run one isolated throwaway PostgreSQL and yield its container name."""
         engine = self.pull_engine()
         name = self.project+'-restore-pg-' + secrets.token_hex(8)
-        network = self.project+'-restore-net-' + secrets.token_hex(8)
         started = False
         try:
-            self.docker('network', 'create', '--internal', network)
-            self.docker('run', '-d', '--name', name, '--label', 'nicodes.restore=' + name,
-                   '--network', network, '--cap-drop', 'ALL',
+            with tempfile.TemporaryDirectory(prefix='restore-auth-') as authority:
+                authfile=Path(authority)/'postgres.env'
+                authfile.write_text('POSTGRES_PASSWORD='+secrets.token_hex(32)+'\n')
+                authfile.chmod(0o600)
+                self.podman('run', '--pull=never', '-d', '--name', name, '--label', 'nicodes.restore=' + name,
+                   '--network=none', '--cap-drop', 'ALL',
                    '--cap-add', 'CHOWN', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'FOWNER',
                    '--security-opt', 'no-new-privileges:true', '--memory', '512m', '--pids-limit', '128',
                    '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
                    # postgres 18+ expects the mount at /var/lib/postgresql so data lands
                    # in a major-version subdirectory; /var/lib/postgresql/data confuses it.
                    '--tmpfs', '/var/lib/postgresql:rw,nosuid,size=2g',
-                   '-e', 'POSTGRES_PASSWORD=' + secrets.token_hex(32),
+                   '--env-file', str(authfile),
                    engine, timeout=600)
             started = True
             deadline = time.monotonic() + 180
             while True:
                 if time.monotonic() >= deadline:
                     raise TimeoutError('scratch PostgreSQL did not become ready')
-                if not json.loads(self.docker('inspect', name))[0]['State']['Running']:
+                if not json.loads(self.podman('inspect', name))[0]['State']['Running']:
                     raise RuntimeError('scratch PostgreSQL exited before becoming ready')
                 try:
-                    self.docker('exec', name, 'pg_isready', '-U', 'postgres', '-d', 'postgres', timeout=30)
+                    self.podman('exec', name, 'pg_isready', '-U', 'postgres', '-d', 'postgres', timeout=30)
                     # The image's initialization server accepts socket queries but
                     # is about to exit. Wait for the final server, whose listener
                     # is enabled, before issuing the first mutation.
@@ -134,24 +141,20 @@ class Drill:
             yield name
         finally:
             if started:
-                owned = json.loads(self.docker('inspect', name))
+                owned = json.loads(self.podman('inspect', name))
                 if (len(owned) != 1
                         or owned[0].get('Config', {}).get('Labels', {}).get('nicodes.restore') != name
                         or not re.fullmatch(r'[a-f0-9]{64}', owned[0].get('Id', ''))):
                     raise RuntimeError('cannot establish ownership for scratch PostgreSQL cleanup')
-                self.docker('rm', '-f', '-v', owned[0]['Id'], timeout=180)
-            try:
-                self.docker('network', 'rm', network, timeout=120)
-            except RuntimeError:
-                pass
+                self.podman('rm', '-f', '-v', owned[0]['Id'], timeout=180)
 
     def restore_dump(self, container, dump_path):
         """Stream one custom-format dump into the scratch database via binary stdin."""
         with dump_path.open('rb') as stream:
-            result = subprocess.run(['docker', '--host', 'unix:///var/run/docker.sock', 'exec', '-i', container,
+            result = self.native().run(['exec', '-i', container,
                                      'pg_restore', '--exit-on-error', '--no-owner', '--no-acl',
                                      '--no-tablespaces', '--username=postgres', '--dbname=postgres'],
-                                    stdin=stream, capture_output=True, timeout=1800, env=docker_environment())
+                                    stdin=stream, capture_output=True, timeout=1800)
         if result.returncode:
             raise RuntimeError('scratch PostgreSQL pg_restore failed')
 
@@ -198,7 +201,7 @@ class Drill:
             target = Path(temporary) / 'payload'
             target.mkdir(mode=0o700)
             evidence = snapshot.unseal(pair, key, target)
-            if evidence['image_reference'].removeprefix('docker.io/library/') != self.image.removeprefix('docker.io/library/'):
+            if evidence['image_reference'] != self.image:
                 raise ValueError('recovered engine reference is not the digest-pinned PostgreSQL image')
             with self.scratch_postgres() as container:
                 self.restore_dump(container, target / 'database.dump')
