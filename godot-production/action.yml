@@ -133,6 +133,7 @@ runs:
       RELEASE_ID: ${{ inputs.release-id }}
       COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       TOOLS_REF: ${{ inputs.tools-ref }}
+      GH_TOKEN: ${{ github.token }}
       EXPECTED_SOURCE: ${{ inputs.expected-source }}
       DECLARED_RUNNER: ${{ inputs.runner }}
       DECLARED_TIMEOUT: ${{ inputs.timeout-minutes }}
@@ -152,6 +153,7 @@ runs:
       RELEASE_ID: ${{ inputs.release-id }}
       COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       TOOLS_REF: ${{ inputs.tools-ref }}
+      GH_TOKEN: ${{ github.token }}
       EXPECTED_SOURCE: ${{ inputs.expected-source }}
       DECLARED_RUNNER: ${{ inputs.runner }}
       DECLARED_TIMEOUT: ${{ inputs.timeout-minutes }}
