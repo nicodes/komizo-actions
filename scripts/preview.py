@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Trusted Preview controller; native application code runs only in readonly validation jobs."""
 import argparse
-import base64
+from datetime import datetime, timezone, timedelta
+from functools import wraps
+import signal
+import math
+import time
 from contextlib import contextmanager
 import hashlib
 import importlib.util
@@ -20,6 +24,7 @@ sys.dont_write_bytecode=True
 sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
 import recipe_context
+import publication as native_publication
 SHA=re.compile('[a-f0-9]{40}')
 REPOSITORY=re.compile('[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}')
 
@@ -247,6 +252,47 @@ def source_policy(plan,source_root,tools):
     return config,definition
 
 
+def producer_deadline(plan, jobs, now=None):
+    now = now or datetime.now(timezone.utc)
+    total = plan['policy'].get('producer_timeout_minutes')
+    if total is None: return None
+    if type(total) is not int or not 1 <= total <= 180 or jobs.get('total_count') != len(jobs.get('jobs', [])):
+        raise ValueError('preview requires its complete original aggregate producer budget')
+    hosts = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ Make full')]
+    if (len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != plan['controller']
+            or plan['policy']['validation_runner'] not in hosts[0].get('labels', [])):
+        raise ValueError('preview aggregate budget requires the actual successful source job')
+    try: started = datetime.fromisoformat(hosts[0]['started_at'].replace('Z', '+00:00'))
+    except (KeyError, TypeError, ValueError): raise ValueError('preview source job has invalid timing') from None
+    if started.tzinfo is None or started > now + timedelta(seconds=5):
+        raise ValueError('preview source job has invalid timing')
+    deadline = started + timedelta(minutes=total)
+    seconds = math.floor((deadline - now).total_seconds())
+    if seconds <= 0: raise ValueError('original aggregate preview producer budget expired')
+    return seconds
+
+
+def producer_budget(function):
+    @wraps(function)
+    def bounded(plan, root, source_root, tools, tools_ref, incoming, environment, lookup=api, *arguments, **options):
+        if 'producer_timeout_minutes' not in plan['policy']:
+            return function(plan, root, source_root, tools, tools_ref, incoming, environment, lookup, *arguments, **options)
+        jobs = lookup(f"repos/{plan['repository']}/actions/runs/{environment['GITHUB_RUN_ID']}/attempts/{environment['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")
+        seconds = producer_deadline(plan, jobs)
+        if not hasattr(signal, 'SIGALRM'): raise ValueError('aggregate preview publication requires its Linux deadline supervisor')
+        def expired(*_): raise ValueError('original aggregate preview producer budget expired')
+        prior_handler = signal.signal(signal.SIGALRM, expired)
+        prior_timer = signal.getitimer(signal.ITIMER_REAL); started = time.monotonic()
+        signal.setitimer(signal.ITIMER_REAL, min(seconds, prior_timer[0]) if prior_timer[0] else seconds)
+        try:
+            return function(plan, root, source_root, tools, tools_ref, incoming, environment, lookup, *arguments, **options)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0); signal.signal(signal.SIGALRM, prior_handler)
+            if prior_timer[0]: signal.setitimer(signal.ITIMER_REAL, max(.001, prior_timer[0] - (time.monotonic() - started)), prior_timer[1])
+    return bounded
+
+
+@producer_budget
 def publication(plan,root,source_root,tools,tools_ref,incoming,environment,lookup=api,execute=subprocess.run,*,context=None):
     if plan['action']!='up' or git(source_root,'rev-parse','HEAD')!=plan['head']:
         raise ValueError('Preview publication requires the exact requested head checkout')
@@ -270,140 +316,113 @@ def publication(plan,root,source_root,tools,tools_ref,incoming,environment,looku
         import godot_ci
         godot_ci.validate_acceptance(proof.get('godot_matrix'),config,jobs,plan['head'],tools_ref,environment,
                                     proof['configuration_sha256'],root=source_root)
-    destination=source_root/'.artifacts/release'
-    authority.stage(incoming,proof,destination,plan['policy']['release_metadata'])
-    # Only the checked-out pinned helper runs here. No PR program, Makefile,
-    # package lifecycle, test or build step executes with package-write access.
-    values=dict(environment,COOKBOOK_PREVIEW_NUMBER=str(plan['pr']),REQUEST_HEAD=plan['head'],REQUEST_BASE=plan['base'])
-    require_current(plan,current_pr(repository,plan['pr'],lookup))
-    helpers=context.tools if context is not None else tools
-    execute([sys.executable,str(helpers.resolve()/'helpers/release.py'),'publish','--project',plan['policy']['project'],
-             '--revision',plan['head'],'--components',*plan['policy']['shipping_components'],
-             '--definition',plan['policy']['artifact_definition'],'--test-job','validate',
-             '--test-evidence-directory',str((incoming/'.artifacts/verification').resolve())],
-            cwd=source_root,env=values,check=True,timeout=1800)
-    published=authority.read(destination/'publication.json')
-    if (published.get('revision')!=plan['head'] or published.get('tested_commit')!=plan['head']
-            or published.get('archive_sha256')!=proof['artifacts'].get('.artifacts/release/images.tar.gz')):
-        raise ValueError('Preview publisher did not retain exact validated source and archive evidence')
-    evidence=root/'.artifacts/preview-publication.json'
-    evidence.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
-    evidence.write_text(json.dumps({'version':1,'plan':plan,'publication':published,
-        **({**context.identities(),'entrypoint_contract':'mise-v1'} if context is not None else {})},sort_keys=True)+'\n')
+    receipts = native_publication.admit_receipts(incoming, proof, plan['head'], plan['policy']['test_groups'])
+    packet = native_publication.stage(incoming, proof, source_root / '.artifacts/release', plan['policy']['project'])
+    if packet.descriptor['source'] != {'repository': plan['repository'], 'repository_id': environment['GITHUB_REPOSITORY_ID'], 'revision': plan['head']}:
+        raise ValueError('preview packet belongs to another source')
+    require_current(plan, current_pr(repository, plan['pr'], lookup))
+    helpers = context.tools if context is not None else tools
+    values = dict(environment, KOMIZO_REGISTRY_USER=repository.split('/')[0], KOMIZO_REGISTRY_TOKEN=environment.get('GH_TOKEN', ''))
+    published = native_publication.publish(packet, helpers, values)
+    require_current(plan, current_pr(repository, plan['pr'], lookup))
+    destination = root / '.artifacts/komizo-release'
+    evidence = native_publication.write_evidence(packet, proof, published, environment, destination, receipts=receipts)
+    (root / '.artifacts/preview-publication.json').write_text(json.dumps({'version': 1, 'plan': plan,
+        'publication': evidence, 'release': packet.descriptor,
+        **({**context.identities(), 'entrypoint_contract': 'mise-v1'} if context is not None else {})}, sort_keys=True) + '\n')
 
 
-def targets(plan,app_url,api_url):
-    values={}
-    for name,url in [('app',app_url),('api',api_url)]:
-        if name=='api' and not plan['policy']['backend']:
-            if url:raise ValueError('static Preview must not acquire an API route')
+def targets(plan, app_url, api_url):
+    values = {}
+    for name, url in [('app', app_url), ('api', api_url)]:
+        if name == 'api' and not plan['policy']['backend']:
+            if url: raise ValueError('static preview must not acquire an API route')
             continue
-        value=urlsplit(url)
-        if (value.scheme!='https' or not value.hostname or '.' not in value.hostname or value.username or value.password or value.port
-                or value.query or value.fragment or len(url)>2048):
-            raise ValueError('Preview targets must be host-verified public HTTPS routes')
-        project,number=plan['policy']['project'],plan['pr']
-        label=value.hostname.split('.')[0]
-        allowed={'pr-'+str(number),project+'-pr'+str(number)}
-        if name=='api':allowed={entry+'-api' for entry in allowed}
-        if plan['policy']['origin_layout']=='subdomain':
-            if value.path not in {'','/'} or label not in allowed:
-                raise ValueError('the Clerk Preview requires a distinct PR subdomain; shared-path routing is refused')
-        else:
-            path_route=value.path=='/'+str(number) and label==project+('-api' if name=='api' else '')
-            if not path_route and (value.path not in {'','/'} or label not in allowed):
-                raise ValueError('resolved Preview route does not belong to this app and PR')
-        values[name]={'url':url.rstrip('/'),'origin':value.scheme+'://'+value.netloc}
+        value = urlsplit(url)
+        if (value.scheme != 'https' or not value.hostname or '.' not in value.hostname or value.username
+                or value.password or value.port or value.query or value.fragment or len(url) > 2048
+                or not re.fullmatch(r'(?:/[A-Za-z0-9_-]+)*', value.path.rstrip('/'))):
+            raise ValueError('preview targets must be bounded protected HTTPS routes')
+        expected = 'pr-' + str(plan['pr'])
+        label = value.hostname.split('.')[0]
+        if name == 'app' and (label != expected or value.path not in {'', '/'}):
+            raise ValueError('preview application origin differs from its isolated instance')
+        if name == 'api' and label not in {expected, expected + '-api'}:
+            raise ValueError('preview API origin differs from its isolated instance')
+        values[name] = {'url': url.rstrip('/'), 'origin': value.scheme + '://' + value.netloc}
     if 'api' in values:
-        app=urlsplit(values['app']['origin']);api=urlsplit(values['api']['origin'])
-        if api.hostname!=app.hostname.split('.')[0]+'-api.'+app.hostname.split('.',1)[1]:
-            raise ValueError('Preview API and app routes name different targets')
+        app = urlsplit(values['app']['url']); api = urlsplit(values['api']['url'])
+        if api.hostname == app.hostname:
+            if not api.path or api.path == '/': raise ValueError('same-origin preview API requires its protected path')
+        elif api.hostname != app.hostname.split('.')[0] + '-api.' + app.hostname.split('.', 1)[1]:
+            raise ValueError('preview API and app routes name different isolated targets')
     return values
 
 
-def publication_evidence(plan,path,environment,lookup=api,*,context=None):
-    authority=module('komizo_application_publication',ROOT/'scripts/application-publication.py')
-    value=authority.read(path)
-    expected={'version','plan','publication'}
+def publication_evidence(plan, path, environment, lookup=api, *, context=None):
+    from release_packet import document, release
+    from oci_registry import canonical, digest
+    from submission import producer_proof
+    value = document(path)
+    expected = {'version', 'plan', 'publication', 'release'}
     if context is not None:
-        expected.update([*context.identities(),'entrypoint_contract'])
-        if not isinstance(value,dict):raise ValueError('invalid Preview publication evidence')
+        expected.update([*context.identities(), 'entrypoint_contract'])
         context.require_proof(value)
-    if not isinstance(value,dict) or set(value)!=expected or value.get('version')!=1 or value.get('plan')!=plan:
-        raise ValueError('Preview host effects require this exact same-run publication plan')
-    published=value['publication']
-    if (published.get('revision')!=plan['head'] or published.get('tested_commit')!=plan['head']
-            or not re.fullmatch('[a-f0-9]{64}',published.get('archive_sha256',''))
-            or published.get('build_provenance',{}).get('source_commit')!=plan['head']
-            or published.get('test_provenance',{}).get('tested_commit')!=plan['head']):
-        raise ValueError('Preview host effects require exact validated source publication')
-    context=published.get('publisher_context',{})
-    for key in ['GITHUB_SERVER_URL','GITHUB_REPOSITORY','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT','GITHUB_SHA','GITHUB_WORKFLOW_REF','GITHUB_WORKFLOW_SHA','GITHUB_EVENT_NAME']:
-        if not environment.get(key) or context.get(key)!=environment[key]:
-            raise ValueError('Preview publication belongs to another workflow execution')
-    repository=plan['repository'];run=environment['GITHUB_RUN_ID'];attempt=environment['GITHUB_RUN_ATTEMPT']
-    if not run.isdecimal() or not attempt.isdecimal():
-        raise ValueError('invalid Preview publication execution identity')
-    jobs=lookup(f'repos/{repository}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100')
-    if jobs.get('total_count')!=len(jobs.get('jobs',[])):
-        raise ValueError('Preview publication requires complete current-attempt job metadata')
-    publishers=[job for job in jobs['jobs'] if job['name'].endswith('/ Publish exact Preview images')]
-    if (context.get('GITHUB_JOB')!='publish' or len(publishers)!=1 or publishers[0].get('conclusion')!='success'
-            or publishers[0].get('head_sha')!=plan['controller']):
-        raise ValueError('the trusted same-source Preview publisher has not succeeded')
+    if not isinstance(value, dict) or set(value) != expected or value.get('version') != 1 or value.get('plan') != plan:
+        raise ValueError('preview effects require this exact same-run publication plan')
+    raw = release(value['release'], plan['policy']['project'])
+    actual = digest(raw)
+    if value['release']['source'] != {'repository': plan['repository'], 'repository_id': environment['GITHUB_REPOSITORY_ID'], 'revision': plan['head']}:
+        raise ValueError('preview publication source differs from its selected head')
+    published = value['publication']
+    if (published.get('kind') != 'komizo.publication' or published.get('release_digest') != actual
+            or published.get('published') != {name: artifact['reference'] for name, artifact in value['release']['artifacts'].items()}):
+        raise ValueError('preview evidence has incomplete exact artifact publication')
+    context_fields = published.get('execution_context', {})
+    if context_fields.get('GITHUB_JOB') != 'publish':
+        raise ValueError('preview evidence belongs to another producer role')
+    for key in ['GITHUB_REPOSITORY', 'GITHUB_REPOSITORY_ID', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+                'GITHUB_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_WORKFLOW_SHA']:
+        if not environment.get(key) or context_fields.get(key) != environment[key]:
+            raise ValueError('preview publication belongs to another workflow execution')
+    repository = plan['repository']; run = environment['GITHUB_RUN_ID']; attempt = environment['GITHUB_RUN_ATTEMPT']
+    jobs = lookup(f'repos/{repository}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100')
+    if jobs.get('total_count') != len(jobs.get('jobs', [])):
+        raise ValueError('preview publication requires complete current-attempt job metadata')
+    publishers = [job for job in jobs['jobs'] if job['name'].endswith('/ Publish exact Preview images')]
+    if len(publishers) != 1 or publishers[0].get('conclusion') != 'success' or publishers[0].get('head_sha') != plan['controller']:
+        raise ValueError('trusted same-source preview publisher has not succeeded')
+    return value
 
 
-def development_clerk_urls(public):
-    """Derive provider endpoints only from an explicit development public key."""
-    if not isinstance(public,str) or not re.fullmatch('pk_test_[A-Za-z0-9_-]{1,2048}',public):
-        raise ValueError('Preview Clerk endpoints require a bounded development public key')
-    encoded=public.removeprefix('pk_test_')
-    try:
-        decoded=base64.b64decode(encoded+'='*((-len(encoded))%4),altchars=b'-_',validate=True).decode('ascii')
-    except (ValueError,UnicodeError):
-        raise ValueError('Preview Clerk public key has an invalid frontend encoding') from None
-    if not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.clerk\.accounts\.dev\$',decoded):
-        raise ValueError('Preview Clerk endpoints must belong to the development provider frontend')
-    issuer='https://'+decoded[:-1]
-    return {'issuer':issuer,'jwks':issuer+'/.well-known/jwks.json'}
-
-
-def stack_environment(plan,urls,environment):
-    policy=plan['policy']
-    if not policy['backend']:
-        if policy['secrets'] or policy['origin_variables']:
-            raise ValueError('static Preview must not receive application credentials')
-        return None
-    values=dict(policy['environment'])
-    mapping={'CLERK_SECRET_KEY':'PREVIEW_CLERK_SECRET_KEY','OPENROUTER_API_KEY':'PREVIEW_OPENROUTER_API_KEY'}
-    for key in policy['secrets']:
-        value=environment.get(mapping[key],'')
-        if not value or len(value)>8192 or any(ord(c)<32 or ord(c)==127 for c in value):
-            raise ValueError('a declared development credential is unavailable or malformed')
-        if key=='CLERK_SECRET_KEY' and not value.startswith('sk_test_'):
-            raise ValueError('Preview must never receive the production Clerk tenant secret')
-        values[key]=value
-    public=environment.get('PREVIEW_CLERK_PUBLISHABLE_KEY','')
-    if not re.fullmatch('pk_test_[A-Za-z0-9_-]+',public):
-        raise ValueError('Preview must use the development Clerk public key')
-    values['CLERK_PUBLISHABLE_KEY']=public
-    if policy.get('clerk_urls'):
-        endpoints=development_clerk_urls(public)
-        for name,kind in policy['clerk_urls'].items():values[name]=endpoints[kind]
-    for key,names in policy['origin_variables'].items():
-        values[key]=','.join(urls[name]['origin'] for name in names)
-    return ''.join(key+'='+value+'\n' for key,value in values.items())
-
-
-def write_environment(plan,urls,environment,execute=subprocess.run):
-    body=stack_environment(plan,urls,environment)
-    if body is None:return
-    for key in plan['policy']['secrets']:
-        value=environment.get({'CLERK_SECRET_KEY':'PREVIEW_CLERK_SECRET_KEY','OPENROUTER_API_KEY':'PREVIEW_OPENROUTER_API_KEY'}[key],'')
-        print('::add-mask::'+value.replace('%','%25'))
-    command=f"doas -n /usr/local/bin/write-preview-stackenv {plan['policy']['project']} '{plan['pr']}'"
-    execute(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=15','deploy-target',command],
-            input=body,text=True,check=True,timeout=60,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+def apply(plan, environment):
+    import submission
+    from release_packet import document
+    application = plan['policy']['project']; instance = 'pr-' + str(plan['pr'])
+    config = environment['KOMIZO_SSH_CONFIG']
+    if plan['action'] == 'up':
+        descriptor = document(Path('.artifacts/komizo-release/release.json'))
+        proof = document(Path('.artifacts/komizo-release/proof.json'))
+        body = submission.request(application, instance, 'deploy', environment, descriptor=descriptor, release_proof=proof,
+                                  ttl_seconds=plan['policy']['ttl_seconds'])
+        result = submission.submit(config, body)
+        if not result['ok']:
+            raise ValueError('preview deployment did not become ready')
+        urls = {}
+        for route in descriptor['workload'].get('routes', []):
+            if 'target' not in route: continue
+            key = 'app' if route['target']['kind'] == 'asset' else 'api'
+            if key not in urls: urls[key] = 'https://' + route['host'] + route.get('path', '/').rstrip('/')
+        output({'preview-url': urls.get('app', ''), 'api-url': urls.get('api', ''),
+                'release-digest': result['release_digest'], 'operation-id': result['operation_id']}, environment)
+    else:
+        discovery = submission.request(application, instance, 'inspect', environment, release_digest='current')
+        installed = submission.submit(config, discovery)['installed']
+        if installed is not None:
+            body = submission.request(application, instance, 'remove', environment, release_digest=installed['release_digest'])
+            result = submission.submit(config, body)
+            if not result['ok']: raise ValueError('preview teardown did not finish')
+        output({'preview-url': '', 'api-url': ''}, environment)
 
 
 def verify_health(plan,urls,opener=urllib.request.urlopen):
@@ -452,7 +471,7 @@ def output(values,environment):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation',choices=['request','plan','publish','evidence','environment','health','report'])
+    parser.add_argument('operation',choices=['request','plan','publish','evidence','routes','apply','health','report'])
     sdk_arguments(parser)
     parser.add_argument('--declaration',default='')
     parser.add_argument('--source-root',type=Path,default=Path('_preview_source'))
@@ -468,18 +487,24 @@ def main():
         if args.operation=='plan':
             policy=plan['policy']
             output({'project':policy['project'],'pr':plan['pr'],'head':plan['head'],'base':plan['base'],
-                'action':plan['action'],'images':' '.join(policy['image_base']+'-'+name+':'+plan['head'] for name in policy['components']),
+                'action':plan['action'],
                 'backend':str(policy['backend']).lower(),'openrouter':str('OPENROUTER_API_KEY' in policy['secrets']).lower()},environment)
         elif args.operation=='publish':
             publication(plan,root,args.source_root,cookbook,revision,args.incoming,environment,context=context)
         elif args.operation=='evidence':
             publication_evidence(plan,root/'.artifacts/preview-publication.json',environment,context=context)
+        elif args.operation == 'routes':
+            import submission
+            body = submission.request(plan['policy']['project'], 'pr-' + str(plan['pr']), 'inspect', environment, release_digest='current', timeout_seconds=60)
+            planned = submission.submit(environment['KOMIZO_SSH_CONFIG'], body, timeout=60)['plan']
+            output({'app-origin': planned['app_origin'], 'api-origin': planned['api_origin']}, environment)
+        elif args.operation == 'apply':
+            apply(plan, environment)
         else:
             if plan['action']=='up':
                 publication_evidence(plan,root/'.artifacts/preview-publication.json',environment,context=context)
             urls=targets(plan,environment.get('PREVIEW_URL',''),environment.get('API_URL','')) if plan['action']=='up' else {}
-            if args.operation=='environment':write_environment(plan,urls,environment)
-            elif args.operation=='health':verify_health(plan,urls)
+            if args.operation=='health':verify_health(plan,urls)
             else:report(plan,urls)
     except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:
         parser.exit(1,str(error)+'\n')

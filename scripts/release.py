@@ -1,28 +1,19 @@
 #!/usr/bin/env python3
-"""Prepare pin-only candidates; validate and publish exact merged source artifacts."""
-
+"""Release only the exact current main source after complete trusted CI acceptance."""
 import argparse
+import gzip
+import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
-import tempfile
-from pathlib import Path
 
-REPO = "nicodes/komizo-actions"
+REPO = 'nicodes/komizo-actions'
 WORKFLOW_ID = 325265928
 APP_ID = 15368
-# The primitives composed by other actions in this repository. Membership is
-# by reference, not by directory: deploy composes four; activation runs from its own checked-out bundle, preview composes
-# connect only (already a member, so preview changes nothing here), and
-# backup-proof and run-task compose no siblings. A composite like
-# preview does NOT belong: nothing references nicodes/komizo-actions/preview,
-# and adding it would break canonical_tree's found == SUBACTIONS check.
-SUBACTIONS = {"connect", "publish-config", "set-secrets", "health-check"}
-SHA = re.compile(r"[0-9a-f]{40}")
-VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
-PREFIX = "Release-Candidate: "
-
+SHA = re.compile(r'[a-f0-9]{40}\Z')
+VERSION = re.compile(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z')
 
 def require(condition, message):
     if not condition:
@@ -60,164 +51,6 @@ def pages(path, key=None):
         if len(batch) < 100:
             return values
     raise RuntimeError("API pagination limit exceeded")
-
-
-def refresh():
-    # Non-force: conflicting local tags and all network failures are fatal.
-    git("fetch", "--tags", "origin", "refs/heads/main")
-
-
-def canonical_tree(source):
-    """Construct the only allowed diff in an isolated index, never the worktree."""
-    paths = git("ls-tree", "-r", "--name-only", source).splitlines()
-    pattern = re.compile(r"nicodes/komizo-actions/([^\s@]+)@([A-Za-z0-9._/-]+)")
-    found = set()
-    with tempfile.TemporaryDirectory() as directory:
-        env = dict(os.environ, GIT_INDEX_FILE=str(Path(directory) / "index"))
-        git("read-tree", source, env=env)
-        for path in paths:
-            if not re.fullmatch(r"[^/]+/action.yml", path):
-                continue
-            original = run("git", "show", f"{source}:{path}").stdout
-
-            def pin(match):
-                sibling = match[1]
-                require(sibling in SUBACTIONS, f"unapproved sibling: {sibling}")
-                require(f"{sibling}/action.yml" in paths, f"missing sibling: {sibling}")
-                found.add(sibling)
-                return f"{REPO}/{sibling}@{source}"
-
-            updated = pattern.sub(pin, original)
-            if updated != original:
-                entry = git("ls-tree", source, "--", path).split()
-                require(entry[0] == "100644", "composed action must be a regular file")
-                blob = git("hash-object", "-w", "--stdin", input=updated)
-                git("update-index", "--cacheinfo", f"100644,{blob},{path}", env=env)
-        require(found == SUBACTIONS, "expected all four composed siblings")
-        return git("write-tree", env=env)
-
-
-def metadata(version, source, tree):
-    return PREFIX + json.dumps(
-        dict(version=version, source=source, tree=tree), sort_keys=True
-    )
-
-
-def prepare(version, source, push=False):
-    require(not git("status", "--porcelain"), "working tree must be clean")
-    refresh()
-    require(
-        git("rev-parse", "FETCH_HEAD") == source, "prepare source must be fetched main"
-    )
-    require(not git("tag", "--list", version), "version tag already exists")
-    tree = canonical_tree(source)
-    require(
-        tree != git("rev-parse", f"{source}^{{tree}}"),
-        "candidate must change composed pins",
-    )
-    message = f"release {version}: pin composed actions\n\n{metadata(version, source, tree)}\n"
-    timestamp = git("show", "-s", "--format=%cI", source)
-    env = dict(
-        os.environ,
-        GIT_AUTHOR_NAME="github-actions[bot]",
-        GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com",
-        GIT_COMMITTER_NAME="github-actions[bot]",
-        GIT_COMMITTER_EMAIL="41898282+github-actions[bot]@users.noreply.github.com",
-        GIT_AUTHOR_DATE=timestamp,
-        GIT_COMMITTER_DATE=timestamp,
-    )
-    commit = git("commit-tree", tree, "-p", source, input=message, env=env)
-    branch = f"release/{version}"
-    local = run("git", "rev-parse", "--verify", f"refs/heads/{branch}", check=False)
-    require(
-        local.returncode != 0 or local.stdout.strip() == commit,
-        "local candidate branch differs",
-    )
-    remote = git("ls-remote", "--heads", "origin", f"refs/heads/{branch}")
-    require(
-        not remote or remote.split()[0] == commit, "remote candidate branch differs"
-    )
-    git(
-        "update-ref",
-        f"refs/heads/{branch}",
-        commit,
-        local.stdout.strip() if local.returncode == 0 else "0" * 40,
-    )
-    if push:
-        # Never main, never force. A concurrent writer is checked after push too.
-        git("push", "origin", f"{commit}:refs/heads/{branch}")
-        require(
-            git("ls-remote", "--heads", "origin", f"refs/heads/{branch}").split()[0]
-            == commit,
-            "candidate branch changed during push",
-        )
-    print(f"Candidate {commit}; source {source}; tree {tree}")
-    print(
-        f"gh pr create --repo {REPO} --base main --head {branch} --title 'release {version}' --body 'Pin composed actions to {source}.'"
-    )
-
-
-def validate(version, number, merged):
-    refresh()
-    pr = api(f"pulls/{number}")
-    require(pr["merged"] is True and pr["state"] == "closed", "PR is not merged")
-    require(
-        pr["base"]["repo"]["full_name"] == REPO and pr["base"]["ref"] == "main",
-        "wrong PR base",
-    )
-    require(
-        pr["head"]["repo"]["full_name"] == REPO
-        and pr["head"]["ref"] == f"release/{version}",
-        "wrong PR head",
-    )
-    require(pr["merge_commit_sha"] == merged, "PR merged SHA differs")
-    head = pr["head"]["sha"]
-    require(SHA.fullmatch(head), "invalid candidate head")
-    git("fetch", "origin", head, merged)
-    lines = git("show", "-s", "--format=%B", head).splitlines()
-    records = [line for line in lines if line.startswith(PREFIX)]
-    require(len(records) == 1, "missing or ambiguous candidate metadata")
-    record = json.loads(records[0][len(PREFIX) :])
-    require(
-        set(record) == {"version", "source", "tree"} and record["version"] == version,
-        "candidate metadata/version differs",
-    )
-    source = record["source"]
-    require(
-        SHA.fullmatch(source) and SHA.fullmatch(record["tree"]),
-        "invalid metadata identity",
-    )
-    git("fetch", "origin", source)
-    require(
-        git("show", "-s", "--format=%P", head) == source,
-        "candidate is not one pin-only commit",
-    )
-    tree = canonical_tree(source)
-    require(
-        tree
-        == record["tree"]
-        == git("rev-parse", f"{head}^{{tree}}")
-        == git("rev-parse", f"{merged}^{{tree}}"),
-        "candidate or merged tree drift; reprepare",
-    )
-    # Fetch main separately: FETCH_HEAD above referred to the immutable source.
-    git("fetch", "origin", "refs/heads/main")
-    require(
-        run(
-            "git", "merge-base", "--is-ancestor", merged, "FETCH_HEAD", check=False
-        ).returncode
-        == 0,
-        "merged candidate is not on main",
-    )
-    require(
-        run(
-            "git", "merge-base", "--is-ancestor", source, merged, check=False
-        ).returncode
-        == 0,
-        "recorded source is not on merged main history",
-    )
-    trusted_ci(merged)
-    print(f"Validated {version} PR #{number} merged {merged} tree {tree}")
 
 
 def trusted_ci(merged):
@@ -311,88 +144,79 @@ def completed_release(version, merged):
     return True
 
 
-def publish(version, number, merged):
-    require(
-        git("rev-parse", "HEAD") == merged and not git("status", "--porcelain"),
-        "publish requires clean exact merged checkout after shared tests",
-    )
-    validate(version, number, merged)
-    if completed_release(version, merged):
-        print("Release already complete; no changes")
-        return
-    if not remote_tag(version, merged):
-        local = git("tag", "--list", version)
-        if local:
-            require(
-                git("cat-file", "-t", f"refs/tags/{version}") == "tag"
-                and git("rev-parse", f"{version}^{{}}") == merged,
-                "local tag identity differs",
-            )
-        else:
-            git("tag", "-a", version, merged, "-m", f"komizo-actions {version}")
-        result = run(
-            "git",
-            "push",
-            "origin",
-            f"refs/tags/{version}:refs/tags/{version}",
-            check=False,
-        )
-        # Re-read even after failure: an accepted push can lose its response.
-        require(
-            remote_tag(version, merged),
-            f"tag push did not establish expected identity: {result.stderr}",
-        )
-    result = run(
-        "gh",
-        "release",
-        "create",
-        version,
-        "--repo",
-        REPO,
-        "--verify-tag",
-        "--target",
-        merged,
-        "--title",
-        version,
-        "--generate-notes",
-        check=False,
-    )
-    require(
-        completed_release(version, merged),
-        f"release creation did not complete: {result.stderr}",
-    )
-    print(f"Published {version} at {merged}")
+def validate(version, source):
+    require(VERSION.fullmatch(version) and SHA.fullmatch(source), 'release requires an immutable version and full commit')
+    require(os.environ.get('GITHUB_REPOSITORY', REPO) == REPO, 'release belongs to another repository')
+    require(git('rev-parse', 'HEAD') == source and not git('status', '--porcelain', '--untracked-files=no'), 'release needs exact clean tracked source')
+    git('fetch', '--no-tags', 'origin', 'refs/heads/main')
+    require(git('rev-parse', 'FETCH_HEAD') == source, 'release source is no longer current main')
+    trusted_ci(source)
+    return source
+
+
+def pack(version, source, directory=Path('.artifacts/release')):
+    validate(version, source)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+    archive = directory / ('komizo-actions-' + version + '.tar.gz')
+    raw = subprocess.check_output(['git', 'archive', '--format=tar', source], timeout=30)
+    require(0 < len(raw) <= 16 << 20, 'source archive exceeds its bound')
+    with archive.open('xb') as output, gzip.GzipFile(filename='', mode='wb', fileobj=output, mtime=0) as compressed:
+        compressed.write(raw)
+    record = {'version': 1, 'repository': REPO, 'source_commit': source,
+              'source_tree': git('rev-parse', source + '^{tree}'),
+              'archive': archive.name, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}
+    (directory / 'release.json').write_text(json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n')
+    print(archive)
+    return archive
+
+
+def publish(version, source, archive):
+    validate(version, source)
+    require(archive.is_file() and not archive.is_symlink() and archive.stat().st_size <= 16 << 20, 'release requires its exact regular source artifact')
+    record_path = archive.parent / 'release.json'
+    record = json.loads(record_path.read_bytes())
+    require(record == {'version': 1, 'repository': REPO, 'source_commit': source,
+                       'source_tree': git('rev-parse', source + '^{tree}'), 'archive': archive.name,
+                       'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}, 'release artifact differs from its exact source record')
+    # Verify the workflow attestation before creating any public release object.
+    run('gh', 'attestation', 'verify', str(archive), '--repo', REPO, '--signer-workflow',
+        REPO + '/.github/workflows/release.yml', '--source-digest', source)
+    existing = completed_release(version, source)
+    if not remote_tag(version, source):
+        require(not git('tag', '--list', version), 'unexpected local version tag')
+        git('tag', '-a', version, source, '-m', 'komizo-actions ' + version)
+        run('git', 'push', 'origin', 'refs/tags/' + version + ':refs/tags/' + version, check=False)
+        require(remote_tag(version, source), 'tag publication outcome is uncertain; inspect without moving it')
+    validate(version, source)
+    if not existing:
+        run('gh', 'release', 'create', version, str(archive), str(record_path), '--repo', REPO,
+            '--verify-tag', '--target', source, '--title', version, '--generate-notes', check=False)
+    require(completed_release(version, source), 'release publication outcome is uncertain; inspect before retrying')
+    published = api('releases/tags/' + version)
+    expected = {archive.name: hashlib.sha256(archive.read_bytes()).hexdigest(),
+                record_path.name: hashlib.sha256(record_path.read_bytes()).hexdigest()}
+    assets = published.get('assets', [])
+    require(len(assets) == len(expected) and {asset['name'] for asset in assets} == set(expected), 'release asset closure differs')
+    for asset in assets:
+        require(asset.get('digest') == 'sha256:' + expected[asset['name']], 'release asset bytes differ; do not overwrite or move the version')
+    print('Published ' + version + ' at ' + source)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=["prepare", "validate", "publish"])
-    parser.add_argument("version")
-    parser.add_argument(
-        "sha", help="full source SHA (prepare) or exact merged SHA (validate/publish)"
-    )
-    parser.add_argument("--pr", type=int)
-    parser.add_argument(
-        "--push", action="store_true", help="push candidate branch only"
-    )
+    parser.add_argument('stage', choices=['validate', 'pack', 'publish'])
+    parser.add_argument('version')
+    parser.add_argument('sha')
+    parser.add_argument('--archive', type=Path)
     args = parser.parse_args()
-    require(VERSION.fullmatch(args.version), "version must be canonical vX.Y.Z")
-    require(SHA.fullmatch(args.sha), "SHA must be 40 lowercase hex characters")
-    if args.stage == "prepare":
-        require(args.pr is None, "prepare does not accept PR")
-        prepare(args.version, args.sha, args.push)
+    if args.stage == 'validate': validate(args.version, args.sha)
+    elif args.stage == 'pack': pack(args.version, args.sha)
     else:
-        require(
-            args.pr is not None and args.pr > 0 and not args.push,
-            "publish/validate requires PR and no --push",
-        )
-        (validate if args.stage == "validate" else publish)(
-            args.version, args.pr, args.sha
-        )
+        require(args.archive is not None, 'publication requires its attested source archive')
+        publish(args.version, args.sha, args.archive)
 
 
-if __name__ == "__main__":
-    try:
-        main()
-    except (RuntimeError, KeyError, ValueError, TypeError) as error:
-        raise SystemExit(f"error: {error}") from error
+if __name__ == '__main__':
+    try: main()
+    except (RuntimeError, ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        raise SystemExit('release refused: ' + str(error)) from None

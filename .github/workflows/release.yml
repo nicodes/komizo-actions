@@ -2,80 +2,48 @@ name: Release
 'on':
   workflow_dispatch:
     inputs:
-      stage:
-        description: Manual release stage
-        required: true
-        type: choice
-        options:
-        - prepare
-        - publish
       version:
-        description: Explicit version (vX.Y.Z); unchanged on retries
-        required: true
+        description: New immutable version vX.Y.Z
         type: string
+        required: true
       sha:
-        description: Full source SHA (prepare) or exact merged SHA (publish)
+        description: Exact accepted current main commit
+        type: string
         required: true
-        type: string
-      pr:
-        description: Merged candidate PR number (publish only)
-        required: false
-        type: string
 permissions: {}
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
 jobs:
   release:
-    name: Release
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
       actions: read
       checks: read
-      pull-requests: read
-      attestations: read
+      attestations: write
+      id-token: write
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
       VERSION: ${{ inputs.version }}
-      CANDIDATE_SHA: ${{ inputs.sha }}
-      CANDIDATE_PR: ${{ inputs.pr }}
-      MISE_GITHUB_TOKEN: ${{ github.token }}
+      SOURCE: ${{ inputs.sha }}
     steps:
-    - name: Check out source
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      with:
-        fetch-depth: 0
-        persist-credentials: false
-    - name: Set up development tools
-      uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
-      env:
-        GH_TOKEN: ${{ github.token }}
-      timeout-minutes: 5
-    - name: Configure release Git authentication
-      run: gh auth setup-git
-    - name: Identify release automation
-      run: |-
-        git config user.name 'github-actions[bot]'
-        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-    - name: Prepare candidate branch and print operator PR command
-      if: inputs.stage == 'prepare'
-      run: sh scripts/release.sh prepare "$VERSION" "$CANDIDATE_SHA" --push
-    - name: Validate merged candidate and check out exact artifact
-      if: inputs.stage == 'publish'
-      run: |-
-        set -euo pipefail
-        cp scripts/release.py .git/release-control.py
-        python3 .git/release-control.py validate "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
-        git checkout --detach "$CANDIDATE_SHA"
-    - name: Test
-      if: inputs.stage == 'publish'
-      shell: bash
-      run: |-
-        set -euo pipefail
-        mise run check
-    - name: Revalidate and publish without moving tags
-      if: inputs.stage == 'publish'
-      run: python3 .git/release-control.py publish "$VERSION" "$CANDIDATE_SHA" --pr "$CANDIDATE_PR"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Authenticate exact release transport
+        run: |
+          gh auth setup-git
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Admit complete trusted CI and pack exact source
+        run: python3 -I -B scripts/release.py pack "$VERSION" "$SOURCE"
+      - name: Attest exact source archive
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: .artifacts/release/*.tar.gz
+      - name: Recheck current main and publish without replacing versions
+        run: python3 -I -B scripts/release.py publish "$VERSION" "$SOURCE" --archive ".artifacts/release/komizo-actions-$VERSION.tar.gz"

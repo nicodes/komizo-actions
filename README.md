@@ -1,57 +1,39 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: a814aca1a943f69e4c3499105763bf6b9f72a50bb71958e6ce96605debefbb64 -->
+# Komizo Actions
 
-# komizo Actions
+GitHub adapters for immutable application releases, protected host submission, previews, readiness checks and encrypted backup transport. Pin actions and reusable workflows to reviewed full commits. Host policy independently authorizes each application, workflow and action.
 
-Optional GitHub adapters for Komizo deployment, scoped connectivity, previews, release evidence and encrypted backup transport. Pin actions and reusable workflows to reviewed full commits. Callers supply their own images, targets and authorized host policy; the host independently enforces admission.
+## Source and release preparation
 
-Action dependencies remain inline in workflow YAML and generators. There is no separate action-pin registry. Existing deployment and Preview `komizo_ref` declarations retain their own reviewed Actions authority.
+Recipe-aware adapters require an exact `cookbook-ref`. Cookbook selects its reviewed Tools dependency; callers cannot substitute another helper revision. Trusted preparation verifies repository origin, source identity and provider ancestry before preparing the caller's SDKs.
 
-Authored delivery, backup, recovery and publication declarations use TOML, including `deploy/komizo.toml`. Configuration publication emits native Compose YAML and hostnames; generated release and acceptance receipts remain JSON.
+Applications declare native workloads in `deploy/application.toml`. Complete source validation freezes a closed release packet containing `release.json`, `inventory.json`, selected image OCI archives, selected static archives and explicitly inventoried metadata. Static applications need no image. Publication uploads exact accepted OCI manifests and blobs without rebuilding artifacts or changing the descriptor.
 
-## Recipe source identities
+`application-publication` consumes complete same-run evidence and emits an immutable six-record host release artifact. Queued host effects run in the pinned `cookbook-deliver.yml` workflow. Its final authorizer checks publication, complete validation, source, current main or pull request and pinned providers immediately before minting the release proof. Source validation, publication and installed application acceptance remain distinct evidence.
 
-Recipe-aware callers use [Cookbook](https://github.com/nicodes/cookbook) for generated Mise tasks, recipe data and complete native validation. Set `cookbook-ref` to the reviewed full Cookbook commit and leave the historical `tools-ref` input empty. The selected Cookbook provider's own `mise.toml` supplies its literal `vars.tools_ref` dependency on [Tools](https://github.com/nicodes/tools). A consumer cannot choose a different helper revision.
+## Host submission
 
-`COOKBOOK_ROOT` and `COOKBOOK_REF` identify the actual Cookbook checkout and commit. `TOOLS_ROOT` and the exported `TOOLS_REF` identify its separate Tools checkout and commit. Trusted preparation verifies the fixed repository origins, clean immutable source and owning-main ancestry before recipe execution. It then prepares the exact caller SDK versions explicitly; recipe tests consume prepared inputs.
+`connect` accepts `host`, `key`, `known-hosts` and optional `port`, and returns `ssh-config`. It prepares strict host pins and a private per-job SSH configuration for the restricted `komizo-submit` account. Its post action removes owned credentials. The first remote connection submits the authenticated request.
 
-The corresponding recipe driver arguments are `--cookbook-root` and `--cookbook-ref`. Where supported, `--tools-root` supplies an already prepared location whose identity must match Cookbook's dependency. Cookbook recipe acceptance binds `cookbook_repository`, `cookbook_commit`, `tools_repository`, `tools_commit` and `entrypoint_contract = "mise-v1"`. Operational and Preview plans retain the same explicit source identities.
+`deploy` accepts `application`, optional `instance` (default `production`), `release`, `release-proof`, `timeout-seconds`, `expected-secret-generations` as a JSON object, and optional `registry-user` and `registry-token`. Preview deployment also requires its approved `ttl-seconds`. Outputs identify the admitted operation, release digest and phase. `proposed-operation-id` is computed before transport; an uncertain connection does not confirm admission. Inspect that identity with fresh authority before another mutation. Credentials travel only inside the bounded SSH submission body. Ambiguous acknowledgments require operation inspection before another deployment.
 
-Independently pinned historical adapters retain their genuine Tools-hosted recipe SDK and original command protocol. Their `tools-ref` input names that actual Tools commit. The historical and Cookbook selectors cannot be mixed, and a Cookbook commit cannot stand in for Tools. Native deployment actions remain usable independently of recipes.
+`run-task` accepts `application`, `instance`, `action`, `release-digest`, optional `operation`, and `timeout-seconds`. Actions are `start`, `stop`, `restart`, `inspect`, `backup` and `remove`. The `current` selector is valid only for inspection; `absent` is valid only for an authoritative first-backup absence check. Mutations select an exact installed release. This interface executes no arbitrary shell command.
 
-## Accepted recipe artifacts
+Routine CI supplies logical secret references and optional expected generations. An owner manages private host grants and secret generations. Serving services receive only their granted references; migration authority belongs to explicit jobs.
 
-Generated recipe callers compose read-only source validation with separate publication and host-effect jobs. `cookbook-publish.yml` and `application-publication` consume exact same-run complete recipe artifacts. They verify the successful validation job, source/tree, recipe provider, complete native coverage and closed image archive before publishing. Publication executes no application setup or build program. Nonshipping fixture images remain outside the shipping publication set.
+## Previews and product checks
 
-The externally matched successful host check remains `Make full` for existing protection and receipt compatibility. Cookbook mode runs canonical Mise tasks.
+Preview workflows separate trusted request planning, selected-source validation, immutable publication and protected effects. The host supplies public planned origins before the descriptor is compiled and tested. Preview descriptors bind those origins, an isolated instance graph and its lifetime before acceptance. Cleanup uses the same application authority and recorded resource ownership.
 
-Recipe-aware adapters read effective settings through the caller's prepared, pinned Cookbook source. Shared CI defaults, literal native test groups and mandatory static metadata use that SDK's decoder and capability definitions. Generic verification and release helpers come from its actual Tools dependency. Raw configuration hashes and the complete accepted artifact scope remain bound to the original source.
+`application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
 
-`application-delivery` reads the tracked native declaration, refuses obsolete main before host effects, captures a declared encrypted backup, activates the accepted immutable manifest and runs explicit health assertions. Secret mappings remain visible in the caller. Production retains its authenticated root `cd.yml`, protected environment, serialization and declared total deadline.
+Source and security audit workflows retain declared runners, deadlines, native assertions and reporting permissions. `recipe-setup` prepares the exact provider identities. `application-delivery` prepares a read-only delivery plan; the protected reusable workflow performs host effects.
 
-`godot-static-delivery` uses the same Cookbook and derived Tools identities while retaining its constrained gate/configuration protocol. It admits the exact full Godot proof, source-owned blueprint and closed image archive before publication. The trusted publisher substitutes only a verified immutable image digest into the accepted configuration blueprint. Existing release records, historical recovery and fixed-origin public verification remain explicit capabilities. Historical image verification does not issue a current-source full-validation receipt.
+## Backup and recovery
 
-Every caller still requires its own complete source CI and declared delivery and live checks. Shared adapter validation does not establish deployment or installed-runtime acceptance.
+`application-backup-export` submits the protected backup operation and receives only encrypted `snapshot.cms` and `receipt.json`. Export metadata, exact byte counts and hashes are checked before the pair is retained atomically. `application-backup-upload` transports that immutable pair. Absence evidence requires the host to check retained records and actual instance resources.
 
-## Preview
+`recovery-evidence` verifies exact completed run and artifact identities. Routine transport receives no application runtime values or private decryption key. Source restore tests use synthetic data and exact release fixtures. An explicit owner restore uses its private local `BACKUP_RECOVERY_KEY_FILE`, the snapshot's installed release identities and the application's database, media, API and frontend assertions. Installed snapshot acceptance does not issue a current-source validation receipt. Production recovery remains a separately authorized owner operation.
 
-Preview automation separates trusted request decisions, read-only validation of the selected source, accepted-artifact publication and protected host effects. These recipe-aware roles use the same Cookbook and derived Tools contract. Cleanup has its own path. Product source checks receive no publication, host or provider credentials.
+## Contribution
 
-Existing Preview producers bind the actual selected PR head, native workflow declaration, shipping components and public build inputs. Trusted publication verifies the same run's complete proof and image archive without executing caller programs in the package-write job. Current PR head/base, source identity, original aggregate and command deadlines, protected environments and credential mappings remain enforced through host effects. Preview policy and runtime acceptance stay with the caller.
-
-## Explicit operations
-
-The cookbook operational workflows read bounded project-owned declarations through the selected Cookbook source and use its Tools dependency for generic helpers. They retain the caller’s real runners, job and step deadlines, protected environments, schedules, evidence policy and native assertions. `cookbook-source-audit.yml` handles declared source/artifact checks; `cookbook-security-audit.yml` additionally selects an actual deployed-image policy. Reporting and deployed-registry permissions use separate workflow variants when those capabilities are absent. Artifact validation declares setup, build, security and selected assertion phases explicitly. Source-only audit receipts remain scoped to their declared checks.
-
-Production checks run genuine caller-owned assertions. Paid checks require explicit default-off dispatch, trusted current main, their original protected environment and deadline, and any declared successful-deployment prerequisite. An inline paid assertion shares its original production job’s total budget. Provider credentials enter only the selected paid execution step.
-
-`routine-backup` prepares an audience-bound OIDC operation frame, invokes a fixed declared exporter, validates ciphertext, uploads the immutable pair and removes its private authority file. Only the backup job receives its required OIDC scope and scoped host/storage secrets. First-deployment absence proofs are explicit data. Capture, schema and data assertions remain application-owned. The older `reusable-backup.yml` interface continues to call its caller-owned export script for independently pinned consumers.
-
-`recovery-evidence` verifies exact completed run and artifact IDs without decrypting or restoring application data. The optional legacy retention workflow checks the existing encrypted AGE pair and checksum before retaining it; it never restores data. `backup-proof` requires Python 3 and a new absolute output file under a protected caller-owned directory.
-
-The shared `scripts/backup.py` has export/upload and explicit local restore entrypoints. A named restore profile selects tracked native configuration. Local restoration requires an absolute private `BACKUP_RECOVERY_KEY_FILE`, packages only `snapshot.cms` and `receipt.json`, and validates the project, isolation, database integrity, boot/API/frontend and cleanup report before atomic retention. `--pull` explicitly selects image retrieval. The key stays local; Actions recovery remains encrypted transport verification. Production restoration is a separate authorized operation.
-
-## Independent tools and contribution
-
-Build/test recipes, generated Mise entrypoints and recipe workflows live in [Cookbook](https://github.com/nicodes/cookbook). Independent SDK setup, native tooling, container utilities and dependency/source checks live in [Tools](https://github.com/nicodes/tools). Deployment adapters also support native callers without a recipe, SDK lock or hosted Komizo account. The optional `check-secrets` compatibility action delegates its read-only policy to Tools. Setup explicitly prepares its hash-locked isolated parser; checking never installs dependencies. Configuration publication retains its independently prepared parser runtime.
-
-For this adapter repository’s native contributor gate, install Mise, prepare the exact Tools and recipe test sources selected by its checked-in CI and configuration, and run `mise install` followed by `mise run check`. Focused native commands remain `mise run lint`, `mise run test` and `mise run clean`. These exercise parsers, secrets, release integrity, SSH transport and workflow admission; this repository has no application development service.
+Build and test recipes live in [Cookbook](https://github.com/nicodes/cookbook); reusable native utilities live in [Tools](https://github.com/nicodes/tools). Prepare the checked-in SDKs and provider sources with Mise, then run the repository's native checks. Focused checks exercise canonical callers, exact OCI publication, authenticated requests, transport cleanup, atomic backup receipt handling and workflow authority.

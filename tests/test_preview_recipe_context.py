@@ -55,19 +55,16 @@ assert 'dependencies' not in sys.modules and 'configuration' not in sys.modules
 print(json.dumps({'refused':True}))
 ''')
 
-    def test_producer_actions_refuse_mixed_input_selectors_before_SDK_preparation(self):
+    def test_native_request_requires_the_real_provider_before_private_route_resolution(self):
         root=Path(__file__).resolve().parents[1]
-        for name in ['plan','verify']:
-            action=yaml.safe_load((root/f'preview-producer-{name}/action.yml').read_text())
-            steps=action['runs']['steps']
-            guard=next(step for step in steps if step.get('name')=='Require one exact recipe source contract')
-            self.assertLess(steps.index(guard),next(i for i,step in enumerate(steps) if step.get('uses','').endswith('/recipe-setup')))
-            if name=='plan':self.assertIn("steps.request.outputs.action == 'up'",guard['if'])
-            for cookie,tools,success in [(self.fixture.cookbook_ref,'',True),('',self.fixture.tools_ref,True),
-                (self.fixture.cookbook_ref,self.fixture.tools_ref,False),('main','',False),('','',False)]:
-                result=subprocess.run(['bash','-euc',guard['run']],env=dict(os.environ,COOKBOOK_REF=cookie,TOOLS_REF=tools),
-                    capture_output=True,text=True,timeout=5)
-                with self.subTest(action=name,cookie=cookie,tools=tools):self.assertEqual(result.returncode==0,success)
+        workflow=yaml.safe_load((root/'.github/workflows/cookbook-preview-request.yml').read_text())
+        inputs=workflow['on']['workflow_call']['inputs']
+        self.assertTrue(inputs['cookbook-ref']['required']);self.assertNotIn('tools-ref',inputs)
+        steps=workflow['jobs']['request']['steps']
+        setup=next(i for i,step in enumerate(steps) if step.get('uses','').endswith('/recipe-sources'))
+        routes=next(i for i,step in enumerate(steps) if step.get('id')=='routes')
+        self.assertLess(setup,routes)
+        self.assertIn('steps.request.outputs.enabled',steps[routes]['if'])
 
 
 if __name__=='__main__':unittest.main()

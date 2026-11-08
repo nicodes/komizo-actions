@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-TOOLS = Path(os.environ['TOOLS_ROOT'])
+TOOLS = Path(os.environ['RECIPE_LEGACY_TEST_SDK'])
 sys.path.insert(0, str(TOOLS / 'cookbook'))
 spec = importlib.util.spec_from_file_location('application_readiness', Path(__file__).parents[1] / 'scripts/application_readiness.py')
 readiness = importlib.util.module_from_spec(spec)

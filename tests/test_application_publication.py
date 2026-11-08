@@ -65,43 +65,29 @@ class ApplicationPublication(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'complete current-attempt'):
             self.accept()
 
-    def test_only_closed_hash_bound_payload_is_staged_without_execution(self):
+    def test_only_closed_hash_bound_native_packet_is_staged_without_execution(self):
+        from test_release_packet import make_packet
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            incoming = root / 'incoming/.artifacts/release'
-            incoming.mkdir(parents=True)
-            names = ['images.tar.gz', 'images.tar.gz.sha256', 'images.json', 'release.json']
-            for name in names:
-                (incoming / name).write_bytes(b'[]' if name == 'images.json' else name.encode())
-            proof = dict(artifacts={'.artifacts/release/' + name: hashlib.sha256((incoming / name).read_bytes()).hexdigest() for name in names})
+            root = Path(temporary); incoming = root / 'incoming/.artifacts/release'; incoming.mkdir(parents=True)
+            make_packet(incoming)
+            proof = {'artifacts': {'.artifacts/release/' + name: hashlib.sha256((incoming / name).read_bytes()).hexdigest()
+                                   for name in ['release.json', 'inventory.json', 'static/web.tar.gz']}}
             publication.stage(root / 'incoming', proof, root / 'accepted')
-            self.assertEqual({path.name for path in (root / 'accepted').iterdir()}, set(names))
-            (incoming / 'images.tar.gz').write_bytes(b'changed')
-            with self.assertRaisesRegex(ValueError, 'bytes differ'):
-                publication.stage(root / 'incoming', proof, root / 'refused')
+            self.assertEqual((root / 'accepted/release.json').read_bytes(), (incoming / 'release.json').read_bytes())
+            (incoming / 'static/web.tar.gz').write_bytes(b'changed')
+            with self.assertRaises(ValueError): publication.stage(root / 'incoming', proof, root / 'refused')
             self.assertFalse((root / 'refused').exists())
-            (incoming / 'arbitrary.py').write_text('raise SystemExit(1)')
-            with self.assertRaisesRegex(ValueError, 'closed validated'):
-                publication.stage(root / 'incoming', proof, root / 'refused')
 
-    def test_only_declared_bounded_json_metadata_can_accompany_images(self):
+    def test_unaccepted_extra_metadata_or_programs_are_refused_before_staging(self):
+        from test_release_packet import make_packet
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            source = root / 'incoming/.artifacts/release'
-            source.mkdir(parents=True)
-            names = ['images.tar.gz', 'images.tar.gz.sha256', 'images.json', 'release.json', 'components.json']
-            for name in names:
-                (source / name).write_bytes(b'{}')
-            proof = dict(artifacts={'.artifacts/release/' + name: hashlib.sha256(b'{}').hexdigest() for name in names})
-            with self.assertRaises(ValueError):
-                publication.stage(root / 'incoming', proof, root / 'refused')
-            publication.stage(root / 'incoming', proof, root / 'accepted', ['.artifacts/release/components.json'])
-            self.assertEqual((root / 'accepted/components.json').read_bytes(), b'{}')
-            for metadata in [['../components.json'], ['.artifacts/release/unsafe.py'], ['.artifacts/release/release.json']]:
-                with self.subTest(metadata=metadata), self.assertRaises(ValueError):
-                    publication.stage(root / 'incoming', proof, root / 'refused', metadata)
+            root = Path(temporary); incoming = root / 'incoming/.artifacts/release'; incoming.mkdir(parents=True)
+            make_packet(incoming)
+            proof = {'artifacts': {'.artifacts/release/' + name: hashlib.sha256((incoming / name).read_bytes()).hexdigest()
+                                   for name in ['release.json', 'inventory.json', 'static/web.tar.gz']}}
+            (incoming / 'untrusted.py').write_text('raise SystemExit("must never execute")')
+            with self.assertRaises(ValueError): publication.stage(root / 'incoming', proof, root / 'refused')
             self.assertFalse((root / 'refused').exists())
 
 
-if __name__ == '__main__':
-    unittest.main()
+if __name__ == '__main__': unittest.main()

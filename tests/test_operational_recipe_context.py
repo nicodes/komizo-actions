@@ -1,4 +1,4 @@
-"""Real, distinct source checkouts bind operational and historical adapters."""
+"""Real, distinct source checkouts bind native operational adapters."""
 import json
 import os
 from pathlib import Path
@@ -94,7 +94,7 @@ class ExtractedRecipeAuthority(unittest.TestCase):
     def control(self, code):
         prefix = '''import json,os,sys
 from pathlib import Path
-sys.path.insert(0,sys.argv[1]);import operational,historical_delivery
+sys.path.insert(0,sys.argv[1]);import operational
 app,cookbook,tools,actions,event=map(Path,sys.argv[2:7])
 source,cookie,tool,komizo,version=sys.argv[7:]
 operational.ROOT=actions
@@ -129,20 +129,6 @@ assert runtime['TOOLS_ROOT']==str(tools) and runtime['TOOLS_REF']==tool
 operational.authority(app,cookbook,'security','',env|{'TOOLS_REF':tool},lookup,supplied_tools=tools)
 print(json.dumps(context.identities()))
 ''')
-        self.assertEqual(result['cookbook_commit'],self.cookbook_ref)
-        self.assertEqual(result['tools_commit'],self.tools_ref)
-
-    def test_historical_plan_binds_both_sources_without_fabricating_full_acceptance(self):
-        result=self.control('''env.update(GITHUB_WORKFLOW_REF='example/application/.github/workflows/cd.yml@refs/heads/main',
- HISTORICAL_VERSION=version,DECLARATION='deploy/delivery.toml',HISTORICAL_RUNNER='ubuntu-24.04',
- HISTORICAL_TIMEOUT='30',HISTORICAL_ENVIRONMENT='production',HISTORICAL_STEP_TIMEOUTS='{"deploy":30}')
-plan=historical_delivery.authority(app,cookbook,actions,env|{'TOOLS_REF':tool},lookup,supplied_tools=tools)
-assert plan['version']==version and plan['source_commit']==source and plan['full_source_acceptance'] is False
-assert plan['entrypoint_contract']=='mise-v1' and plan['tools_ref']==tool
-print(json.dumps(plan))
-''')
-        self.assertEqual(result['cookbook_repository'],'nicodes/cookbook')
-        self.assertEqual(result['tools_repository'],'nicodes/tools')
         self.assertEqual(result['cookbook_commit'],self.cookbook_ref)
         self.assertEqual(result['tools_commit'],self.tools_ref)
 
@@ -206,7 +192,7 @@ assert not list(cookbook.rglob('__pycache__'))
 driver.recipe_context.checked_checkout(cookbook,'nicodes/cookbook',reference)
 print('Exact source remains clean without -B or ambient bytecode policy')
 '''
-        for relative in ['godot-production/production.py','godot-static-recovery/recovery.py']:
+        for relative in ['godot-production/production.py']:
             result=subprocess.run([sys.executable,'-I','-c',script,str(ROOT/relative),str(self.cookbook),
                 str(self.tools),self.cookbook_ref],capture_output=True,text=True,timeout=30,
                 env={key:value for key,value in os.environ.items() if key!='PYTHONDONTWRITEBYTECODE'})
@@ -225,7 +211,7 @@ print('Exact source remains clean without -B or ambient bytecode policy')
         github_env=self.directory/'environment'
         environment=dict(os.environ,PATH=str(binary)+os.pathsep+str(Path(sys.executable).parent)+os.pathsep+os.environ['PATH'],
             GITHUB_ACTION_PATH=str(ROOT/'application-delivery'),PROJECT='application',DECLARATION='deploy/delivery.toml',
-            GITHUB_SHA=self.source,SDK_PREPARED='true',COOKBOOK_ROOT=str(self.cookbook),COOKBOOK_REF=self.cookbook_ref,
+            GITHUB_SHA=self.source,SDK_PREPARED='true',PLAN_ONLY='true',COOKBOOK_ROOT=str(self.cookbook),COOKBOOK_REF=self.cookbook_ref,
             TOOLS_ROOT=str(self.tools),TOOLS_REF=self.tools_ref,DERIVED_TOOLS_REF=self.tools_ref,
             GITHUB_OUTPUT=str(output),GITHUB_ENV=str(github_env))
         def invoke(changes):

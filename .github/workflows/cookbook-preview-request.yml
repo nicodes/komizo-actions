@@ -4,20 +4,21 @@ name: Resolve trusted Preview request
     inputs:
       cookbook-ref:
         type: string
-        required: false
-        default: ''
-      tools-ref:
-        description: Historical Tools-hosted recipe SDK only
-        type: string
-        required: false
-        default: ''
+        required: true
       komizo-ref:
         type: string
         required: true
       declaration:
         type: string
         required: true
+    secrets:
+      deploy-key:
+        required: true
     outputs:
+      app-origin:
+        value: ${{ jobs.request.outputs.app-origin }}
+      api-origin:
+        value: ${{ jobs.request.outputs.api-origin }}
       enabled:
         value: ${{ jobs.request.outputs.enabled }}
       action:
@@ -33,12 +34,16 @@ name: Resolve trusted Preview request
 permissions: {}
 jobs:
   request:
+    environment: Preview
     runs-on: ubuntu-slim
     timeout-minutes: 3
     permissions:
       contents: read
       pull-requests: read
+      id-token: write
     outputs:
+      app-origin: ${{ steps.routes.outputs.app-origin }}
+      api-origin: ${{ steps.routes.outputs.api-origin }}
       enabled: ${{ steps.request.outputs.enabled }}
       action: ${{ steps.request.outputs.action }}
       pr: ${{ steps.request.outputs.pr }}
@@ -47,7 +52,6 @@ jobs:
       plan: ${{ steps.request.outputs.plan }}
     env:
       COOKBOOK_REF: ${{ inputs.cookbook-ref }}
-      TOOLS_REF: ${{ inputs.tools-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       DECLARATION: ${{ inputs.declaration }}
       GH_TOKEN: ${{ github.token }}
@@ -56,11 +60,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        if [[ -n "$COOKBOOK_REF" ]]; then
-          [[ -z "$TOOLS_REF" && "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
-        else
-          [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
-        fi
+        [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
@@ -76,7 +76,7 @@ jobs:
         MISE_EXEC_AUTO_INSTALL: 'false'
         MISE_TASK_RUN_AUTO_INSTALL: 'false'
       with:
-        python-version: '3.13.11'
+        python-version: 3.13.11
         check-latest: false
     - name: Prepare the private artifact parent with actual pinned Python
       if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
@@ -94,11 +94,11 @@ jobs:
         printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        repository: ${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}
-        ref: ${{ inputs.cookbook-ref || inputs.tools-ref }}
+        repository: nicodes/cookbook
+        ref: ${{ inputs.cookbook-ref }}
         persist-credentials: false
         fetch-depth: 0
-        path: ${{ inputs.cookbook-ref && '.artifacts/recipe-sdks/_cookbook' || '_preview_cookbook' }}
+        path: .artifacts/recipe-sdks/_cookbook
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         repository: nicodes/komizo-actions
@@ -107,18 +107,28 @@ jobs:
         fetch-depth: 0
         path: _preview_actions
     - name: Prepare accepted recipe SDKs
-      if: ${{ inputs.cookbook-ref != '' }}
-      uses: ./_preview_actions/recipe-setup
+      uses: ./_preview_actions/recipe-sources
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
-        tools: python
     - name: Resolve opt-in request from trusted main
       id: request
       shell: bash
       run: |
         set -euo pipefail
-        sdk=(--tools _preview_cookbook)
-        if [[ -n "$COOKBOOK_REF" ]]; then
-          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        fi
-        python3 _preview_actions/scripts/preview.py request --declaration "$DECLARATION" "${sdk[@]}"
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py request --declaration "$DECLARATION" "${sdk[@]}"
+    - name: Prepare pinned policy inspection transport
+      if: steps.request.outputs.enabled == 'true' && steps.request.outputs.action == 'up'
+      uses: ./_preview_actions/connect
+      env:
+        KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
+        KOMIZO_DEPLOY_KEY: ${{ secrets.deploy-key }}
+        KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
+    - name: Resolve public routes from protected host policy
+      id: routes
+      if: steps.request.outputs.enabled == 'true' && steps.request.outputs.action == 'up'
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+      run: python3 -I -B _preview_actions/scripts/preview.py routes --cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref
+        "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools

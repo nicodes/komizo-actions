@@ -4,13 +4,7 @@ name: Publish exact accepted Preview images
     inputs:
       cookbook-ref:
         type: string
-        required: false
-        default: ''
-      tools-ref:
-        description: Historical Tools-hosted recipe SDK only
-        type: string
-        required: false
-        default: ''
+        required: true
       komizo-ref:
         type: string
         required: true
@@ -37,7 +31,6 @@ jobs:
       attestations: read
     env:
       COOKBOOK_REF: ${{ inputs.cookbook-ref }}
-      TOOLS_REF: ${{ inputs.tools-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       PLAN: ${{ inputs.plan }}
       GH_TOKEN: ${{ github.token }}
@@ -46,11 +39,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        if [[ -n "$COOKBOOK_REF" ]]; then
-          [[ -z "$TOOLS_REF" && "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
-        else
-          [[ "$TOOLS_REF" =~ ^[a-f0-9]{40}$ ]]
-        fi
+        [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
@@ -66,7 +55,7 @@ jobs:
         MISE_EXEC_AUTO_INSTALL: 'false'
         MISE_TASK_RUN_AUTO_INSTALL: 'false'
       with:
-        python-version: '3.13.11'
+        python-version: 3.13.11
         check-latest: false
     - name: Prepare the private artifact parent with actual pinned Python
       if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
@@ -84,11 +73,11 @@ jobs:
         printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        repository: ${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}
-        ref: ${{ inputs.cookbook-ref || inputs.tools-ref }}
+        repository: nicodes/cookbook
+        ref: ${{ inputs.cookbook-ref }}
         persist-credentials: false
         fetch-depth: 0
-        path: ${{ inputs.cookbook-ref && '.artifacts/recipe-sdks/_cookbook' || '_preview_cookbook' }}
+        path: .artifacts/recipe-sdks/_cookbook
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         repository: nicodes/komizo-actions
@@ -97,21 +86,16 @@ jobs:
         fetch-depth: 0
         path: _preview_actions
     - name: Prepare accepted recipe SDKs
-      if: ${{ inputs.cookbook-ref != '' }}
-      uses: ./_preview_actions/recipe-setup
+      uses: ./_preview_actions/recipe-sources
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
-        tools: python
     - name: Revalidate exact request and trusted publication policy
       id: plan
       shell: bash
       run: |
         set -euo pipefail
-        sdk=(--tools _preview_cookbook)
-        if [[ -n "$COOKBOOK_REF" ]]; then
-          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        fi
-        python3 _preview_actions/scripts/preview.py plan "${sdk[@]}"
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py plan "${sdk[@]}"
     - name: Inspect exact PR source as data
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -124,26 +108,25 @@ jobs:
       with:
         name: cookbook-full-${{ steps.plan.outputs.head }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: .artifacts/preview-input
-    - name: Authenticate only the trusted publisher
-      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ github.token }}
     - name: Admit and publish the exact tested archive
       shell: bash
       run: |
         set -euo pipefail
-        sdk=(--tools _preview_cookbook)
-        if [[ -n "$COOKBOOK_REF" ]]; then
-          sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        fi
-        python3 _preview_actions/scripts/preview.py publish "${sdk[@]}"
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py publish "${sdk[@]}"
     - name: Retain exact Preview publication evidence
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: preview-publication-${{ steps.plan.outputs.head }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: .artifacts/preview-publication.json
+        include-hidden-files: true
+        if-no-files-found: error
+        retention-days: 7
+    - name: Retain immutable descriptor and complete publication acceptance
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: host-release-${{ steps.plan.outputs.head }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .artifacts/komizo-release/
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7

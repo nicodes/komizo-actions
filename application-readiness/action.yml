@@ -7,7 +7,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - shell: bash
-      env:
-        DECLARATION: ${{ inputs.declaration }}
-      run: python3 "$GITHUB_ACTION_PATH/../scripts/application_readiness.py"
+  - shell: bash
+    env:
+      DECLARATION: ${{ inputs.declaration }}
+    run: python3 -I -B "$GITHUB_ACTION_PATH/../scripts/application_readiness.py"

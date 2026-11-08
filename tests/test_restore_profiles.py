@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 spec = importlib.util.spec_from_file_location('profile_backup', Path(__file__).parents[1] / 'scripts/backup.py')
 backup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(backup)
-TOOLS = Path(os.environ['TOOLS_ROOT'])
+TOOLS = Path(os.environ['RECIPE_LEGACY_TEST_SDK'])
 
 
 class RestoreProfiles(unittest.TestCase):
@@ -31,6 +31,9 @@ class RestoreProfiles(unittest.TestCase):
         self.key = self.root / 'recovery.key'
         self.key.write_text('local fixture key')
         self.key.chmod(0o600)
+        self.cookbook = self.root / 'selected-cookbook'
+        (self.cookbook/'cookbook').mkdir(parents=True)
+        (self.cookbook/'cookbook/application_restore.py').write_text('# Explicit selected verifier fixture; never executed in these transport tests.\n')
         self.config = self.root / 'deploy/restore.json'
         native = dict(project='demo', backend='postgresql', image_base='ghcr.io/owner/demo',
             runtime_role='demo_runtime', dsn_file='/run/secrets/database.url', api_port=8080,
@@ -38,7 +41,15 @@ class RestoreProfiles(unittest.TestCase):
         self.config.write_text(json.dumps(native))
         (self.root / 'deploy/restore-previous.json').write_text(json.dumps(native | dict(project='previous')))
         self.valid = dict(version=1, project='demo', published_ports=[], database_integrity='ok',
-            database_boot='passed', api_boot='passed', frontend_artifact='passed', cleanup='passed')
+            database_boot='passed', api_boot='passed', frontend_artifact='passed', cleanup='passed', database_restore='passed',
+            scope='disposable authenticated snapshot restoration',current_source_ci_acceptance=False,
+            network='none; shared isolated loopback only',media_integrity='passed',
+            http_assertions={'api_health':'passed','frontend_document':'passed','unknown_host_refusal':'passed'},
+            revision='a'*40,snapshot_release={'digest':'sha256:'+'b'*64,
+                'source':{'repository':'example/demo','repository_id':'123','revision':'a'*40},
+                'provider':{'cookbook_revision':'c'*40,'tools_revision':'d'*40,'core_revision':'e'*40}},
+            images={'api':'sha256:'+'f'*64},static_artifacts={'web':'sha256:'+'a'*64},
+            files_restored=1,archive_sha256='b'*64,ciphertext_sha256='c'*64)
         self.report = copy.deepcopy(self.valid)
         self.archives = []
         self.commands = []
@@ -59,7 +70,7 @@ class RestoreProfiles(unittest.TestCase):
         return SimpleNamespace(wait=lambda timeout: 0, poll=lambda: 0)
 
     def restore(self, pull=False):
-        return backup.restore_pair(self.root, 'demo', self.config, TOOLS, self.inputs, self.key, pull=pull)
+        return backup.restore_pair(self.root, 'demo', self.config, TOOLS, self.inputs, self.key, cookbook=self.cookbook, pull=pull)
 
     def test_only_encrypted_pair_is_packaged_and_exact_report_is_private_and_retained(self):
         before = {name: (self.inputs / name).read_bytes() for name in ['snapshot.cms', 'receipt.json', 'never-package.pem']}
@@ -78,7 +89,8 @@ class RestoreProfiles(unittest.TestCase):
         report.write_text('prior evidence\n')
         for changes in [dict(version=2), dict(project='previous'), dict(published_ports=['8080']),
                         dict(database_integrity='failed'), dict(database_boot='failed'), dict(api_boot='failed'),
-                        dict(frontend_artifact='failed'), dict(cleanup='failed')]:
+                        dict(frontend_artifact='failed'), dict(cleanup='failed'),dict(current_source_ci_acceptance=True),
+                        dict(snapshot_release={}),dict(media_integrity='failed'),dict(http_assertions={})]:
             self.report = self.valid | changes
             with self.subTest(changes=changes), patch.object(backup.subprocess, 'Popen', side_effect=self.child):
                 with self.assertRaises(ValueError):
@@ -93,7 +105,7 @@ class RestoreProfiles(unittest.TestCase):
                 self.restore()
             self.key.chmod(0o600)
             with self.assertRaises(ValueError):
-                backup.restore_pair(self.root, 'demo', self.config, TOOLS, self.inputs, Path('relative-key'))
+                backup.restore_pair(self.root, 'demo', self.config, TOOLS, self.inputs, Path('relative-key'), cookbook=self.cookbook)
             target = self.root / 'actual-key'
             self.key.rename(target)
             self.key.symlink_to(target)

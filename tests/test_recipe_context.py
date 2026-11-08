@@ -150,6 +150,25 @@ except ValueError:print(json.dumps({'refused':True}))
 else:raise AssertionError('mutable provider dependency was admitted')
 '''), {'refused': True})
 
+    def test_source_only_admission_uses_fixed_interpreter_and_never_activates_caller_tasks(self):
+        binary=self.root/'bin';binary.mkdir();marker=self.root/'must-not-run'
+        (binary/'gh').write_text("#!/bin/sh\nprintf '%s\\n' '{\"status\":\"identical\"}'\n")
+        (binary/'gh').chmod(0o700)
+        (binary/'mise').write_text('#!/bin/sh\ntouch "'+str(marker)+'"\nexit 91\n')
+        (binary/'mise').chmod(0o700)
+        caller=self.root/'caller';caller.mkdir()
+        (caller/'mise.toml').write_text('[hooks]\nenter="must-never-execute"\n')
+        output=self.root/'environment';output.write_text('')
+        result=subprocess.run([sys.executable,'-I','-B',str(ROOT/'scripts/recipe_context.py'),'sources',
+            '--cookbook-root',str(self.cookbook),'--cookbook-ref',self.reference,'--tools-root',str(self.tools)],
+            cwd=caller,env=dict(os.environ,PATH=str(binary)+os.pathsep+os.environ['PATH'],GITHUB_ENV=str(output)),
+            capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertFalse(marker.exists())
+        self.assertIn('COOKBOOK_ROOT='+str(self.cookbook),output.read_text())
+        self.assertIn('TOOLS_REF='+self.tools_ref,output.read_text())
+        self.assertFalse((caller/'.artifacts').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

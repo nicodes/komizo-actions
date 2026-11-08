@@ -20,4 +20,4 @@ runs:
         PROJECT: ${{ inputs.project }}
         BACKUP_CONFIG: ${{ inputs.config }}
         TOOLS_ROOT: ${{ env.COOKBOOK_ROOT && env.TOOLS_ROOT || format('{0}/_delivery_cookbook', github.workspace) }}
-      run: python3 "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"
+      run: python3 -I -B "$GITHUB_ACTION_PATH/../scripts/backup.py" export --project "$PROJECT" --config "$BACKUP_CONFIG"

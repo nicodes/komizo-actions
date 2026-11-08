@@ -1,68 +1,57 @@
-"""Reusable operational leaves retain fixed source identities and effect order."""
+"""Every public effect workflow selects the real Cookbook and its derived helpers."""
 from pathlib import Path
 import unittest
-
 import yaml
 
-ROOT=Path(__file__).resolve().parents[1]
-LEAVES=['backup','production-check','public-production-check','recovery','source-audit',
-    'source-audit-no-report','security-audit','security-audit-no-report','legacy-retention',
-    'historical-deploy','report']
+ROOT = Path(__file__).resolve().parents[1]
 
 
-class OperationalWorkflowContext(unittest.TestCase):
-    def test_each_operational_job_resolves_real_dependency_before_planning_or_effects(self):
-        for name in LEAVES:
-            workflow=yaml.safe_load((ROOT/f'.github/workflows/cookbook-{name}.yml').read_text())
-            inputs=workflow['on']['workflow_call']['inputs']
-            self.assertFalse(inputs['cookbook-ref']['required'])
-            self.assertFalse(inputs['tools-ref']['required'])
-            for job_name,job in workflow['jobs'].items():
-                if name=='report' and job_name=='notify':continue
-                with self.subTest(leaf=name,job=job_name):
-                    steps=job['steps']
-                    self.assertEqual(steps[0]['name'],'Require one exact recipe source contract')
-                    self.assertIn('-z "$TOOLS_REF"',steps[0]['run'])
-                    self.assertIn('^[a-f0-9]{40}$',steps[0]['run'])
-                    source=[s for s in steps if s.get('with',{}).get('repository')==
-                        "${{ inputs.cookbook-ref && 'nicodes/cookbook' || 'nicodes/tools' }}"]
-                    self.assertEqual(len(source),1)
-                    self.assertEqual(source[0]['with']['ref'],'${{ inputs.cookbook-ref || inputs.tools-ref }}')
-                    preparation=[s for s in steps if s.get('uses','').endswith('/recipe-setup')]
-                    self.assertEqual(len(preparation),1)
-                    self.assertEqual(preparation[0]['if'],"${{ inputs.cookbook-ref != '' }}")
-                    self.assertEqual(preparation[0]['with'],{'cookbook-ref':'${{ inputs.cookbook-ref }}','tools':'python'})
-                    self.assertIn('.artifacts/recipe-sdks/_cookbook',source[0]['with']['path'])
-                    self.assertLess(steps.index(source[0]),steps.index(preparation[0]))
-                    legacy=[s for s in steps if s.get('uses','').startswith('nicodes/tools/setup@')]
-                    self.assertEqual(len(legacy),1)
-                    self.assertIn("inputs.cookbook-ref == ''",legacy[0]['if'])
-                    self.assertEqual(preparation[0]['timeout-minutes'],legacy[0]['timeout-minutes'])
-                    plan=[s for s in steps if s.get('id')=='plan']
-                    if plan:self.assertLess(steps.index(preparation[0]),steps.index(plan[0]))
-                    self.assertTrue(all('timeout-minutes' in s for s in steps))
+class NativeWorkflowContext(unittest.TestCase):
+    def test_public_recipe_interfaces_require_real_cookbook_and_have_no_tools_alias(self):
+        for path in [*ROOT.glob('.github/workflows/cookbook-*.yml'), *ROOT.glob('*/action.yml')]:
+            value = yaml.safe_load(path.read_text())
+            called = value.get('on', {}).get('workflow_call', {}) if isinstance(value.get('on'), dict) else {}
+            inputs = called.get('inputs', {}) if called else value.get('inputs', {})
+            if 'cookbook-ref' not in inputs: continue
+            with self.subTest(path=path.name):
+                self.assertTrue(inputs['cookbook-ref']['required'])
+                self.assertNotIn('tools-ref', inputs)
+                self.assertNotIn('inputs.tools-ref', path.read_text())
+                self.assertNotIn('--tools ', path.read_text())
 
-    def test_Godot_public_and_recovery_adapters_forward_both_explicit_contracts(self):
-        action=yaml.safe_load((ROOT/'godot-production/action.yml').read_text())
-        steps=action['runs']['steps']
-        native=[s for s in steps if 'production.py' in s.get('run','')]
-        self.assertEqual(len(native),2)
-        for step in native:
-            self.assertIn('--cookbook-root .artifacts/recipe-sdks/_cookbook',step['run'])
-            self.assertIn('--tools-root .artifacts/recipe-sdks/_tools',step['run'])
-            self.assertIn('--tools _godot_production_cookbook --tools-ref "$TOOLS_REF"',step['run'])
-        for leaf in ['godot-production','godot-recovery']:
-            workflow=yaml.safe_load((ROOT/f'.github/workflows/cookbook-{leaf}.yml').read_text())
-            self.assertFalse(workflow['on']['workflow_call']['inputs']['cookbook-ref']['required'])
-        recovery=yaml.safe_load((ROOT/'.github/workflows/cookbook-godot-recovery.yml').read_text())
-        job=recovery['jobs']['verify']
-        self.assertEqual(job['timeout-minutes'],25)
-        operations=[s for s in job['steps'] if 'recovery.py' in s.get('run','')]
-        self.assertEqual(len(operations),3)
-        for step in operations:
-            self.assertIn('--cookbook-root .artifacts/recipe-sdks/_cookbook',step['run'])
-            self.assertIn('--tools-root .artifacts/recipe-sdks/_tools',step['run'])
-        self.assertFalse(any('recovery.py restore' in s.get('run','') for s in job['steps']))
+    def test_source_execution_has_no_host_or_oidc_authority_and_effects_use_fixed_submission(self):
+        publish = yaml.safe_load((ROOT / '.github/workflows/cookbook-publish.yml').read_text())['jobs']['publish']
+        self.assertEqual(publish['permissions']['packages'], 'write')
+        self.assertNotIn('id-token', publish['permissions'])
+        self.assertNotIn('KOMIZO_DEPLOY_KEY', str(publish))
+        delivery = yaml.safe_load((ROOT / '.github/workflows/cookbook-deliver.yml').read_text())['jobs']['deliver']
+        self.assertEqual(delivery['environment'], '${{ inputs.environment }}')
+        self.assertFalse(yaml.safe_load((ROOT / '.github/workflows/cookbook-deliver.yml').read_text())['concurrency']['cancel-in-progress'])
+        steps = delivery['steps']
+        authorizer = next(i for i, step in enumerate(steps) if 'scripts/authorize.py' in step.get('run', ''))
+        deploy = next(i for i, step in enumerate(steps) if step.get('uses', '').endswith('/deploy'))
+        backup = next(i for i, step in enumerate(steps) if step.get('uses', '').endswith('/application-backup-export'))
+        self.assertLess(backup, authorizer); self.assertLess(authorizer, deploy)
+        self.assertNotIn('KOMIZO_SECRET_', str(delivery))
+        self.assertFalse(any(step.get('uses', '').endswith('/application-readiness') for step in steps))
+        product = yaml.safe_load((ROOT / '.github/workflows/cookbook-readiness.yml').read_text())
+        role = product['jobs']['verify']
+        self.assertNotIn('id-token', role['permissions']); self.assertNotIn('packages', role['permissions'])
+        self.assertNotIn('KOMIZO_DEPLOY_KEY', str(product)); self.assertNotIn('registry-token', str(product))
+        self.assertNotIn('environment', role)
+        sources = yaml.safe_load((ROOT / 'recipe-sources/action.yml').read_text())
+        self.assertNotIn('mise', str(sources['runs']['steps']))
+        self.assertFalse(any(step.get('uses', '').endswith('/sdk-setup') for step in sources['runs']['steps']))
+
+    def test_native_lifecycle_has_no_shell_owner_secret_or_configuration_frontdoor(self):
+        deploy = yaml.safe_load((ROOT / 'deploy/action.yml').read_text())
+        lifecycle = yaml.safe_load((ROOT / 'run-task/action.yml').read_text())
+        for action in [deploy, lifecycle]:
+            self.assertFalse({'command', 'config', 'config-image', 'user', 'secrets'} & set(action['inputs']))
+        for obsolete in ['publish-config', 'set-secrets', 'set-service-env', 'activate', 'godot-static-delivery', 'godot-static-recovery']:
+            self.assertFalse((ROOT / obsolete / 'action.yml').exists())
+        connect = yaml.safe_load((ROOT / 'connect/action.yml').read_text())
+        self.assertEqual(connect['runs'], {'using': 'node24', 'main': 'connect.cjs', 'post': 'cleanup.cjs', 'post-if': 'always()'})
 
 
-if __name__=='__main__':unittest.main()
+if __name__ == '__main__': unittest.main()

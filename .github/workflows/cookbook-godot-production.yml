@@ -3,13 +3,8 @@ name: Verify exact public Godot release
   workflow_call:
     inputs:
       cookbook-ref:
-        required: false
+        required: true
         type: string
-        default: ''
-      tools-ref:
-        required: false
-        type: string
-        default: ''
       komizo-ref:
         required: true
         type: string
@@ -62,7 +57,6 @@ jobs:
     - uses: ./_godot_verification_actions/godot-production
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
-        tools-ref: ${{ inputs.tools-ref }}
         source: ${{ inputs.source }}
         release-id: ${{ inputs.release-id }}
         expected-source: ${{ inputs.expected-source }}
