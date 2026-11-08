@@ -32,6 +32,16 @@ name: Deliver accepted native release
       combined:
         type: boolean
         default: false
+    outputs:
+      phase:
+        description: Confirmed native operation phase
+        value: ${{ jobs.deliver.outputs.phase }}
+      release-digest:
+        description: Exact admitted deployment descriptor identity
+        value: ${{ jobs.deliver.outputs.release-digest }}
+      public-release-id:
+        description: Exact accepted Godot static payload identity
+        value: ${{ jobs.deliver.outputs.public-release-id }}
     secrets:
       KOMIZO_DEPLOY_KEY:
         required: true
@@ -184,6 +194,12 @@ jobs:
         registry-user: ${{ github.repository_owner }}
         registry-token: ${{ github.token }}
         expected-secret-generations: ${{ steps.plan.outputs.expected-secret-generations || '{}' }}
+    - name: Read the accepted public payload identity for independent browser acceptance
+      id: public
+      if: steps.deploy.outputs.phase == 'ready' && steps.plan.outputs.godot-production == 'true'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness }}
+      shell: bash
+      run: python3 -I -B _delivery_actions/scripts/public_identity.py
     - uses: ./_delivery_actions/health-check
       if: steps.deploy.outputs.phase == 'ready' && steps.plan.outputs.health-urls != ''
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness }}
@@ -201,6 +217,9 @@ jobs:
         if-no-files-found: warn
         retention-days: 30
     outputs:
+      phase: ${{ steps.deploy.outputs.phase }}
+      release-digest: ${{ steps.deploy.outputs.release-digest }}
+      public-release-id: ${{ steps.public.outputs.release-id }}
       readiness-required: ${{ steps.deploy.outputs.phase == 'ready' && (steps.plan.outputs.readiness != '' || steps.plan.outputs.readiness-operation
         == 'true') }}
   readiness:
