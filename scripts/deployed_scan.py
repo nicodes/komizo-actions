@@ -110,8 +110,14 @@ def helper(tools, name):
     return value
 
 
-def capture(arguments, environment, timeout=60):
-    value = subprocess.check_output(arguments, env=environment, text=True, timeout=timeout)
+def capture(arguments, environment, timeout=60, runtime=None):
+    if arguments[0] == 'podman':
+        if runtime is None: raise ValueError('native runtime authority is required')
+        if arguments[1:3] == ['image','inspect']:
+            return json.dumps(runtime.inspect_images(arguments[3:],environment=environment,timeout=timeout))
+        value=runtime.output(arguments[1:],environment=environment,timeout=timeout)
+    else:
+        value = subprocess.check_output(arguments, env=environment, text=True, timeout=timeout)
     if len(value.encode()) > 8 * 1024 * 1024:
         raise ValueError('inspection metadata exceeds its bound')
     return value
@@ -156,12 +162,15 @@ def source_lock(repository, tree, record, environment):
     return data
 
 
-def run(arguments, environment, timeout=60, **kwargs):
-    subprocess.run(arguments, env=environment, check=True, timeout=timeout, **kwargs)
+def run(arguments, environment, timeout=60, runtime=None, **kwargs):
+    if arguments[0] == 'podman':
+        if runtime is None: raise ValueError('native runtime authority is required')
+        return runtime.run(arguments[1:],environment=environment,check=True,timeout=timeout,**kwargs)
+    return subprocess.run(arguments, env=environment, check=True, timeout=timeout, **kwargs)
 
 
-def rust_image(identity, revision, lock, record, reports, component, environment):
-    info = json.loads(capture(['docker', 'image', 'inspect', identity], environment))
+def rust_image(identity, revision, lock, record, reports, component, environment, runtime=None):
+    info = json.loads(capture(['podman', 'image', 'inspect', identity], environment, runtime=runtime))
     if (not isinstance(info, list) or len(info) != 1 or info[0].get('Id') != identity
             or not IMAGE_ID.fullmatch(identity)):
         raise ValueError('exact immutable runtime image required')
@@ -170,7 +179,7 @@ def rust_image(identity, revision, lock, record, reports, component, environment
         raise ValueError('runtime source revision mismatch')
     if config.get('User') != record['user']:
         raise ValueError('runtime UID/GID changed')
-    container = capture(['docker', 'create', identity], environment).strip()
+    container = capture(['podman', 'create', '--pull=never', identity], environment, runtime=runtime).strip()
     if not re.fullmatch('[a-f0-9]{64}', container):
         raise ValueError('exact inspection container identity required')
     try:
@@ -178,7 +187,7 @@ def rust_image(identity, revision, lock, record, reports, component, environment
             root = Path(directory)
             for index, binary in enumerate(record['binaries']):
                 destination = root / ('binary-' + str(index))
-                run(['docker', 'cp', container + ':' + binary, str(destination)], environment)
+                run(['podman', 'cp', container + ':' + binary, str(destination)], environment, runtime=runtime)
                 if destination.is_symlink() or not destination.is_file() or destination.stat().st_size > 1024 ** 3:
                     raise ValueError('runtime executable must be a bounded regular file')
                 data = destination.read_bytes()
@@ -189,7 +198,7 @@ def rust_image(identity, revision, lock, record, reports, component, environment
             inputs = root / 'inputs'
             inputs.mkdir()
             path = inputs / 'Cargo.lock'
-            run(['docker', 'cp', container + ':' + record['lock_installed'], str(path)], environment)
+            run(['podman', 'cp', container + ':' + record['lock_installed'], str(path)], environment, runtime=runtime)
             if (path.is_symlink() or not path.is_file() or path.stat().st_size > 2 * 1024 * 1024
                     or path.read_bytes() != lock):
                 raise ValueError('deployed lockfile differs from the exact historical source')
@@ -205,8 +214,23 @@ def rust_image(identity, revision, lock, record, reports, component, environment
                    for v in result.get('Vulnerabilities', [])):
                 raise ValueError('High/Critical Rust dependency findings')
     finally:
-        run(['docker', 'rm', '-v', container], environment, timeout=30, stdout=subprocess.DEVNULL)
+        run(['podman', 'rm', '-v', container], environment, timeout=30, runtime=runtime, stdout=subprocess.DEVNULL)
     return dict(image_id=identity, revision=revision, inventory='cargo')
+
+
+def scan_os(image, identity, report, environment, runtime, oci):
+    """Scan the authenticated OCI closure through a read-only offline input."""
+    with tempfile.TemporaryDirectory(prefix='deployed-image-oci-') as directory:
+        root=Path(directory); path=root/'image.oci.tar'
+        metadata=oci.save_image(image,path,environment=environment,timeout=600)
+        if metadata['config_digest'] != identity:
+            raise ValueError('deployed image changed during OCI export')
+        with oci.OCIArchive(path,expected_config=identity) as archive:
+            layout=archive.materialize(root/'layout')
+            arguments=['trivy','image','--input',str(layout),'--scanners','vuln','--pkg-types','os,library','--severity','HIGH,CRITICAL']
+            run([*arguments,'--format','json','--output',str(report)],environment,timeout=600)
+            run([*arguments,'--ignore-unfixed','--exit-code','1'],environment,timeout=600)
+            archive.unchanged()
 
 
 def scan(root, path, tools, environment=None):
@@ -216,33 +240,35 @@ def scan(root, path, tools, environment=None):
     data = policy(root, path)
     deployed = helper(tools, 'scan-deployed')
     go = helper(tools, 'scan-image')
+    runtime=helper(tools,'container_runtime')
+    oci=helper(tools,'oci_archive')
     config = deployed.load_config(source_path(root, data['deployment']))
     if config['repository'] != environment.get('GITHUB_REPOSITORY', config['repository']):
         raise ValueError('deployed policy differs from its actual source repository')
     if set(config['components']) != set(data['rust']) | set(data['go']):
         raise ValueError('every deployed component requires its actual native scanner')
-    revisions = deployed.deployed_revisions(config['repository'], config['environment'])
+    deployments=deployed.deployed_releases(config['repository'],config['environment'])
+    revisions=list(dict.fromkeys(row['revision'] for row in deployments))
     reports = source_path(root, '.artifacts/security/deployed')
     reports.mkdir(parents=True, exist_ok=True)
     results, failures = [], []
-    for revision in revisions:
+    for deployment in deployments:
+        revision=deployment['revision']
+        descriptor=deployed.release_for_deployment(config,deployment,environment)
         tree = source_tree(config['repository'], revision, environment) if data['rust'] else {}
-        for component, image in zip(config['components'], deployed.product_images(config, revision), strict=True):
+        for component, image in zip(config['components'], deployed.product_images(config, descriptor), strict=True):
             try:
                 record = data['rust'].get(component)
                 lock = source_lock(config['repository'], tree, record, environment) if record else None
-                run(['docker', 'pull', image], environment, timeout=300)
-                inspected = json.loads(capture(['docker', 'image', 'inspect', image], environment))
+                run(['podman', 'pull', image], environment, timeout=300, runtime=runtime)
+                inspected = json.loads(capture(['podman', 'image', 'inspect', image], environment, runtime=runtime))
                 if not isinstance(inspected, list) or len(inspected) != 1 or not IMAGE_ID.fullmatch(inspected[0].get('Id', '')):
                     raise ValueError('deployed image identity is missing or ambiguous')
                 identity = inspected[0]['Id']
                 report = reports / f'{revision}-{component}-image.json'
-                run(['trivy', 'image', '--image-src', 'docker', '--scanners', 'vuln', '--pkg-types', 'os,library',
-                     '--severity', 'HIGH,CRITICAL', '--format', 'json', '--output', str(report), identity], environment, timeout=600)
-                run(['trivy', 'image', '--image-src', 'docker', '--scanners', 'vuln', '--pkg-types', 'os,library',
-                     '--severity', 'HIGH,CRITICAL', '--ignore-unfixed', '--exit-code', '1', identity], environment, timeout=600)
+                scan_os(image,identity,report,environment,runtime,oci)
                 if record and lock is not None:
-                    result = rust_image(identity, revision, lock, record, reports, component, environment)
+                    result = rust_image(identity, revision, lock, record, reports, component, environment,runtime=runtime)
                 else:
                     if component not in data['go']:
                         raise ValueError('historical implementation has no declared Go runtime scanner')
