@@ -59,11 +59,12 @@ class CiphertextTransfer(unittest.TestCase):
                 **{key: body[key] for key in ['application', 'instance', 'release_digest']},
                 'phase': 'ready', 'ok': True, 'reconciliation_required': False}
         pair = [self.expected, {'name': 'receipt.json', 'size_bytes': 123, 'sha256': 'sha256:'+'c'*64}]
-        valid = core | {'backup': {'status': 'ready', 'files': pair}}
+        ready = {'status': 'ready', 'release_digest': body['release_digest'], 'files': pair}
+        valid = core | {'backup': ready}
         self.assertEqual(submission.receipt(registry.canonical(valid), body), valid)
-        for bad in [{'status': 'absent'}, {'status': 'ready', 'files': pair[:1]},
-                    {'status': 'ready', 'files': [self.expected, self.expected]},
-                    {'status': 'ready', 'files': [self.expected | {'name': '../secret'}, pair[1]]}]:
+        for bad in [{'status': 'absent'}, {'status': 'ready', 'files': pair}, ready | {'release_digest': 'sha256:'+'d'*64},
+                    ready | {'release_digest': True}, ready | {'files': pair[:1]}, ready | {'files': [self.expected, self.expected]},
+                    ready | {'files': [self.expected | {'name': '../secret'}, pair[1]]}]:
             with self.assertRaises(ValueError): submission.receipt(registry.canonical(core | {'backup': bad}), body)
         absent_body = body | {'release_digest': 'absent'}
         absent = core | {'release_digest': 'absent', 'backup': {'status': 'absent'}}

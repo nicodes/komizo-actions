@@ -238,7 +238,9 @@ def receipt(raw, submitted):
         if backup == {'status': 'absent'}:
             if submitted['release_digest'] != 'absent':
                 raise ValueError('backup absence differs from exact instance target')
-        elif (not isinstance(backup, dict) or set(backup) != {'status', 'files'} or backup['status'] != 'ready'
+        elif (not isinstance(backup, dict) or set(backup) != {'status', 'release_digest', 'files'} or backup['status'] != 'ready'
+                or not isinstance(backup['release_digest'], str) or not oci_registry.DIGEST.fullmatch(backup['release_digest'])
+                or backup['release_digest'] != submitted['release_digest']
                 or not isinstance(backup['files'], list) or len(backup['files']) != 2):
             raise ValueError('backup completion lacks its exact encrypted file inventory')
         else:
