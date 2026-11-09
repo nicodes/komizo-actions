@@ -1,5 +1,6 @@
 """Actual browser matrices and readonly boundaries survive shared production setup."""
 import copy
+from contextlib import chdir
 import importlib.util
 import os
 from pathlib import Path
@@ -36,9 +37,16 @@ class PublicVerification(unittest.TestCase):
     def test_existing_manual_historical_expectations_do_not_change_the_checked_out_main_code(self):
         older='c'*40
         with self.assertRaisesRegex(ValueError,'current main payload'):
-            public.select(self.config,self.plan,SOURCE,RELEASE,self.env,self.entry['runner'],15,older,True)
-        self.assertEqual(public.select(self.config,self.plan,SOURCE,RELEASE,self.env,self.entry['runner'],15,older,False),self.entry)
-        with self.assertRaises(ValueError):public.select(self.config,self.plan,older,RELEASE,self.env,self.entry['runner'],15,older,False)
+            public.select(self.config,self.plan,SOURCE,RELEASE,self.env,self.entry['runner'],15,older)
+        manual={**self.env,'GITHUB_REPOSITORY':'example/game','GITHUB_WORKFLOW_SHA':SOURCE,
+            'GITHUB_WORKFLOW_REF':'example/game/.github/workflows/production-verification.yml@refs/heads/main'}
+        self.assertEqual(public.select(self.config,self.plan,SOURCE,RELEASE,manual,self.entry['runner'],15,older),self.entry)
+        with self.assertRaises(ValueError):public.select(self.config,self.plan,older,RELEASE,manual,self.entry['runner'],15,older)
+        for key,value in [('GITHUB_EVENT_NAME','push'),('GITHUB_WORKFLOW_SHA',older),
+            ('GITHUB_WORKFLOW_REF','example/game/.github/workflows/cd.yml@refs/heads/main'),
+            ('GITHUB_REPOSITORY','foreign/game')]:
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,'current main payload'):
+                public.select(self.config,self.plan,SOURCE,RELEASE,{**manual,key:value},self.entry['runner'],15,older)
 
     def test_coverage_cannot_invent_browsers_unknown_programs_or_generic_commands(self):
         for change in ['matrix','display','program','arguments','role','packages','duplicate']:
@@ -51,6 +59,48 @@ class PublicVerification(unittest.TestCase):
             if change=='packages':entry['packages']=['unknown']
             if change=='duplicate':plan['production']['include'].append(entry)
             with self.subTest(change=change),self.assertRaises(ValueError):public.select(self.config,plan,SOURCE,RELEASE,self.env,self.entry['runner'],15)
+
+    def test_native_main_admits_setup_and_verify_without_a_removed_static_module(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary);root=directory/'source';cookbook=directory/'cookbook'
+            def repository(path, browser=False):
+                path.mkdir()
+                (path/'README').write_text(path.name+'\n')
+                if browser:
+                    program=path/self.entry['entry']['path'];program.parent.mkdir(parents=True)
+                    program.write_text('// readonly native assertion\n')
+                subprocess.run(['git','init','-q',str(path)],check=True)
+                subprocess.run(['git','-C',str(path),'add','.'],check=True)
+                subprocess.run(['git','-C',str(path),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid',
+                    'commit','-qm','source'],check=True)
+                return subprocess.check_output(['git','-C',str(path),'rev-parse','HEAD'],text=True).strip()
+            source=repository(root,True);revision=repository(cookbook)
+            def relative(selected,path,exists=False):
+                result=selected/path
+                if exists and not result.is_file():raise ValueError('native assertion is absent')
+                return result
+            modules={'configuration':SimpleNamespace(load=lambda _root:self.config,relative=relative),
+                'godot_ci':SimpleNamespace(plan=lambda *_args:self.plan),
+                **{name:SimpleNamespace() for name in ['sdk_environment','node_component','godot_browser']}}
+            loaded=[]
+            def module(name):
+                if name not in modules:raise ValueError('removed provider module: '+name)
+                loaded.append(name);return modules[name]
+            context=SimpleNamespace(cookbook=cookbook,cookbook_revision=revision,tools=directory/'tools',
+                tools_revision='b'*40,module=module)
+            environment={**self.env,'PATH':os.environ['PATH'],'GITHUB_SHA':source}
+            for operation in ['setup','verify']:
+                arguments=['production.py',operation,'--cookbook-root',str(cookbook),'--cookbook-ref',revision,
+                    '--source',source,'--release',RELEASE,'--runner',self.entry['runner'],'--timeout','15']
+                with self.subTest(operation=operation),chdir(root),patch.dict(os.environ,environment,clear=True),\
+                     patch.object(sys,'argv',arguments),patch.dict(sys.modules,modules|{'godot_static':None}),\
+                     patch.object(public.recipe_context,'accepted_context',return_value=context),\
+                     patch.object(public,'prepare') as prepare,patch.object(public,'verify') as verify:
+                    public.main()
+                    selected=prepare if operation=='setup' else verify
+                    self.assertEqual(selected.call_count,1)
+                    self.assertEqual(selected.call_args.args[0],root)
+            self.assertNotIn('godot_static',loaded)
 
     def test_native_assertions_retain_three_or_one_browsers_and_optional_blank_probe(self):
         with tempfile.TemporaryDirectory() as temporary:
