@@ -48,6 +48,7 @@ class NativeBackupCommands(unittest.TestCase):
             with patch.object(backup.subprocess, 'run') as run:
                 backup.upload('mailroom', Path('/verified/tools'), root)
                 args = run.call_args.args[0]
+                self.assertEqual(args[:4], [os.sys.executable, '-I', '-B', '/verified/tools/helpers/upload-backup.py'])
                 self.assertEqual(args[args.index('--slug') + 1], 'mailroom')
                 self.assertEqual(args[args.index('--taken-at') + 1], '20261108T101112Z')
             (export / 'receipt.json').write_text('{"verified_at":"not a timestamp"}')

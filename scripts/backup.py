@@ -76,7 +76,7 @@ def upload(project, tools, directory):
     if receipt.is_symlink() or not receipt.is_file():
         raise ValueError('upload requires a received encrypted backup receipt')
     taken_at = stamp(json.loads(receipt.read_text()))
-    subprocess.run([os.sys.executable, str(tools / 'helpers/upload-backup.py'), '--slug', project,
+    subprocess.run([os.sys.executable, '-I', '-B', str(tools / 'helpers/upload-backup.py'), '--slug', project,
                     '--cms', str(directory / 'export/snapshot.cms'), '--receipt', str(receipt),
                     '--taken-at', taken_at], check=True, timeout=600)
 
