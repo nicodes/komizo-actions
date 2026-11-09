@@ -14,15 +14,22 @@ inputs:
 runs:
   using: composite
   steps:
-  - name: Select reviewed transport helpers
-    uses: nicodes/tools/helpers@d475b54c402754a5a37a44fbd65328551995025c
+  - name: Check out the reviewed encrypted transport reader
+    uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    with:
+      repository: nicodes/tools
+      ref: 7873bb0fdae1726295dbf7f9317c58daa374b2a6
+      path: .artifacts/recovery-transport-sdk
+      persist-credentials: false
+      fetch-depth: 1
   - name: Verify immutable artifact transport
     shell: bash
     env:
       PROJECT_DIRECTORY: ${{ inputs.directory }}
       SOURCE_RUN_ID: ${{ inputs.source-run-id }}
       SOURCE_ARTIFACT_ID: ${{ inputs.artifact-id }}
+      TRANSPORT_TOOLS_DIRECTORY: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
       GH_TOKEN: ${{ github.token }}
     run: |-
       cd "$PROJECT_DIRECTORY" || exit
-      python3 "$GITHUB_ACTION_PATH/evidence.py"
+      python3 -I -B "$GITHUB_ACTION_PATH/evidence.py" --tools-root "$TRANSPORT_TOOLS_DIRECTORY"

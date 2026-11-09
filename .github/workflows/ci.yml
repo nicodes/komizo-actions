@@ -95,6 +95,15 @@ jobs:
         path: .artifacts/recipe-task-tools
         fetch-depth: 1
         persist-credentials: false
+    - name: Prepare the accepted format 2 transport SDK for real envelope controls
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: 1
+      with:
+        repository: nicodes/tools
+        ref: 7873bb0fdae1726295dbf7f9317c58daa374b2a6
+        path: .artifacts/recovery-transport-sdk
+        fetch-depth: 1
+        persist-credentials: false
     - name: Test
       shell: bash
       run: |-
@@ -114,3 +123,4 @@ jobs:
       RECIPE_TASK_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
       RECIPE_TASK_SDK_REF: d68b54a178d84cd206a68af3e947a6d8c223286f
       RECIPE_TASK_TOOLS: ${{ github.workspace }}/.artifacts/recipe-task-tools
+      RECOVERY_TEST_TOOLS: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
