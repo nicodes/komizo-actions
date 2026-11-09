@@ -71,7 +71,10 @@ class CiphertextTransfer(unittest.TestCase):
 
     def test_observed_stopped_intent_skips_all_backup_and_export_effects(self):
         inspection = {'kind': 'komizo.instance', 'version': 1, 'application': 'mailroom', 'instance': 'production',
-                      'installed': {'release_digest': 'sha256:'+'a'*64, 'desired_running': False, 'operation_id': 'c'*32}}
+                      'installed': {'release_digest': 'sha256:'+'a'*64, 'desired_running': False, 'operation_id': 'c'*32},
+                      'prepared': {'release_digest': 'sha256:'+'b'*64, 'operation_id': 'd'*32}}
+        inspection = submission.receipt(registry.canonical(inspection), {'action': 'inspect', 'release_digest': 'current',
+            'application': 'mailroom', 'instance': 'production'})
         with tempfile.TemporaryDirectory() as temporary, patch.object(submission, 'request', return_value={'action': 'inspect'}) as request, \
                 patch.object(submission, 'submit', return_value=inspection) as submit, patch.object(backup, 'download') as download:
             root = Path(temporary)

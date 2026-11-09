@@ -75,6 +75,21 @@ class FixedSubmission(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError): submission.receipt(registry.canonical(valid | change), body)
         with self.assertRaises(ValueError): submission.receipt(b'not a receipt', body)
 
+    def test_inspection_preserves_distinct_stopped_installed_and_prepared_identities(self):
+        body = {'action': 'inspect', 'release_digest': 'current', 'application': 'mailroom', 'instance': 'production'}
+        installed = {'release_digest': 'sha256:'+'a'*64, 'desired_running': False, 'operation_id': 'b'*32}
+        prepared = {'release_digest': 'sha256:'+'c'*64, 'operation_id': 'd'*32}
+        inspection = {'kind': 'komizo.instance', 'version': 1, 'application': 'mailroom', 'instance': 'production',
+                      'installed': installed, 'prepared': prepared}
+        self.assertEqual(submission.receipt(registry.canonical(inspection), body), inspection)
+        for candidate in [None, 'untyped', prepared | {'release_digest': 'current'}, prepared | {'operation_id': 'short'},
+                          prepared | {'release_digest': True}, prepared | {'desired_running': True}]:
+            with self.subTest(prepared=candidate), self.assertRaises(ValueError):
+                submission.receipt(registry.canonical(inspection | {'prepared': candidate}), body)
+        for candidate in [None, installed | {'desired_running': True}]:
+            with self.subTest(installed=candidate), self.assertRaises(ValueError):
+                submission.receipt(registry.canonical(inspection | {'installed': candidate}), body)
+
     def test_ssh_uses_fixed_command_stdin_private_config_and_never_retries(self):
         body = self.request(); calls = []
         def execute(arguments, **options):

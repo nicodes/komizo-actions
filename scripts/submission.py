@@ -180,7 +180,7 @@ def receipt(raw, submitted):
         raise ValueError('submission outcome is unknown; inspect the durable operation before retrying') from None
     if submitted['action'] == 'inspect' and submitted['release_digest'] == 'current':
         required = {'kind', 'version', 'application', 'instance', 'installed'}
-        if (not isinstance(value, dict) or not required <= set(value) <= required | {'plan'} or value.get('kind') != 'komizo.instance'
+        if (not isinstance(value, dict) or not required <= set(value) <= required | {'plan', 'prepared'} or value.get('kind') != 'komizo.instance'
                 or type(value.get('version')) is not int or value['version'] != 1
                 or any(value.get(key) != submitted[key] for key in ['application', 'instance'])):
             raise ValueError('instance inspection returned an invalid identity')
@@ -191,6 +191,13 @@ def receipt(raw, submitted):
                 or type(installed['desired_running']) is not bool
                 or not isinstance(installed['operation_id'], str) or not NONCE.fullmatch(installed['operation_id'])):
             raise ValueError('instance inspection returned invalid installed state')
+        if 'prepared' in value:
+            prepared = value['prepared']
+            if (installed is None or installed['desired_running'] or not isinstance(prepared, dict)
+                    or set(prepared) != {'release_digest', 'operation_id'}
+                    or not isinstance(prepared['release_digest'], str) or not oci_registry.DIGEST.fullmatch(prepared['release_digest'])
+                    or not isinstance(prepared['operation_id'], str) or not NONCE.fullmatch(prepared['operation_id'])):
+                raise ValueError('instance inspection returned invalid prepared state')
         if 'plan' in value:
             plan = value['plan']
             if (submitted['instance'] == 'production' or not isinstance(plan, dict)
