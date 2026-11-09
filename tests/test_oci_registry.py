@@ -23,7 +23,7 @@ class MemoryRegistry(registry.Registry):
     def _send(self, method, path, headers, body=b'', size=None):
         self.calls.append((method, path))
         parsed = urlsplit(path)
-        if '/blobs/uploads/' in parsed.path:
+        if '/blobs/uploads/' in parsed.path or '/blobs/upload/' in parsed.path:
             if method == 'POST':
                 return 202, {'location': self.location}, b''
             self.assert_upload(method == 'PUT')
@@ -80,6 +80,40 @@ class ArtifactPublication(unittest.TestCase):
         remote.publish_static(self.artifact, io.BytesIO(self.payload))
         self.assertTrue(all(method in {'HEAD', 'GET'} for method, _ in remote.calls))
 
+    def test_ghcr_singular_upload_location_preserves_opaque_query_and_exact_content(self):
+        query = 'state=opaque%2fvalue%3d&empty=&literal=one+two&repeat=1&repeat=2'
+        for prefix in ['/v2/example/mailroom-web/blobs/upload/',
+                       'https://ghcr.io/v2/example/mailroom-web/blobs/upload/',
+                       'https://ghcr.io:443/v2/example/mailroom-web/blobs/upload/']:
+            remote = MemoryRegistry()
+            remote.location = prefix + 'owned?' + query
+            with self.subTest(prefix=prefix):
+                self.assertEqual(remote.publish_static(self.artifact, io.BytesIO(self.payload)), self.artifact['reference'])
+                uploads = [path for method, path in remote.calls if method == 'PUT' and '/blobs/upload/' in path]
+                self.assertEqual(len(uploads), 2)
+                for path in uploads:
+                    self.assertTrue(path.startswith('/v2/example/mailroom-web/blobs/upload/owned?' + query + '&digest='))
+                    self.assertEqual(len(parse_qs(urlsplit(path).query)['digest']), 1)
+                self.assertEqual(remote.blobs[registry.digest(self.payload)], self.payload)
+
+    def test_generic_registry_plural_upload_preserves_the_original_query(self):
+        remote = MemoryRegistry()
+        remote.registry = 'registry.example'
+        self.assertEqual(remote._upload_path('/v2/example/mailroom-web/blobs/uploads/owned?state=a%2fb%3d',
+                                             registry.digest(self.payload)),
+                         '/v2/example/mailroom-web/blobs/uploads/owned?state=a%2fb%3d&digest=sha256%3A'
+                         + hashlib.sha256(self.payload).hexdigest())
+
+    def test_singular_upload_is_not_granted_to_other_registry_authorities(self):
+        for authority in ['registry.example', 'ghcr.io:444']:
+            remote = MemoryRegistry()
+            remote.registry = authority
+            remote.location = '/v2/example/mailroom-web/blobs/upload/owned'
+            with self.subTest(authority=authority), self.assertRaises(registry.RegistryError):
+                remote.publish_static(self.artifact | {'reference': self.artifact['reference'].replace('ghcr.io', authority)},
+                                      io.BytesIO(self.payload))
+            self.assertFalse(any(method == 'PUT' for method, _ in remote.calls))
+
     def test_changed_payload_or_manifest_refuses_before_registry_effects(self):
         for artifact, body in [(self.artifact, self.payload + b'changed'),
                                (self.artifact | {'reference': 'ghcr.io/example/mailroom-web@sha256:' + '0' * 64}, self.payload),
@@ -96,7 +130,18 @@ class ArtifactPublication(unittest.TestCase):
                          'http://ghcr.io/v2/example/mailroom-web/blobs/uploads/owned',
                          '/v2/another/application/blobs/uploads/owned',
                          '/v2/example/mailroom-web/blobs/uploads/../manifests/owned',
-                         '/v2/example/mailroom-web/blobs/uploads/owned?digest=sha256:chosen']:
+                         '/v2/example/mailroom-web/blobs/uploads/owned?digest=sha256:chosen',
+                         'https://foreign.example/v2/example/mailroom-web/blobs/upload/owned',
+                         'https://ghcr.io:444/v2/example/mailroom-web/blobs/upload/owned',
+                         'https://name:secret@ghcr.io/v2/example/mailroom-web/blobs/upload/owned',
+                         '/v2/another/application/blobs/upload/owned',
+                         '/v2/example/mailroom-web-other/blobs/upload/owned',
+                         '/v2/example/mailroom-web/blobs/upload/',
+                         '/v2/example/mailroom-web/blobs/upload/../manifests/owned',
+                         '/v2/example/mailroom-web/blobs/upload/%2e%2e/manifests/owned',
+                         '/v2/example/mailroom-web/blobs/upload/owned#fragment',
+                         '/v2/example/mailroom-web/blobs/upload/owned?%64igest=sha256:chosen',
+                         '/v2/example/mailroom-web/blobs/upload/owned?state=line\nbreak']:
             remote = MemoryRegistry()
             remote.location = location
             with self.subTest(location=location), self.assertRaises(registry.RegistryError):
