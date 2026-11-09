@@ -37,7 +37,9 @@ class BackupNamespace(unittest.TestCase):
             'def entrypoint_files(root, revision): return {"mise.toml":b"fixture"}\n'
             'def check_entrypoint(root, revision):\n'
             ' if (root/"cookbook.toml").read_bytes()!=b"accepted recipe fixture\\n": raise ValueError("changed caller entrypoint")\n')
-        (recipe/'configuration.py').write_text('def load(root): return {"recipe":"react-native","ci":{}}\n'
+        (recipe/'configuration.py').write_text('import tomllib\n'
+            'def parse_source_data(raw, **options): return tomllib.loads(raw.decode() if isinstance(raw,bytes) else raw)\n'
+            'def load(root): return {"recipe":"react-native","ci":{}}\n'
             'def ci_settings(config): return {}\n')
         (recipe/'operational_workflows.py').write_text('def relative(root, name, exists=False): return root/name\n'
             'def declaration(root, config): return {"restore_profiles":[{"name":"legacy","project":"previous","config":"deploy/restore.toml"}]}\n')

@@ -10,11 +10,12 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+import native_recipe_fixture
 
 spec = importlib.util.spec_from_file_location('profile_backup', Path(__file__).parents[1] / 'scripts/backup.py')
 backup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(backup)
-TOOLS = Path(os.environ['RECIPE_LEGACY_TEST_SDK'])
+TOOLS = Path(os.environ['RECIPE_TASK_SDK'])
 
 
 class RestoreProfiles(unittest.TestCase):
@@ -34,12 +35,12 @@ class RestoreProfiles(unittest.TestCase):
         self.cookbook = self.root / 'selected-cookbook'
         (self.cookbook/'cookbook').mkdir(parents=True)
         (self.cookbook/'cookbook/application_restore.py').write_text('# Explicit selected verifier fixture; never executed in these transport tests.\n')
-        self.config = self.root / 'deploy/restore.json'
+        self.config = self.root / 'deploy/restore.toml'
         native = dict(project='demo', backend='postgresql', image_base='ghcr.io/owner/demo',
             runtime_role='demo_runtime', dsn_file='/run/secrets/database.url', api_port=8080,
             health_path='/health', root='/srv/public/app', env={})
-        self.config.write_text(json.dumps(native))
-        (self.root / 'deploy/restore-previous.json').write_text(json.dumps(native | dict(project='previous')))
+        native_recipe_fixture.write(self.config,native)
+        native_recipe_fixture.write(self.root / 'deploy/restore-previous.toml',native | dict(project='previous'))
         self.valid = dict(version=1, project='demo', published_ports=[], database_integrity='ok',
             database_boot='passed', api_boot='passed', frontend_artifact='passed', cleanup='passed', database_restore='passed',
             scope='disposable authenticated snapshot restoration',current_source_ci_acceptance=False,
@@ -146,42 +147,37 @@ class RestoreProfiles(unittest.TestCase):
         self.assertFalse(self.archives[0].exists())
         self.assertTrue((self.inputs / 'snapshot.cms').exists())
 
+    def select_profile(self,name,project):
+        context=SimpleNamespace(cookbook=TOOLS,module=lambda _:native_recipe_fixture.Module('operational_workflows'))
+        return backup.restore_profile(self.root,TOOLS,name,project,context=context)
+
     def test_only_declared_default_and_historical_profiles_select_native_configuration(self):
         config = dict(version=1, project='demo', komizo_ref='a' * 40,
             publish_runner='ubuntu-24.04', publish_timeout=35, deploy_runner='ubuntu-24.04',
             deploy_timeout=100, health_urls=['https://example.test/readyz'],
-            notification_url='https://example.test/', secrets={}, variables={})
-        (self.root / 'deploy/delivery.json').write_text(json.dumps(config))
-        (self.root / 'deploy/operations.json').write_text(json.dumps(dict(version=1, project='demo',
-            restore_profiles=[dict(name='default', project='demo', config='deploy/restore.json'),
-                              dict(name='legacy', project='previous', config='deploy/restore-previous.json')])))
-        (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.json"\n[operations]\ndefinition="deploy/operations.json"\n')
-        self.assertEqual(backup.restore_profile(self.root, TOOLS, 'default', 'demo'), self.config)
-        self.assertEqual(backup.restore_profile(self.root, TOOLS, 'legacy', 'previous'), self.root / 'deploy/restore-previous.json')
-        for name, project in [('default', 'previous'), ('unknown', 'demo'), ('../outside', 'demo')]:
-            with self.subTest(name=name, project=project), self.assertRaises(ValueError):
-                backup.restore_profile(self.root, TOOLS, name, project)
+            notification_url='https://example.test/')
+        native_recipe_fixture.write(self.root / 'deploy/delivery.toml',config)
+        native_recipe_fixture.write(self.root / 'deploy/operations.toml',dict(version=1, project='demo',
+            restore_profiles=[dict(name='default', project='demo', config='deploy/restore.toml'),
+                              dict(name='legacy', project='previous', config='deploy/restore-previous.toml')]))
+        (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.toml"\n[operations]\ndefinition="deploy/operations.toml"\n')
+        with patch.object(__import__('recipe_data'),'load',side_effect=lambda root,tools: native_recipe_fixture.load(root)):
+            self.assertEqual(self.select_profile('default', 'demo'), self.config)
+            self.assertEqual(self.select_profile('legacy', 'previous'), self.root / 'deploy/restore-previous.toml')
+            for name, project in [('default', 'previous'), ('unknown', 'demo'), ('../outside', 'demo')]:
+                with self.subTest(name=name, project=project), self.assertRaises(ValueError):
+                    self.select_profile(name, project)
 
-    def test_local_default_resolves_the_existing_exact_make_pin_without_fetching(self):
-        source=self.root/'stage'
-        source.mkdir()
-        def git(*arguments):
-            return subprocess.check_output(['git','-c','user.name=Fixture','-c','user.email=fixture@example.test',
-                '-c','commit.gpgsign=false','-C',str(source),*arguments],text=True,stderr=subprocess.DEVNULL).strip()
-        git('init')
-        (source/'README').write_text('fixture\n')
-        (source/'.gitignore').write_text('ignored\n')
-        git('add','.')
-        git('commit','-qm','Fixture cookbook')
-        revision=git('rev-parse','HEAD')
-        destination=self.root/'.artifacts/cookbook'/revision
-        destination.parent.mkdir(parents=True)
-        source.rename(destination)
-        (self.root/'Makefile').write_text('COOKBOOK_REF := '+revision+'\n')
-        self.assertEqual(backup.prepared_cookbook(self.root),destination)
-        (destination/'ignored').write_text('poison')
-        with self.assertRaises(ValueError):
-            backup.prepared_cookbook(self.root)
+    def test_make_only_discovery_refuses_without_importing_or_fetching_a_recipe(self):
+        (self.root/'Makefile').write_text('COOKBOOK_REF := '+'a'*40+'\n')
+        with patch.object(backup.subprocess,'check_output') as effects:
+            with self.assertRaises((OSError,ValueError)):
+                backup.prepared_cookbook(self.root)
+            with self.assertRaises((OSError,ValueError)):
+                backup.local_recipe_context(self.root)
+            with self.assertRaisesRegex(ValueError,'verified Cookbook context'):
+                backup.restore_profile(self.root,TOOLS,'default','demo')
+            effects.assert_not_called()
 
 
 if __name__ == '__main__':

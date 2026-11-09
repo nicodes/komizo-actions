@@ -11,7 +11,7 @@ inputs:
     description: Exact verified ordinary payload identity
     required: true
   expected-source:
-    description: Expected deployed source when the existing native manual policy permits a historical payload
+    description: Expected deployed source for the read-only production-verification.yml manual workflow
     required: false
     default: ''
   runner:

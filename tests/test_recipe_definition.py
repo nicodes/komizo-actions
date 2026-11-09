@@ -15,8 +15,9 @@ OLD = '14dd4792df910b8f72ae10bf01c7e426b97b667e'
 
 class EffectiveDefinition(unittest.TestCase):
     def setUp(self):
-        self.strict = Path(os.environ['RECIPE_CONTRACT_TEST_SDK']).resolve()
-        self.reference = os.environ['RECIPE_CONTRACT_TEST_SDK_REF']
+        self.strict = Path(os.environ['RECIPE_TASK_SDK']).resolve()
+        self.tools = Path(os.environ['RECIPE_TASK_TOOLS']).resolve()
+        self.reference = os.environ['RECIPE_TASK_SDK_REF']
         self.legacy = Path(os.environ['RECIPE_TEST_SDK']).resolve()
         self.assertRegex(self.reference, r'^[a-f0-9]{40}$')
         self.assertEqual(self.commit(self.strict), self.reference)
@@ -29,10 +30,8 @@ class EffectiveDefinition(unittest.TestCase):
         (self.root/'deploy').mkdir()
         self.body = 'version=1\nrecipe="react-native"\n[ci]\ntimeout_minutes=90\n[[tests.unit]]\nrunner="python"\npath="tests/native.py"\ntimeout=7\n'
         (self.root/'cookbook.toml').write_text(self.body)
-        definition = {'version':1,'project':'demo','image_base':'ghcr.io/example/demo',
-            'inputs':{'artifacts':['public'], 'images':['ghcr.io/example/demo-gate:{revision}'],
-                      'environment':[], 'revision_environment':[]}, 'tests':['lint','unit','security']}
-        (self.root/'deploy/release.json').write_text(json.dumps(definition))
+        (self.root/'deploy/release.toml').write_text('version=1\nproject="demo"\nimage_base="ghcr.io/example/demo"\n'
+            +'tests=["lint","unit","security"]\n[inputs]\nartifacts=["public"]\nimages=[]\nenvironment=[]\nrevision_environment=[]\n')
 
     def commit(self, root):
         return subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
@@ -40,11 +39,12 @@ class EffectiveDefinition(unittest.TestCase):
     def run_control(self, code, *args):
         prefix = '''import importlib.util,json,os,sys
 from pathlib import Path
-sys.path.insert(0,sys.argv[1]);import recipe_data
+sys.path.insert(0,sys.argv[1]);import recipe_data,recipe_context
 root,tools,legacy=map(Path,sys.argv[2:5])
+recipe_context.Context(tools,sys.argv[5],Path(sys.argv[6])).activate()
 '''
         result = subprocess.run([sys.executable,'-I','-B','-c',prefix+code,
-            str(ROOT/'scripts'),str(self.root),str(self.strict),str(self.legacy),self.reference,*args],
+            str(ROOT/'scripts'),str(self.root),str(self.strict),str(self.legacy),self.reference,str(self.tools),*args],
             capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
         return json.loads(result.stdout)
@@ -58,23 +58,22 @@ assert 'definition' not in config.get('artifacts',{})
 assert (root/name).is_file()
 print(json.dumps({'name':name,'ci':config['ci'],'tests':config['tests']}))
 ''')
-        self.assertEqual(actual['name'],'deploy/release.json')
+        self.assertEqual(actual['name'],'deploy/release.toml')
         self.assertEqual(actual['ci'],{'runner':'ubuntu-24.04','timeout_minutes':90})
         self.assertEqual(actual['tests']['unit'][0]['timeout'],7)
         self.assertEqual((self.root/'cookbook.toml').read_text(),self.body)
 
-    def test_real_historical_sdk_requires_its_original_explicit_definition(self):
-        body = self.body+'[artifacts]\ndefinition="deploy/release.json"\n'
+    def test_obsolete_explicit_definition_contract_is_refused_without_source_mutation(self):
+        body=self.body+'[artifacts]\ndefinition="deploy/release.json"\n'
         (self.root/'cookbook.toml').write_text(body)
-        actual = self.run_control('''config=recipe_data.load(root,legacy)
-name=recipe_data.effective_definition(legacy,config)
-config['artifacts'].pop('definition')
-try: recipe_data.effective_definition(legacy,config)
-except ValueError: refused=True
-else: raise AssertionError('historical SDK silently acquired a new default')
-print(json.dumps({'name':name,'missing_explicit_refused':refused}))
+        actual=self.run_control('''refused=0
+for action in [lambda:recipe_data.load(root,tools),lambda:recipe_data.load(root,legacy),lambda:recipe_data.effective_definition(legacy,{'artifacts':{'definition':'deploy/release.json'}})]:
+ try:action()
+ except ValueError:refused+=1
+ else:raise AssertionError('retired explicit definition or SDK was admitted')
+print(json.dumps({'refused':refused}))
 ''')
-        self.assertEqual(actual,{'name':'deploy/release.json','missing_explicit_refused':True})
+        self.assertEqual(actual,{'refused':3})
         self.assertEqual((self.root/'cookbook.toml').read_text(),body)
 
     def test_broken_current_api_and_foreign_cached_sdk_cannot_fall_back_to_old_source_keys(self):

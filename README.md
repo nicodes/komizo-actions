@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 3463646906a8547dde8c747efc8d01aaa2291b382c534976b1ed07aeb5a15a8d -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 9911e5c9515be9286aae0cb07e6eaa757ed82c2ce66dbc2c7a684128e2e376c3 -->
 
 # Komizo Actions
 
@@ -6,7 +6,7 @@ GitHub adapters for immutable application releases, protected host submission, p
 
 ## Source and release preparation
 
-Recipe-aware adapters require an exact `cookbook-ref`. Cookbook selects its reviewed Tools dependency; callers cannot substitute another helper revision. Trusted preparation verifies repository origin, source identity and provider ancestry before preparing the caller's SDKs.
+Recipe-aware adapters require an exact `cookbook-ref`, native TOML declarations and the provider's generated Mise entrypoint and task APIs. Obsolete Make and JSON recipe protocols are rejected. Cookbook selects its reviewed Tools dependency; callers cannot substitute another helper revision. Trusted preparation verifies repository origin, source identity and provider ancestry before preparing the caller's SDKs.
 
 Applications declare native workloads in `deploy/application.toml`. Complete source validation freezes a closed release packet containing `release.json`, `inventory.json`, selected image OCI archives, selected static archives and explicitly inventoried metadata. Static applications need no image. Publication uploads exact accepted OCI manifests and blobs without rebuilding artifacts or changing the descriptor.
 
@@ -26,7 +26,7 @@ Routine CI supplies logical secret references and optional expected generations.
 
 Preview workflows separate trusted request planning, selected-source validation, immutable publication and protected effects. The host supplies public planned origins before the descriptor is compiled and tested. Preview descriptors bind those origins, an isolated instance graph and its lifetime before acceptance. Cleanup uses the same application authority and recorded resource ownership. Preview health uses the descriptor’s concrete app root and dedicated API root origins. Route matchers such as `/api/*` remain source-owned dispatch rules. Target validation precedes submission, and live Preview URLs require a successful `ready` operation; stopped preparation publishes no live URLs.
 
-`application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
+`application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Automated public checks bind the exact current source and immutable release identity. A read-only manual `production-verification.yml` dispatch from the exact main workflow may select an explicit historical `expected-source`; product configuration cannot enable historical selection for automated delivery. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
 
 Source and security audit workflows retain declared runners, deadlines, native assertions and reporting permissions. `recipe-setup` prepares the exact provider identities. `application-delivery` prepares a read-only delivery plan; the protected reusable workflow performs host effects.
 

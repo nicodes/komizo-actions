@@ -1,4 +1,4 @@
-"""Historical SDK text admission retains native newline semantics and raw bytes."""
+"""Obsolete Make entrypoints never acquire authority through newline variants."""
 import os
 from pathlib import Path
 import subprocess
@@ -11,7 +11,7 @@ REFERENCE='14dd4792df910b8f72ae10bf01c7e426b97b667e'
 
 
 class LegacyEntrypoint(unittest.TestCase):
-    def test_actual_historical_SDK_admits_LF_CRLF_CR_without_rewriting_or_execution(self):
+    def test_obsolete_SDK_refuses_LF_CRLF_CR_without_rewriting_or_execution(self):
         sdk=Path(os.environ['RECIPE_TEST_SDK']).resolve()
         self.assertEqual(subprocess.check_output(['git','-C',str(sdk),'rev-parse','HEAD'],text=True).strip(),REFERENCE)
         with tempfile.TemporaryDirectory(prefix='historical source newlines ') as temporary:
@@ -29,19 +29,23 @@ body=generate.makefile(root,reference)
 for newline in ['\\n','\\r\\n','\\r']:
  raw=body.replace('\\n',newline).encode();path=root/'Makefile';path.write_bytes(raw)
  before={p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob('*') if p.is_file()}
- assert recipe_data.entrypoint_revision(root,sdk)==reference
- assert recipe_data.canonical_entrypoint(root,sdk,reference)==['Makefile']
+ for action in [lambda:recipe_data.entrypoint_revision(root,sdk),
+                lambda:recipe_data.canonical_entrypoint(root,sdk,reference),
+                lambda:recipe_data.task_command(sdk,'build')]:
+  try:action()
+  except ValueError:pass
+  else:raise AssertionError('obsolete Make SDK acquired native authority')
  assert before=={p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob('*') if p.is_file()}
  path.write_bytes(raw+b'# changed canonical source')
  try:recipe_data.canonical_entrypoint(root,sdk,reference)
  except ValueError:pass
  else:raise AssertionError('changed historical task bytes admitted')
-print('All3 native newline forms bind the genuine historical SDK and preserve raw source')
+print('All3 Make newline forms refuse obsolete SDK authority and preserve raw source')
 '''
             result=subprocess.run([sys.executable,'-I','-B','-c',program,str(ROOT/'scripts'),
                 str(root),str(sdk),REFERENCE],text=True,capture_output=True,timeout=30)
             self.assertEqual(result.returncode,0,result.stderr)
-            self.assertIn('All3 native newline forms',result.stdout)
+            self.assertIn('All3 Make newline forms refuse obsolete SDK authority',result.stdout)
 
 
 if __name__=='__main__':

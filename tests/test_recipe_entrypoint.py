@@ -53,7 +53,7 @@ after={p.relative_to(root).as_posix():p.read_bytes() for p in root.rglob('*') if
 assert before==after
 print(json.dumps({'entrypoints':list(generated),'product_executed':False,'source_unchanged':True}))
 ''')
-        self.assertEqual(result['entrypoints'], ['mise.toml'])
+        self.assertEqual(result['entrypoints'], ['mise.toml', '.gitattributes'])
         self.assertTrue(result['source_unchanged'])
 
     def test_changed_generated_bytes_and_cookbook_data_refuse(self):
@@ -93,6 +93,11 @@ try:recipe_data.entrypoint_revision(root,tools)
 except ValueError as error:assert 'another cookbook SDK' in str(error)
 else:raise AssertionError('foreign SDK supplied task authority')
 finally:mise_entrypoint.__file__=original
+original=generate.__file__;generate.__file__=str(root/'cookbook/generate.py')
+try:recipe_data.canonical_entrypoint(root,tools,revision,generate)
+except ValueError as error:assert 'another cookbook SDK' in str(error)
+else:raise AssertionError('supplied foreign generator supplied task authority')
+finally:generate.__file__=original
 print(json.dumps({'refused':True}))
 ''')
         self.assertEqual(result, {'refused': True})

@@ -10,5 +10,5 @@ runs:
     - shell: bash
       env:
         PROJECT: ${{ inputs.project }}
-        TOOLS_ROOT: ${{ env.COOKBOOK_ROOT && env.TOOLS_ROOT || format('{0}/_delivery_cookbook', github.workspace) }}
+        TOOLS_ROOT: ${{ env.TOOLS_ROOT }}
       run: python3 -I -B "$GITHUB_ACTION_PATH/../scripts/backup.py" upload --project "$PROJECT"

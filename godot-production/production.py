@@ -8,7 +8,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import tomllib
 
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
@@ -21,10 +20,19 @@ def literal_sha(value):
     return value
 
 
-def select(config, plan, source, release, environment, runner, timeout, expected_source=None, current_source=True):
+def manual_context(environment, source):
+    repository=environment.get('GITHUB_REPOSITORY','')
+    return (re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repository) is not None
+        and environment.get('GITHUB_EVENT_NAME')=='workflow_dispatch'
+        and environment.get('GITHUB_WORKFLOW_SHA')==source
+        and environment.get('GITHUB_WORKFLOW_REF')==repository+'/.github/workflows/production-verification.yml@refs/heads/main')
+
+
+def select(config, plan, source, release, environment, runner, timeout, expected_source=None):
     literal_sha(source)
     expected_source=literal_sha(expected_source or source)
-    if current_source and expected_source!=source:raise ValueError('this native public workflow requires the current main payload')
+    if expected_source!=source and not manual_context(environment,source):
+        raise ValueError('this native public workflow requires the current main payload')
     if (environment.get('GITHUB_REF')!='refs/heads/main' or source!=environment.get('GITHUB_SHA')
             or environment.get('GITHUB_EVENT_NAME') not in {'push','workflow_dispatch'}):
         raise ValueError('production verification requires the exact trusted main source')
@@ -105,10 +113,8 @@ def verify(root,entry,environment,source,release,run=execute):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('operation',choices=['setup','verify'])
-    parser.add_argument('--tools',type=Path,help='Historical Tools-hosted recipe SDK location')
-    parser.add_argument('--tools-ref',help='Historical Tools-hosted recipe SDK revision')
-    parser.add_argument('--cookbook-root',type=Path)
-    parser.add_argument('--cookbook-ref')
+    parser.add_argument('--cookbook-root',type=Path,required=True)
+    parser.add_argument('--cookbook-ref',required=True)
     parser.add_argument('--tools-root',type=Path)
     parser.add_argument('--source',required=True)
     parser.add_argument('--release',required=True)
@@ -117,37 +123,25 @@ def main():
     parser.add_argument('--timeout',type=int,required=True)
     args=parser.parse_args();root=Path.cwd().resolve()
     try:
-        context=None
-        if args.cookbook_root is not None or args.cookbook_ref is not None:
-            if args.cookbook_root is None or args.cookbook_ref is None or args.tools is not None or args.tools_ref is not None:
-                raise ValueError('select the complete Cookbook contract or the historical Tools SDK')
-            context=recipe_context.accepted_context(args.cookbook_root,args.cookbook_ref,
-                lambda path:json.loads(subprocess.check_output(['gh','api',path],text=True,timeout=30)),args.tools_root)
-            cookbook,revision,tools=context.cookbook,context.cookbook_revision,context.tools
-        else:
-            if args.tools is None or args.tools_ref is None or args.tools_root is not None:
-                raise ValueError('historical verification requires its explicit Tools SDK source')
-            cookbook=tools=args.tools.resolve();revision=literal_sha(args.tools_ref)
+        context=recipe_context.accepted_context(args.cookbook_root,args.cookbook_ref,
+            lambda path:json.loads(subprocess.check_output(['gh','api',path],text=True,timeout=30)),args.tools_root)
+        cookbook,revision,tools=context.cookbook,context.cookbook_revision,context.tools
         for directory,expected in [(root,args.source),(cookbook,revision)]:
             actual=subprocess.check_output(['git','-C',str(directory),'rev-parse','HEAD'],text=True,timeout=30).strip()
             if actual!=expected:raise ValueError('production source or cookbook differs from its immutable pin')
             if subprocess.run(['git','-C',str(directory),'diff','--quiet','HEAD','--'],timeout=30).returncode:
                 raise ValueError('production verification requires unmodified tracked source')
-        if context is not None:
-            for name in ['configuration','godot_ci','godot_static','sdk_environment','node_component','godot_browser']:context.module(name)
+        for name in ['configuration','godot_ci','sdk_environment','node_component','godot_browser']:context.module(name)
         sys.path.insert(0,str(cookbook/'cookbook'))
         from configuration import load,relative
         import godot_ci
         config=load(root)
-        import godot_static
-        static=godot_static.declaration(root,config)
         expected_source=args.expected_source or args.source
         entry=select(config,godot_ci.plan(root,config),args.source,args.release,os.environ,args.runner,args.timeout,
-                     expected_source,(static or {}).get('production_current_source',True))
+                     expected_source)
         relative(root,entry['entry']['path'],exists=True)
         environment={**os.environ,'TOOLS_ROOT':str(tools),'MISE_AUTO_INSTALL':'false','MISE_EXEC_AUTO_INSTALL':'false'}
-        if context is not None:
-            environment.update(COOKBOOK_ROOT=str(cookbook),COOKBOOK_REF=revision,TOOLS_REF=context.tools_revision)
+        environment.update(COOKBOOK_ROOT=str(cookbook),COOKBOOK_REF=revision,TOOLS_REF=context.tools_revision)
         if args.operation=='setup':prepare(root,config,entry,environment)
         else:verify(root,entry,environment,expected_source,args.release)
     except (OSError,ValueError,KeyError,subprocess.SubprocessError) as error:
