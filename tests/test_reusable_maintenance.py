@@ -30,9 +30,15 @@ class NativeMaintenance(unittest.TestCase):
                 self.assertTrue(step.get('uses', '').endswith('/application-backup-upload'))
                 self.assertEqual(values['BACKUP_ALLOWED_SLUGS'], '${{ steps.plan.outputs.allowed-products }}')
         retained = [step for step in job['steps'] if step.get('uses', '').startswith('actions/upload-artifact@')]
-        self.assertEqual(len(retained), 1)
-        self.assertEqual(retained[0]['if'], 'always()')
-        self.assertIn('github.run_attempt', retained[0]['with']['name'])
+        self.assertEqual(len(retained), 2)
+        activation=next(step for step in retained if step['with']['name'].startswith('activation-'))
+        delivery=next(step for step in retained if step['with']['name'].startswith('delivery-'))
+        self.assertEqual(activation['with']['path'],'.artifacts/komizo-operation.json')
+        self.assertIn('.artifacts/backup/',delivery['with']['path'])
+        for step in retained:
+            self.assertEqual(step['if'], 'always()')
+            self.assertIn('github.run_attempt', step['with']['name'])
+            self.assertEqual(step['timeout-minutes'],'${{ fromJSON(inputs.step-timeouts).artifact }}')
 
 
 if __name__ == '__main__': unittest.main()
