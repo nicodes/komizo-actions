@@ -29,11 +29,12 @@ class DeployedDependencies(unittest.TestCase):
         self.blob_sha = hashlib.sha1(b'blob ' + str(len(self.lock)).encode() + b'\0' + self.lock).hexdigest()
         self.tree = {'api/Cargo.lock': dict(type='blob', sha=self.blob_sha)}
         self.blob = dict(encoding='base64', size=len(self.lock), content=base64.b64encode(self.lock).decode())
-        self.contract = dict(source_lock='api/Cargo.lock', legacy_manifest='api/go.mod',
+        self.contract = dict(source_lock='api/Cargo.lock',
             lock_installed='/usr/share/demo/Cargo.lock', binaries=['/app/server', '/usr/local/bin/reconcile'],
             user='10001:10001', forbidden=['DEVELOPMENT_AUTHORITY'])
-        self.data = dict(version=1, deployment='deploy/scan.toml', rust={'api': self.contract},
-                        go={'api': dict(forbidden=['DEVELOPMENT_AUTHORITY']), 'gate': dict(forbidden=[])})
+        self.data = dict(version=1, deployment='deploy/scan.toml', rust={'api':{'user':self.contract['user'],
+            'forbidden':self.contract['forbidden'],'units':[{key:self.contract[key] for key in ['source_lock','lock_installed','binaries']}]}},os=[],
+                        go={'gate': dict(forbidden=[])})
         self.deployment = dict(repository='owner/demo', application='demo',workflow='.github/workflows/cd.yml',
                                components=['api', 'gate'], environment='production')
         write_source(self.root / 'deploy/scan.toml',self.deployment)
@@ -81,12 +82,12 @@ class DeployedDependencies(unittest.TestCase):
             return scanner.rust_image(self.identity, self.revision, self.lock, self.contract,
                                       self.reports, 'api', {})
 
-    def test_exact_git_blob_bytes_and_explicit_historical_go_cutover(self):
+    def test_exact_git_blob_bytes_require_the_actual_declared_native_rust_lock(self):
         with patch.object(scanner, 'api', return_value=self.blob):
             self.assertEqual(scanner.source_lock('owner/demo', self.tree, self.contract, {}), self.lock)
         legacy = {'api/go.mod': dict(type='blob', sha='d' * 40)}
-        self.assertIsNone(scanner.source_lock('owner/demo', legacy, self.contract, {}))
-        with self.assertRaisesRegex(ValueError, 'unknown deployed implementation'):
+        with self.assertRaises(ValueError):scanner.source_lock('owner/demo',legacy,self.contract,{})
+        with self.assertRaisesRegex(ValueError, 'no exact declared Rust source lock'):
             scanner.source_lock('owner/demo', {}, self.contract, {})
 
     def test_missing_truncated_malformed_and_wrong_blob_bytes_are_rejected(self):
@@ -141,16 +142,16 @@ class DeployedDependencies(unittest.TestCase):
     def test_policy_paths_component_capabilities_and_links_fail_closed(self):
         self.data['go']['gate']['expected_go'] = '1.27.3'
         self.write()
-        self.assertEqual(scanner.policy(self.root, self.path)['rust']['api']['binaries'], self.contract['binaries'])
+        self.assertEqual(scanner.policy(self.root, self.path)['rust']['api']['units'][0]['binaries'], self.contract['binaries'])
         self.assertEqual(scanner.policy(self.root, self.path)['go']['gate']['expected_go'], '1.27.3')
         original = copy.deepcopy(self.data)
         mutations = [
             lambda d: d.update(version=True),
             lambda d: d.update(command='arbitrary'),
             lambda d: d.update(deployment='../elsewhere'),
-            lambda d: d['rust']['api'].update(binaries=[]),
-            lambda d: d['rust']['api'].update(lock_installed='/app/../Cargo.lock'),
-            lambda d: d['rust']['api'].update(source_lock='api/../Cargo.lock'),
+            lambda d: d['rust']['api']['units'][0].update(binaries=[]),
+            lambda d: d['rust']['api']['units'][0].update(lock_installed='/app/../Cargo.lock'),
+            lambda d: d['rust']['api']['units'][0].update(source_lock='api/../Cargo.lock'),
             lambda d: d['rust']['api'].update(user='root'),
             lambda d: d['go']['gate'].update(expected_go='latest'),
         ]
@@ -165,13 +166,20 @@ class DeployedDependencies(unittest.TestCase):
         with self.assertRaises(ValueError):
             scanner.policy(self.root, self.path)
 
-    def pipeline(self, legacy=False, fail=False):
+    def pipeline(self, legacy=False, fail=False, os_only=False, multiple_units=False, missing_activation=False):
+        if legacy:self.data['rust']={};self.data['go']['api']={'forbidden':[]}
+        if os_only:self.data['go'].pop('gate');self.data['os']=['gate']
+        if multiple_units:self.data['rust']['api']['units'].append({'source_lock':'internal/render/Cargo.lock',
+            'lock_installed':'/usr/share/demo/render.Cargo.lock','binaries':['/app/evaluate']})
         self.write()
         deployed = SimpleNamespace(load_config=lambda path: self.deployment,
             deployed_releases=lambda repository, environment: [{'revision':self.revision}],
-            release_for_deployment=lambda config,deployment,environment: {'source':{'revision':self.revision}},
+            activation_for_deployment=lambda config,deployment,environment: {'scope':'activation_at_time','current_state':'unobserved',
+                'descriptor':{'source':{'revision':self.revision},'artifacts':{name:{'config_digest':self.identity,'platform':'linux/amd64'} for name in ['api','gate']}},
+                'operation':{'phase':'ready','operation_id':'f'*32},'proof':{'artifact_digest':'sha256:'+'c'*64}},
             product_images=lambda config, revision: ['ghcr.io/owner/demo-api@'+self.identity, 'ghcr.io/owner/demo-gate@'+self.identity])
         go = SimpleNamespace(scan=Mock(return_value=dict(inventory='go')))
+        if missing_activation:del deployed.activation_for_deployment
         native = Mock(return_value=dict(inventory='cargo'))
         effects = []
         def execute(arguments, environment, timeout=60, **kwargs):
@@ -179,10 +187,10 @@ class DeployedDependencies(unittest.TestCase):
             if fail and arguments[:2] == ['trivy', 'image']:
                 raise subprocess.CalledProcessError(1, arguments)
         def capture(arguments, environment, timeout=60, **kwargs):
-            return json.dumps([dict(Id=self.identity)])
+            return json.dumps([dict(Id=self.identity,Os='linux',Architecture='amd64')])
         with patch.object(scanner, 'helper', side_effect=lambda tools, name: deployed if name == 'scan-deployed' else go), \
                 patch.object(scanner, 'source_tree', return_value=self.tree), \
-                patch.object(scanner, 'source_lock', return_value=None if legacy else self.lock), \
+                patch.object(scanner, 'source_lock', side_effect=lambda repo,tree,record,env:self.lock+(b'# renderer\n' if record['source_lock'].startswith('internal/') else b'')), \
                 patch.object(scanner, 'rust_image', native), \
                 patch.object(scanner, 'run', side_effect=execute), patch.object(scanner, 'capture', side_effect=capture), \
                 patch.object(scanner,'scan_os',side_effect=lambda image,identity,report,environment,*_:execute(['trivy','image','--input','/verified/oci/layout',identity],environment)):
@@ -198,8 +206,29 @@ class DeployedDependencies(unittest.TestCase):
         self.assertTrue(all(args[-1] == self.identity for args in effects if args[:2] == ['trivy', 'image']))
         self.assertFalse(any('build' in args for args in effects))
         summary = json.loads((self.root / '.artifacts/security/deployed/summary.json').read_text())
-        self.assertEqual(summary['scope'], 'deployed-dependencies')
+        self.assertEqual(summary['scope'], 'activation_at_time')
+        self.assertEqual(summary['current_state'],'unobserved')
+        self.assertEqual(summary['audit'],'dependencies')
+        self.assertEqual(summary['activations'][0]['operation']['phase'],'ready')
         self.assertFalse(summary['failures'])
+
+    def test_os_only_images_still_receive_the_full_os_and_library_scan(self):
+        result,effects,native,go=self.pipeline(os_only=True)
+        self.assertEqual(len([args for args in effects if args[:2]==['trivy','image']]),2)
+        self.assertEqual(native.call_count,1);go.scan.assert_not_called()
+        self.assertEqual(result['images'][1]['inventory'],'os-library')
+
+    def test_multiple_rust_units_retain_each_distinct_lock_binary_and_report_identity(self):
+        result,effects,native,go=self.pipeline(multiple_units=True)
+        self.assertEqual(native.call_count,2)
+        self.assertEqual([call.args[2] for call in native.call_args_list],[self.lock,self.lock+b'# renderer\n'])
+        self.assertEqual([call.args[5] for call in native.call_args_list],['api-0','api-1'])
+        self.assertEqual(len(result['images'][0]['units']),2)
+        self.assertEqual(len([args for args in effects if args[:2]==['trivy','image']]),2)
+
+    def test_older_publication_only_reader_cannot_be_substituted_for_activation(self):
+        with self.assertRaisesRegex(ValueError,'historical activation reader'):self.pipeline(missing_activation=True)
+        self.assertFalse((self.root/'.artifacts/security/deployed/summary.json').exists())
 
     def test_historical_go_images_use_the_real_go_runtime_scanner(self):
         _, _, native, go = self.pipeline(legacy=True)

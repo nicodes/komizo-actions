@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect deployed dependencies against exact historical source, without builds."""
+"""Audit historically activated dependencies without observing current host state."""
 import base64
 import hashlib
 import importlib.util
@@ -56,35 +56,41 @@ def literals(values):
 
 def policy(root, path):
     value = read(root, str(path.relative_to(root)))
-    if (not isinstance(value, dict) or set(value) != {'version', 'deployment', 'rust', 'go'}
+    if (not isinstance(value, dict) or set(value) != {'version', 'deployment', 'rust', 'go', 'os'}
             or type(value.get('version')) is not int or value['version'] != 1):
         raise ValueError('unsupported deployed dependency policy')
     if not isinstance(value['deployment'], str) or not value['deployment'].startswith('deploy/'):
         raise ValueError('deployment selection remains source-owned data')
     read(root, value['deployment'])
+    if (not isinstance(value['os'],list) or len(value['os'])>32
+            or any(not isinstance(name,str) or not COMPONENT.fullmatch(name) for name in value['os'])
+            or len(set(value['os']))!=len(value['os'])):
+        raise ValueError('OS/library scanning requires distinct explicit image components')
     for language in ['rust', 'go']:
         records = value[language]
         if (not isinstance(records, dict) or len(records) > 16
                 or any(not COMPONENT.fullmatch(name) for name in records)):
             raise ValueError('runtime checks require distinct bounded component records')
     for record in value['rust'].values():
-        if (not isinstance(record, dict) or set(record) - {'source_lock', 'legacy_manifest', 'lock_installed',
-                'binaries', 'user', 'forbidden'} or not {'source_lock', 'lock_installed', 'binaries', 'user', 'forbidden'} <= set(record)):
+        if (not isinstance(record, dict) or set(record)!={'units','user','forbidden'}
+                or not isinstance(record['units'],list) or not 1<=len(record['units'])<=16):
             raise ValueError('Rust inspection requires its native source, user, binaries and lock contract')
-        source_path(root, record['source_lock'])
-        if not record['source_lock'].endswith('Cargo.lock'):
-            raise ValueError('Rust source inventory must select a Cargo.lock')
-        if record.get('legacy_manifest'):
-            source_path(root, record['legacy_manifest'])
-            if not record['legacy_manifest'].endswith('go.mod'):
-                raise ValueError('historical fallback must identify its actual Go manifest')
-        installed(record['lock_installed'])
-        binaries = record['binaries']
-        if (not isinstance(binaries, list) or not 1 <= len(binaries) <= 16
-                or any(not isinstance(binary, str) for binary in binaries) or len(set(binaries)) != len(binaries)):
-            raise ValueError('Rust inspection requires distinct native image executables')
-        for binary in binaries:
-            installed(binary)
+        locks=set();paths=set()
+        for unit in record['units']:
+            if not isinstance(unit,dict) or set(unit)!={'source_lock','lock_installed','binaries'}:
+                raise ValueError('Rust units require exact source/installed locks and executable membership')
+            source_path(root, unit['source_lock'])
+            if not unit['source_lock'].endswith('Cargo.lock') or unit['source_lock'] in locks:
+                raise ValueError('Rust source inventory must select distinct Cargo.lock files')
+            locks.add(unit['source_lock']);installed(unit['lock_installed'])
+            binaries=unit['binaries']
+            if (not isinstance(binaries,list) or not 1<=len(binaries)<=16
+                    or any(not isinstance(binary,str) for binary in binaries) or len(set(binaries))!=len(binaries)):
+                raise ValueError('Rust inspection requires distinct native image executables')
+            for binary in [unit['lock_installed'],*binaries]:
+                installed(binary)
+                if binary in paths:raise ValueError('Rust unit paths overlap another unit')
+                paths.add(binary)
         if not isinstance(record['user'], str) or not re.fullmatch('[0-9]{1,10}:[0-9]{1,10}', record['user']):
             raise ValueError('Rust inspection requires the native numeric runtime UID/GID')
         literals(record['forbidden'])
@@ -145,10 +151,7 @@ def source_tree(repository, revision, environment):
 def source_lock(repository, tree, record, environment):
     entry = tree.get(record['source_lock'])
     if entry is None:
-        legacy = tree.get(record.get('legacy_manifest'), {})
-        if legacy.get('type') == 'blob' and SHA.fullmatch(legacy.get('sha', '')):
-            return None
-        raise ValueError('unknown deployed implementation; neither native Rust lock nor historical Go manifest exists')
+        raise ValueError('historical activation has no exact declared Rust source lock')
     if entry.get('type') != 'blob' or not SHA.fullmatch(entry.get('sha', '')):
         raise ValueError('exact historical source lockfile required')
     blob = api(f'repos/{repository}/git/blobs/{entry["sha"]}', environment)
@@ -245,30 +248,48 @@ def scan(root, path, tools, environment=None):
     config = deployed.load_config(source_path(root, data['deployment']))
     if config['repository'] != environment.get('GITHUB_REPOSITORY', config['repository']):
         raise ValueError('deployed policy differs from its actual source repository')
-    if set(config['components']) != set(data['rust']) | set(data['go']):
+    if set(config['components']) != set(data['rust']) | set(data['go']) | set(data['os']):
         raise ValueError('every deployed component requires its actual native scanner')
+    if set(data['os']) & (set(data['rust']) | set(data['go'])):
+        raise ValueError('OS-only images cannot bypass their declared native binary scanner')
+    if set(data['rust']) & set(data['go']):raise ValueError('one image cannot substitute Go for its declared Rust closure')
+    resolver=getattr(deployed,'activation_for_deployment',None)
+    if not callable(resolver):raise ValueError('dependency audit requires the reviewed historical activation reader')
     deployments=deployed.deployed_releases(config['repository'],config['environment'])
     revisions=list(dict.fromkeys(row['revision'] for row in deployments))
     reports = source_path(root, '.artifacts/security/deployed')
     reports.mkdir(parents=True, exist_ok=True)
-    results, failures = [], []
+    results, failures, activations = [], [], []
     for deployment in deployments:
         revision=deployment['revision']
-        descriptor=deployed.release_for_deployment(config,deployment,environment)
+        accepted=resolver(config,deployment,environment)
+        if (not isinstance(accepted,dict) or accepted.get('scope')!='activation_at_time'
+                or accepted.get('current_state')!='unobserved'):
+            raise ValueError('dependency audit has no authenticated historical activation scope')
+        descriptor=accepted['descriptor'];activations.append({'operation':accepted['operation'],'proof':accepted['proof']})
         tree = source_tree(config['repository'], revision, environment) if data['rust'] else {}
         for component, image in zip(config['components'], deployed.product_images(config, descriptor), strict=True):
             try:
                 record = data['rust'].get(component)
-                lock = source_lock(config['repository'], tree, record, environment) if record else None
                 run(['podman', 'pull', image], environment, timeout=300, runtime=runtime)
                 inspected = json.loads(capture(['podman', 'image', 'inspect', image], environment, runtime=runtime))
-                if not isinstance(inspected, list) or len(inspected) != 1 or not IMAGE_ID.fullmatch(inspected[0].get('Id', '')):
+                artifact=descriptor['artifacts'][component]
+                if (not isinstance(inspected, list) or len(inspected) != 1 or not IMAGE_ID.fullmatch(inspected[0].get('Id', ''))
+                        or inspected[0]['Id']!=artifact['config_digest']
+                        or inspected[0].get('Os')+'/'+inspected[0].get('Architecture')!=artifact['platform']):
                     raise ValueError('deployed image identity is missing or ambiguous')
                 identity = inspected[0]['Id']
                 report = reports / f'{revision}-{component}-image.json'
                 scan_os(image,identity,report,environment,runtime,oci)
-                if record and lock is not None:
-                    result = rust_image(identity, revision, lock, record, reports, component, environment,runtime=runtime)
+                if record:
+                    units=[]
+                    for number,unit in enumerate(record['units']):
+                        lock=source_lock(config['repository'],tree,unit,environment)
+                        selected={**unit,'user':record['user'],'forbidden':record['forbidden']}
+                        units.append(rust_image(identity,revision,lock,selected,reports,component+'-'+str(number),environment,runtime=runtime))
+                    result={'image_id':identity,'revision':revision,'inventory':'cargo','units':units}
+                elif component in data['os']:
+                    result={'image_id':identity,'revision':revision,'inventory':'os-library'}
                 else:
                     if component not in data['go']:
                         raise ValueError('historical implementation has no declared Go runtime scanner')
@@ -278,7 +299,8 @@ def scan(root, path, tools, environment=None):
                 results.append(dict(result, image=image, revision=revision, component=component))
             except (OSError, AssertionError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                 failures.append(f'{image}: {error}')
-    evidence = dict(scope='deployed-dependencies', revisions=revisions, images=results, failures=failures)
+    evidence = dict(scope='activation_at_time',current_state='unobserved',audit='dependencies',
+                    activations=activations,revisions=revisions, images=results, failures=failures)
     (reports / 'summary.json').write_text(json.dumps(evidence, indent=2) + '\n')
     if failures:
         raise ValueError('deployed dependency audit failed; complete findings retained in .artifacts/security/deployed/summary.json')
