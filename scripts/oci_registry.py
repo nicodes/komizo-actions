@@ -235,6 +235,10 @@ class Registry:
         if (not isinstance(location, str) or not 0 < len(location) <= 32768
                 or any(ord(char) < 32 or ord(char) == 127 for char in location)):
             raise RegistryError('registry upload location is invalid')
+        # urljoin normalizes dot segments. Refuse them in the advertised path
+        # before resolving a relative location, including in-scope traversals.
+        if any(part in {'.', '..'} for part in urllib.parse.urlsplit(location).path.split('/')):
+            raise RegistryError('blob upload cannot leave its approved repository')
         target = urllib.parse.urlsplit(urllib.parse.urljoin('https://' + self.registry, location))
         origin = urllib.parse.urlsplit('https://' + self.registry)
         prefixes = [self._prefix + '/blobs/uploads/']
