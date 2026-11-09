@@ -338,9 +338,13 @@ def targets(plan, app_url, api_url):
         if name == 'api' and not plan['policy']['backend']:
             if url: raise ValueError('static preview must not acquire an API route')
             continue
+        if not isinstance(url, str) or any(ord(char) < 33 or ord(char) == 127 for char in url):
+            raise ValueError('preview targets must be bounded protected HTTPS routes')
         value = urlsplit(url)
         if (value.scheme != 'https' or not value.hostname or '.' not in value.hostname or value.username
                 or value.password or value.port or value.query or value.fragment or len(url) > 2048
+                or len(value.hostname) > 253
+                or not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', value.hostname)
                 or not re.fullmatch(r'(?:/[A-Za-z0-9_-]+)*', value.path.rstrip('/'))):
             raise ValueError('preview targets must be bounded protected HTTPS routes')
         expected = 'pr-' + str(plan['pr'])
@@ -357,6 +361,31 @@ def targets(plan, app_url, api_url):
         elif api.hostname != app.hostname.split('.')[0] + '-api.' + app.hostname.split('.', 1)[1]:
             raise ValueError('preview API and app routes name different isolated targets')
     return values
+
+
+def deployment_targets(plan, descriptor):
+    # A route matcher is not a public URL. In particular, app-host /api/*
+    # dispatch may precede the dedicated API route in the authored graph.
+    routes = descriptor['workload'].get('routes', [])
+    app_hosts = {route['host'] for route in routes
+                 if route.get('target', {}).get('kind') == 'asset' and route.get('path', '/') == '/'}
+    if len(app_hosts) != 1:
+        raise ValueError('preview requires one declared application root origin')
+    app_host = next(iter(app_hosts))
+    app_url = 'https://' + app_host
+    api_url = ''
+    if plan['policy']['backend']:
+        app = urlsplit(app_url)
+        if not app.hostname or '.' not in app.hostname:
+            raise ValueError('preview application origin is invalid')
+        api_host = app.hostname.split('.', 1)[0] + '-api.' + app.hostname.split('.', 1)[1]
+        dedicated = [route for route in routes
+                     if route.get('target', {}).get('kind') == 'service'
+                     and route['host'] == api_host and route.get('path', '/') == '/']
+        if len(dedicated) != 1:
+            raise ValueError('preview requires its declared dedicated API root origin')
+        api_url = 'https://' + api_host
+    return targets(plan, app_url, api_url)
 
 
 def publication_evidence(plan, path, environment, lookup=api, *, context=None):
@@ -402,18 +431,14 @@ def apply(plan, environment):
     config = environment['KOMIZO_SSH_CONFIG']
     if plan['action'] == 'up':
         descriptor = document(Path('.artifacts/komizo-release/release.json'))
+        urls = deployment_targets(plan, descriptor)
         proof = document(Path('.artifacts/komizo-release/proof.json'))
         body = submission.request(application, instance, 'deploy', environment, descriptor=descriptor, release_proof=proof,
                                   ttl_seconds=plan['policy']['ttl_seconds'])
         result = submission.submit(config, body)
-        if not result['ok']:
+        if not result['ok'] or result['phase'] != 'ready':
             raise ValueError('preview deployment did not become ready')
-        urls = {}
-        for route in descriptor['workload'].get('routes', []):
-            if 'target' not in route: continue
-            key = 'app' if route['target']['kind'] == 'asset' else 'api'
-            if key not in urls: urls[key] = 'https://' + route['host'] + route.get('path', '/').rstrip('/')
-        output({'preview-url': urls.get('app', ''), 'api-url': urls.get('api', ''),
+        output({'preview-url': urls['app']['url'], 'api-url': urls.get('api', {}).get('url', ''),
                 'release-digest': result['release_digest'], 'operation-id': result['operation_id']}, environment)
     else:
         discovery = submission.request(application, instance, 'inspect', environment, release_digest='current')
@@ -421,7 +446,7 @@ def apply(plan, environment):
         if installed is not None:
             body = submission.request(application, instance, 'remove', environment, release_digest=installed['release_digest'])
             result = submission.submit(config, body)
-            if not result['ok']: raise ValueError('preview teardown did not finish')
+            if not result['ok'] or result['phase'] != 'ready': raise ValueError('preview teardown did not finish')
         output({'preview-url': '', 'api-url': ''}, environment)
 
 
