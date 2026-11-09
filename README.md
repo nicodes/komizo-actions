@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 499848517e219e2e306072cf29d143317669b6921c1d53b75315a9913f759310 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 3463646906a8547dde8c747efc8d01aaa2291b382c534976b1ed07aeb5a15a8d -->
 
 # Komizo Actions
 
@@ -24,7 +24,7 @@ Routine CI supplies logical secret references and optional expected generations.
 
 ## Previews and product checks
 
-Preview workflows separate trusted request planning, selected-source validation, immutable publication and protected effects. The host supplies public planned origins before the descriptor is compiled and tested. Preview descriptors bind those origins, an isolated instance graph and its lifetime before acceptance. Cleanup uses the same application authority and recorded resource ownership.
+Preview workflows separate trusted request planning, selected-source validation, immutable publication and protected effects. The host supplies public planned origins before the descriptor is compiled and tested. Preview descriptors bind those origins, an isolated instance graph and its lifetime before acceptance. Cleanup uses the same application authority and recorded resource ownership. Preview health uses the descriptor’s concrete app root and dedicated API root origins. Route matchers such as `/api/*` remain source-owned dispatch rules. Target validation precedes submission, and live Preview URLs require a successful `ready` operation; stopped preparation publishes no live URLs.
 
 `application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
 
