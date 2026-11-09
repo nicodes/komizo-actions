@@ -10,10 +10,9 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import native_recipe_fixture
 
-TOOLS = Path(os.environ['RECIPE_LEGACY_TEST_SDK'])
-sys.path.insert(0, str(TOOLS / 'cookbook'))
-import operational_workflows as workflows
+workflows = native_recipe_fixture.Module('operational_workflows')
 
 spec = importlib.util.spec_from_file_location('operational_control', Path(__file__).parents[1] / 'scripts/operational.py')
 driver = importlib.util.module_from_spec(spec)
@@ -44,10 +43,9 @@ class OperationalAuthority(unittest.TestCase):
         self.tools, tools_sha = self.repository('tools')
         self.actions, actions_sha = self.repository('komizo-actions')
         self.root, _ = self.repository('product')
-        # Git-authority controls use a synthetic SDK repository; decode their
-        # source with the explicitly prepared real SDK, as their workflow mock does.
-        reader = driver.recipe_data.load
-        decoder = patch.object(driver.recipe_data, 'load', side_effect=lambda root, tools, configuration=None: reader(root, TOOLS))
+        # Git-authority controls use inert workflow fixtures. Their source
+        # declarations still pass through the actual current native reader.
+        decoder = patch.object(driver.recipe_data, 'load', side_effect=lambda root, tools, configuration=None: native_recipe_fixture.load(root))
         decoder.start()
         self.addCleanup(decoder.stop)
         (self.root / 'deploy').mkdir()
@@ -55,14 +53,13 @@ class OperationalAuthority(unittest.TestCase):
         (self.root / 'api/Cargo.toml').write_text('[package]\nname="fixture"\n')
         (self.root / 'deploy/health.py').write_text('assert 2 + 2 == 4\n')
         self.config = {'recipe': 'react-native', 'version': 1,
-                       'delivery': {'definition': 'deploy/delivery.json'},
-                       'operations': {'definition': 'deploy/operations.json'}}
+                       'delivery': {'definition': 'deploy/delivery.toml'},
+                       'operations': {'definition': 'deploy/operations.toml'}}
         delivery = dict(version=1, project='demo', komizo_ref=actions_sha,
                         publish_runner='ubuntu-24.04', publish_timeout=35,
                         deploy_runner='ubuntu-24.04', deploy_timeout=100,
-                        health_urls=['https://example.test/readyz'], notification_url='https://example.test/',
-                        secrets={}, variables={})
-        (self.root / 'deploy/delivery.json').write_text(json.dumps(delivery))
+                        health_urls=['https://example.test/readyz'], notification_url='https://example.test/')
+        native_recipe_fixture.write(self.root / 'deploy/delivery.toml', delivery)
         self.data = dict(version=1, project='demo',
             security=dict(runner='ubuntu-24.04', timeout_minutes=110, report_timeout=5,
                           deployed_policy='deploy/deployed-scan.json'),
@@ -76,8 +73,8 @@ class OperationalAuthority(unittest.TestCase):
             image_base='ghcr.io/owner/demo',components=['gate'],environment='production')))
         (self.root / 'deploy/deployed-scan.json').write_text(json.dumps(dict(version=1,
             deployment='deploy/scan.json',rust={},go={'gate':dict(forbidden=[])})))
-        (self.root / 'deploy/operations.json').write_text(json.dumps(self.data))
-        (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.json"\n[operations]\ndefinition="deploy/operations.json"\n')
+        native_recipe_fixture.write(self.root / 'deploy/operations.toml', self.data)
+        (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.toml"\n[operations]\ndefinition="deploy/operations.toml"\n')
         for name, text in workflows.workflow_files(self.root, tools_sha, self.config).items():
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,7 +88,7 @@ class OperationalAuthority(unittest.TestCase):
             GITHUB_WORKFLOW_SHA=self.revision, GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
             GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/security-scan.yml@refs/heads/main',
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_PATH=str(self.event),
-            TOOLS_REF=tools_sha, KOMIZO_REF=actions_sha, DECLARATION='deploy/operations.json',
+            TOOLS_REF=tools_sha, KOMIZO_REF=actions_sha, DECLARATION='deploy/operations.toml',
             OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='', OPERATION_REPORT_TIMEOUT='5',
             OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('security',self.data['security'])))
 
@@ -196,7 +193,7 @@ class OperationalAuthority(unittest.TestCase):
                       environment='production', format='age-pb-v1')
         self.data['recovery'] = dict(runner='ubuntu-24.04', timeout_minutes=45,
                                     environment='production', legacy_retention=legacy)
-        (self.root / 'deploy/operations.json').write_text(json.dumps(self.data))
+        native_recipe_fixture.write(self.root / 'deploy/operations.toml', self.data)
         for name, text in workflows.workflow_files(self.root, self.environment['TOOLS_REF'], self.config).items():
             (self.root / name).write_text(text)
         self.git(self.root, 'add', '.')

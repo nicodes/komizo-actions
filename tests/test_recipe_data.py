@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('canonical_publication_controls', ROOT / 'scripts/application-publication.py')
 publication = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publication)
-SDK_REF = '14dd4792df910b8f72ae10bf01c7e426b97b667e'
+SDK_REF = os.environ['RECIPE_TASK_SDK_REF']
 
 
 def literal(value):
@@ -28,7 +28,8 @@ def literal(value):
 
 class CanonicalRecipeData(unittest.TestCase):
     def setUp(self):
-        self.sdk = Path(os.environ['RECIPE_TEST_SDK']).resolve()
+        self.sdk = Path(os.environ['RECIPE_TASK_SDK']).resolve()
+        self.tools = Path(os.environ['RECIPE_TASK_TOOLS']).resolve()
         self.assertTrue((self.sdk / 'cookbook/configuration.py').is_file(), 'prepare the real accepted SDK before tests')
         actual = subprocess.check_output(['git', '-C', str(self.sdk), 'rev-parse', 'HEAD'], text=True).strip()
         self.assertEqual(actual, SDK_REF)
@@ -59,18 +60,19 @@ class CanonicalRecipeData(unittest.TestCase):
         program = '''import json,sys
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
-import recipe_data
-root,sdk=map(Path,sys.argv[2:4])
+import recipe_data,recipe_context
+root,sdk,current,helpers=map(Path,sys.argv[2:6])
+recipe_context.Context(current,sys.argv[6],helpers).activate()
 config=recipe_data.load(root,sdk)
 import configuration
 result={'config':config,'configuration_origin':str(Path(configuration.__file__).resolve())}
-if sys.argv[4]=='matrix':
+if sys.argv[7]=='matrix':
  import godot_ci
  result['matrix']=godot_ci.plan(None,config)
 print(json.dumps(result))
 '''
-        result = subprocess.run([sys.executable, '-I', '-c', program, str(ROOT / 'scripts'), str(self.root),
-                                 str(sdk or self.sdk), 'matrix' if matrix else 'config'],
+        result = subprocess.run([sys.executable, '-I', '-B', '-c', program, str(ROOT / 'scripts'), str(self.root),
+                                 str(sdk or self.sdk),str(self.sdk),str(self.tools),SDK_REF,'matrix' if matrix else 'config'],
                                 capture_output=True, text=True, timeout=30)
         if failure:
             self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -165,76 +167,72 @@ print(json.dumps(result))
         self.assertEqual(actual['dependency_security'], policy)
         self.assertEqual((actual['runner'], actual['timeout_minutes']), ('ubuntu-24.04', 30))
 
-    def test_existing_prepared_sdk_retains_flat_declared_contract(self):
-        legacy = Path(os.environ['RECIPE_LEGACY_TEST_SDK']).resolve()
-        config = self.native()
-        config['ci'] = {'runner': 'ubuntu-22.04', 'timeout_minutes': 40}
-        body = self.write(config)
-        result = self.read(legacy)['config']
-        self.assertEqual(result, config)
-        self.assertEqual((self.root / 'cookbook.toml').read_text(), body)
+    def test_obsolete_sdks_refuse_without_running_source_or_changing_declarations(self):
+        body=self.write(self.native())
+        for name in ['RECIPE_TEST_SDK','RECIPE_LEGACY_TEST_SDK']:
+            with self.subTest(sdk=name):
+                selected=Path(os.environ[name]).resolve()
+                expected={'RECIPE_TEST_SDK':'14dd4792df910b8f72ae10bf01c7e426b97b667e','RECIPE_LEGACY_TEST_SDK':'d475b54c402754a5a37a44fbd65328551995025c'}[name]
+                self.assertEqual(subprocess.check_output(['git','-C',str(selected),'rev-parse','HEAD'],text=True).strip(),expected)
+                result=self.read(selected,failure=True)
+                self.assertIn('native TOML',result.stderr)
+                self.assertEqual((self.root/'cookbook.toml').read_text(),body)
 
     def static(self):
-        config = self.native('godot-game')
-        config.update(delivery={'definition': 'deploy/delivery.json'}, artifacts={'definition': 'deploy/release.json'})
-        delivery = {'mode': 'godot-static', 'komizo_ref': 'c' * 40, 'project': 'game', 'static': {
-            'config': 'deploy/config.yml', 'compose': 'deploy/compose.yml', 'release_manifest': 'public/release.json',
-            'record': False, 'recovery': False, 'production': False}}
-        for name, body in {'deploy/delivery.json': json.dumps(delivery),
-                           'deploy/release.json': json.dumps({'project': 'game', 'image_base': 'ghcr.io/example/game'}),
-                           'deploy/config.yml': 'compose: compose.yml\n', 'deploy/compose.yml': 'services: {}\n'}.items():
-            path = self.root / name
-            path.parent.mkdir(exist_ok=True)
-            path.write_text(body)
+        config=self.native('godot-game')
+        config.update(delivery={'definition':'deploy/delivery.toml'})
+        (self.root/'deploy').mkdir(exist_ok=True)
+        (self.root/'deploy/delivery.toml').write_text('version=1\nproject="game"\n')
         return config
 
-    def test_static_capability_owns_mandatory_metadata_and_closed_hash_bound_stage(self):
-        raw = self.static()
-        body = self.write(raw)
-        config = self.read()['config']
-        metadata = config['artifacts']['release_metadata']
-        self.assertEqual(metadata, ['.artifacts/release/static-config.json', '.artifacts/release/godot-release-manifest.json'])
-        self.assertNotIn('release_metadata', tomllib.loads(body)['artifacts'])
-        raw['artifacts']['release_metadata'] = metadata
-        self.write(raw)
-        self.assertEqual(self.read()['config'], config, 'legacy explicit static metadata remains compatible')
-        # The native publisher no longer accepts the historical config-image packet.
-        source = self.root / 'incoming/.artifacts/release';source.mkdir(parents=True)
-        (source/'release.json').write_bytes(b'{}')
+    def test_native_static_declaration_has_no_implicit_config_image_metadata(self):
+        raw=self.static();body=self.write(raw)
+        before={path.relative_to(self.root).as_posix():path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
+        config=self.read()['config']
+        self.assertNotIn('release_metadata',config.get('artifacts',{}))
+        self.assertEqual((self.root/'cookbook.toml').read_text(),body)
+        self.assertEqual(before,{path.relative_to(self.root).as_posix():path.read_bytes() for path in self.root.rglob('*') if path.is_file()})
+        raw['artifacts']={'definition':'deploy/release.json'}
+        self.write(raw);self.read(failure=True)
+        # The closed publisher admits only exact native packet bytes/proof.
+        from test_release_packet import make_packet
+        incoming=self.root/'incoming';source=incoming/'.artifacts/release';source.mkdir(parents=True)
+        make_packet(source)
+        names=['release.json','inventory.json','static/web.tar.gz']
+        proof={'artifacts':{'.artifacts/release/'+name:hashlib.sha256((source/name).read_bytes()).hexdigest() for name in names}}
+        original={name:(source/name).read_bytes() for name in names}
+        staged=publication.stage(incoming,proof,self.root/'admitted')
+        self.assertEqual(original,{name:(staged.root/name).read_bytes() for name in names})
+        (source/'config-image.tar').write_bytes(b'retired configuration transport')
         with self.assertRaises((ValueError,OSError)):
-            publication.stage(self.root/'incoming',{'artifacts':{}},self.root/'refused')
+            publication.stage(incoming,proof,self.root/'refused')
         self.assertFalse((self.root/'refused').exists())
 
     def test_nonstatic_game_keeps_explicit_metadata_without_acquiring_static_outputs(self):
         config = self.native('godot-game')
-        config['artifacts'] = {'release_metadata': ['.artifacts/release/components.json']}
+        config['artifacts'] = {'release_metadata': ['.artifacts/release/metadata/components.json']}
         self.write(config)
         result = self.read()['config']
         self.assertEqual(result['artifacts'], config['artifacts'])
 
-    def test_foreign_cached_configuration_or_static_module_refuses_the_other_sdk(self):
+    def test_foreign_cached_configuration_refuses_before_native_declaration_admission(self):
         self.write(self.static())
-        legacy = Path(os.environ['RECIPE_LEGACY_TEST_SDK']).resolve()
-        self.assertNotEqual(legacy, self.sdk, 'prepare distinct old/new SDK sources for the cache-origin control')
-        program = '''import importlib,sys
+        legacy=Path(os.environ['RECIPE_TEST_SDK']).resolve()
+        self.assertNotEqual(legacy,self.sdk)
+        program='''import importlib,sys
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
-import recipe_data
-root,sdk,other=map(Path,sys.argv[2:5])
-name=sys.argv[5]
-if name=='godot_static':
- sys.path.insert(0,str(sdk/'cookbook'))
- import configuration
+import recipe_data,recipe_context
+root,sdk,other,helpers=map(Path,sys.argv[2:6])
+recipe_context.Context(sdk,sys.argv[6],helpers).activate()
 sys.path.insert(0,str(other/'cookbook'))
-importlib.import_module(name)
+importlib.import_module('configuration')
 recipe_data.load(root,sdk)
 '''
-        for name in ['configuration', 'godot_static']:
-            result = subprocess.run([sys.executable, '-I', '-c', program, str(ROOT / 'scripts'), str(self.root),
-                                     str(self.sdk), str(legacy), name], capture_output=True, text=True, timeout=30)
-            with self.subTest(name=name):
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn('recipe reader loaded another cookbook SDK: ' + name, result.stderr)
+        result=subprocess.run([sys.executable,'-I','-B','-c',program,str(ROOT/'scripts'),str(self.root),
+            str(self.sdk),str(legacy),str(self.tools),SDK_REF],capture_output=True,text=True,timeout=30)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('recipe reader loaded another cookbook SDK: configuration',result.stderr)
 
 
 if __name__ == '__main__':

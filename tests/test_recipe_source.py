@@ -1,4 +1,4 @@
-"""Prepared current and historical SDKs own disjoint authored-source ABIs."""
+"""Native recipe readers keep strict TOML and refuse obsolete SDK protocols."""
 import json
 import os
 from pathlib import Path
@@ -12,10 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class RecipeSource(unittest.TestCase):
     def setUp(self):
-        self.current = Path(os.environ['RECIPE_SOURCE_SDK']).resolve()
+        self.current = Path(os.environ['RECIPE_TASK_SDK']).resolve()
+        self.tools = Path(os.environ['RECIPE_TASK_TOOLS']).resolve()
         self.legacy = Path(os.environ['RECIPE_TEST_SDK']).resolve()
-        self.assertTrue((self.current / 'helpers/source_config.py').is_file(), 'prepare the actual source SDK before tests')
-        reference = os.environ.get('RECIPE_SOURCE_SDK_REF')
+        self.assertTrue((self.current / 'cookbook/configuration.py').is_file(), 'prepare the actual native SDK before tests')
+        reference = os.environ['RECIPE_TASK_SDK_REF']
+        self.reference=reference
         if reference:
             self.assertRegex(reference, r'^[a-f0-9]{40}$')
             self.assertEqual(subprocess.check_output(['git', '-C', str(self.current), 'rev-parse', 'HEAD'], text=True).strip(), reference)
@@ -25,11 +27,12 @@ class RecipeSource(unittest.TestCase):
     def control(self, code):
         prefix = '''import json,sys
 from pathlib import Path
-sys.path.insert(0,sys.argv[1]);import recipe_data
-current,legacy=map(Path,sys.argv[2:4])
+sys.path.insert(0,sys.argv[1]);import recipe_data,recipe_context
+current,legacy,tools=map(Path,sys.argv[2:5])
+recipe_context.Context(current,sys.argv[5],tools).activate()
 '''
         result = subprocess.run([sys.executable, '-I', '-B', '-c', prefix + code,
-            str(ROOT / 'scripts'), str(self.current), str(self.legacy)],
+            str(ROOT / 'scripts'), str(self.current), str(self.legacy),str(self.tools),self.reference],
             capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
@@ -58,16 +61,16 @@ print(json.dumps({'refused':refused}))
 ''')
         self.assertEqual(result, {'refused': 6})
 
-    def test_historical_sdk_requires_its_real_json_source_contract(self):
-        result = self.control('''assert recipe_data.source_suffix(legacy)=='.json'
-value=recipe_data.decode_source_data(legacy,b'{"health_urls":["https://example.test",{"url":"https://example.test/health","contains":"ready"}]}')
-for raw in [b'value=1',b'{"value":1,"value":2}',b'[1,2]']:
- try:recipe_data.decode_source_data(legacy,raw)
- except ValueError:pass
- else:raise AssertionError('historical source contract changed')
-print(json.dumps(value))
+    def test_obsolete_sdk_cannot_acquire_a_json_source_fallback(self):
+        result = self.control('''refused=0
+for action in [lambda:recipe_data.source_suffix(legacy),lambda:recipe_data.decode_source_data(legacy,b'{"value":1}')]:
+ try:action()
+ except ValueError as error:
+  assert 'native TOML' in str(error);refused+=1
+ else:raise AssertionError('obsolete SDK source was admitted')
+print(json.dumps({'refused':refused}))
 ''')
-        self.assertEqual(len(result['health_urls']), 2)
+        self.assertEqual(result,{'refused':2})
 
     def test_broken_current_api_cannot_use_historical_json_fallback(self):
         result = self.control('''configuration=recipe_data.configuration_module(current)
@@ -82,7 +85,8 @@ print(json.dumps({'refused':refused}))
         self.assertEqual(result, {'refused': 2})
 
     def test_foreign_cached_configuration_is_refused_before_decoding(self):
-        result = self.control('''recipe_data.configuration_module(legacy)
+        result = self.control('''sys.path.insert(0,str(legacy/'cookbook'))
+import configuration
 try:recipe_data.decode_source_data(current,b'value=1')
 except ValueError as error:assert 'another cookbook SDK' in str(error)
 else:raise AssertionError('foreign SDK decoder was admitted')

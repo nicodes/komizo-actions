@@ -7,9 +7,9 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import native_recipe_fixture
 
-TOOLS = Path(os.environ['RECIPE_LEGACY_TEST_SDK'])
-sys.path.insert(0, str(TOOLS / 'cookbook'))
+TOOLS = Path(os.environ['RECIPE_TASK_SDK'])
 spec = importlib.util.spec_from_file_location('application_readiness', Path(__file__).parents[1] / 'scripts/application_readiness.py')
 readiness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(readiness)
@@ -32,12 +32,16 @@ class NativeReadiness(unittest.TestCase):
             paid=[dict(id='paid_smoke', description='Original optional model check',
                 runner='ubuntu-24.04', timeout_minutes=5, environment='production',
                 check=dict(runner='python', path='deploy/health/verify.py'))])
-        (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.json"\n[operations]\ndefinition="deploy/operations.json"\n')
-        self.environment = dict(DECLARATION='deploy/delivery.json', GITHUB_SHA='b' * 40)
+        (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.toml"\n[operations]\ndefinition="deploy/operations.toml"\n')
+        self.environment = dict(DECLARATION='deploy/delivery.toml', GITHUB_SHA='b' * 40)
+        decoder=patch.object(readiness.recipe_data,'load',side_effect=lambda root,tools: native_recipe_fixture.load(root))
+        decoder.start();self.addCleanup(decoder.stop)
+        modules=patch.dict(sys.modules,{name:native_recipe_fixture.Module(name) for name in ['delivery_workflows','operational_workflows']})
+        modules.start();self.addCleanup(modules.stop)
 
     def write(self):
-        (self.root / 'deploy/delivery.json').write_text(json.dumps(self.delivery))
-        (self.root / 'deploy/operations.json').write_text(json.dumps(self.operations))
+        native_recipe_fixture.write(self.root / 'deploy/delivery.toml', self.delivery)
+        native_recipe_fixture.write(self.root / 'deploy/operations.toml', self.operations)
 
     def test_only_ordinary_checks_run_after_explicit_preparation_in_the_same_environment(self):
         self.write()

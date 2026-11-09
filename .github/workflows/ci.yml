@@ -42,7 +42,7 @@ jobs:
         if-no-files-found: error
         retention-days: 7
         include-hidden-files: true
-    - name: Prepare the frozen source-reader compatibility fixture
+    - name: Prepare frozen authority counterexamples
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: 1
       with:
@@ -50,7 +50,7 @@ jobs:
         ref: d475b54c402754a5a37a44fbd65328551995025c
         path: .artifacts/recipe-legacy-test-sdk
         persist-credentials: false
-    - name: Prepare the accepted recipe SDK for canonical reader controls
+    - name: Prepare an obsolete SDK for explicit native reader refusals
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: 1
       with:
@@ -59,40 +59,13 @@ jobs:
         path: .artifacts/recipe-test-sdk
         fetch-depth: 1
         persist-credentials: false
-    - name: Prepare the accepted strict recipe SDK for definition controls
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: 1
-      with:
-        repository: nicodes/tools
-        ref: 6391cdae4f0ead355a43de161f0dbadd22168f62
-        path: .artifacts/recipe-contract-test-sdk
-        fetch-depth: 1
-        persist-credentials: false
-    - name: Prepare the accepted TOML source SDK for source controls
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: 1
-      with:
-        repository: nicodes/tools
-        ref: 39666e8d26d2bd0e1c7e5fee6f289fd0fd3a5202
-        path: .artifacts/recipe-source-test-sdk
-        fetch-depth: 1
-        persist-credentials: false
-    - name: Prepare the accepted Cookbook source for current entrypoint controls
+    - name: Prepare the accepted native Cookbook source for recipe controls
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: 1
       with:
         repository: nicodes/cookbook
-        ref: d68b54a178d84cd206a68af3e947a6d8c223286f
+        ref: 651cd9fa66ea28b63c63f246d347a84de048e7c5
         path: .artifacts/recipe-task-sdk
-        fetch-depth: 1
-        persist-credentials: false
-    - name: Prepare the provider-derived accepted Tools source for current entrypoint controls
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: 1
-      with:
-        repository: nicodes/tools
-        ref: 315ad17652ce264be3b91cd50868ee1199952f12
-        path: .artifacts/recipe-task-tools
         fetch-depth: 1
         persist-credentials: false
     - name: Prepare the accepted format 2 transport SDK for real envelope controls
@@ -116,11 +89,11 @@ jobs:
       MISE_GITHUB_TOKEN: ${{ github.token }}
       RECIPE_LEGACY_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-legacy-test-sdk
       RECIPE_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-test-sdk
-      RECIPE_CONTRACT_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-contract-test-sdk
-      RECIPE_CONTRACT_TEST_SDK_REF: 6391cdae4f0ead355a43de161f0dbadd22168f62
-      RECIPE_SOURCE_SDK: ${{ github.workspace }}/.artifacts/recipe-source-test-sdk
-      RECIPE_SOURCE_SDK_REF: 39666e8d26d2bd0e1c7e5fee6f289fd0fd3a5202
+      RECIPE_CONTRACT_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
+      RECIPE_CONTRACT_TEST_SDK_REF: 651cd9fa66ea28b63c63f246d347a84de048e7c5
+      RECIPE_SOURCE_SDK: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
+      RECIPE_SOURCE_SDK_REF: 7873bb0fdae1726295dbf7f9317c58daa374b2a6
       RECIPE_TASK_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
-      RECIPE_TASK_SDK_REF: d68b54a178d84cd206a68af3e947a6d8c223286f
-      RECIPE_TASK_TOOLS: ${{ github.workspace }}/.artifacts/recipe-task-tools
+      RECIPE_TASK_SDK_REF: 651cd9fa66ea28b63c63f246d347a84de048e7c5
+      RECIPE_TASK_TOOLS: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
       RECOVERY_TEST_TOOLS: ${{ github.workspace }}/.artifacts/recovery-transport-sdk

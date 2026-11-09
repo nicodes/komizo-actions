@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -109,11 +110,13 @@ class PreviewAuthority(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'trusted main'):self.validate(plan)
 
     def test_source_cannot_redeclare_publication_family_checks_or_host_policy(self):
-        config={'recipe':'react-native','artifacts':{'definition':'deploy/release.json'}}
+        config={'recipe':'react-native','artifacts':{}}
         definition={'project':'demo','image_base':'ghcr.io/owner/demo','tests':self.policy['test_groups']}
         declaration=Mock(return_value=self.policy)
         image=SimpleNamespace(definition=Mock(return_value=definition),components=Mock(return_value=['gate','api','config']))
         modules=(SimpleNamespace(declaration=declaration),SimpleNamespace(load=lambda _:config,ci_settings=sdk_configuration.ci_settings,
+                                                                        parse_source_data=lambda raw,**_options:tomllib.loads(raw.decode() if isinstance(raw,bytes) else raw),
+                                                                        release_definition=lambda _config:'deploy/release.json',
                                                                         __file__=str(self.root/'cookbook/configuration.py')),image)
         with patch.object(preview,'tools_modules',return_value=modules):
             preview.source_policy(self.plan,self.root,self.root)
