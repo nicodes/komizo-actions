@@ -84,14 +84,9 @@ def upload(project, tools, directory):
 def restore_profile(root, cookbook, name, project, *, context=None):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import recipe_data
-    if context is not None:
-        if cookbook.resolve() != context.cookbook.resolve():
-            raise ValueError('restore profile differs from its verified Cookbook source')
-        operational_workflows = context.module('operational_workflows')
-    else:
-        sys.path.insert(0, str(cookbook.resolve() / 'cookbook'))
-        import operational_workflows
-        recipe_data.checked_module(operational_workflows, cookbook.resolve(), 'operational_workflows')
+    if context is None or cookbook.resolve() != context.cookbook.resolve():
+        raise ValueError('restore profile requires its verified Cookbook context')
+    operational_workflows = context.module('operational_workflows')
     path = operational_workflows.relative(root, 'cookbook.toml', exists=True)
     if not path.is_file() or path.stat().st_size > 262144:
         raise ValueError('restore profiles require bounded native cookbook data')
@@ -103,37 +98,21 @@ def restore_profile(root, cookbook, name, project, *, context=None):
     return operational_workflows.relative(root, selected[0]['config'], exists=True)
 
 
-def discovery_module(name):
-    # Both discovery protocols are immutable data-only SDK mirrors. A partial
-    # new identity must never select the genuine historical Make protocol.
-    spec = importlib.util.spec_from_file_location('backup_' + name,
-        Path(__file__).resolve().parent / (name + '.py'))
+def discovery_module():
+    spec = importlib.util.spec_from_file_location('backup_cookbook_identity',
+        Path(__file__).with_name('cookbook_identity.py'))
     discovery = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(discovery)
     return discovery
 
 
 def prepared_cookbook(root):
-    discovery = discovery_module('cookbook_identity')
-    source = root / 'mise.toml'
-    if (source.exists() or source.is_symlink()) and discovery.declared(discovery.read_source(root)):
-        return discovery.prepared(root)
-    discovery = discovery_module('sdk_identity')
-    return discovery.prepared(root)
+    return discovery_module().prepared(root)
 
 
 def local_recipe_context(root, *, cookbook_root=None, cookbook_ref=None, tools_root=None):
     """Resolve prepared source offline before importing a restore recipe."""
-    discovery = discovery_module('cookbook_identity')
-    source = root / 'mise.toml'
-    explicit = (cookbook_root is not None or cookbook_ref is not None
-                or bool(os.environ.get('COOKBOOK_ROOT')) or bool(os.environ.get('COOKBOOK_REF')))
-    declared = ((source.exists() or source.is_symlink())
-                and discovery.declared(discovery.read_source(root)))
-    if not declared:
-        if explicit:
-            raise ValueError('explicit Cookbook source requires its caller-declared Mise identity')
-        return None
+    discovery = discovery_module()
     revision = cookbook_ref or os.environ.get('COOKBOOK_REF')
     cookbook = discovery.prepared(root, revision,
         cookbook_root or os.environ.get('COOKBOOK_ROOT'))
@@ -284,15 +263,7 @@ def main():
         config = declaration(args.config, args.project)
         context = local_recipe_context(Path.cwd(), cookbook_root=args.cookbook_root,
             cookbook_ref=args.cookbook_ref, tools_root=args.tools_root)
-        if context is not None:
-            args.tools_root = context.tools
-        elif args.tools_root is None:
-            if args.operation == 'restore' and args.profile:
-                args.tools_root = prepared_cookbook(Path.cwd())
-            elif os.environ.get('TOOLS_ROOT'):
-                args.tools_root = Path(os.environ['TOOLS_ROOT'])
-            else:
-                raise ValueError('a pinned cookbook root is required')
+        args.tools_root = context.tools
         if args.operation != 'restore' and (args.profile or args.pull or args.restore_config or args.packet):
             raise ValueError('restore options belong only to explicit local restoration')
         if args.operation == 'export':
@@ -303,13 +274,11 @@ def main():
             key = Path(os.environ.get('BACKUP_RECOVERY_KEY_FILE', ''))
             if not key.is_absolute():
                 raise ValueError('set an absolute local BACKUP_RECOVERY_KEY_FILE')
-            if context is None:
-                raise ValueError('owner restoration requires its explicitly selected accepted Cookbook and helper providers')
             if args.profile:
                 if args.restore_config is not None:
                     raise ValueError('a named native profile selects its configuration and encrypted pair')
                 root = Path.cwd()
-                selected = restore_profile(root, context.cookbook if context else args.tools_root,
+                selected = restore_profile(root, context.cookbook,
                     args.profile, args.project, context=context)
                 restore_pair(root, args.project, selected, args.tools_root,
                              args.directory or root / '.artifacts/restore/download', key, cookbook=context.cookbook,

@@ -168,26 +168,16 @@ class RestoreProfiles(unittest.TestCase):
                 with self.subTest(name=name, project=project), self.assertRaises(ValueError):
                     self.select_profile(name, project)
 
-    def test_local_default_resolves_the_existing_exact_make_pin_without_fetching(self):
-        source=self.root/'stage'
-        source.mkdir()
-        def git(*arguments):
-            return subprocess.check_output(['git','-c','user.name=Fixture','-c','user.email=fixture@example.test',
-                '-c','commit.gpgsign=false','-C',str(source),*arguments],text=True,stderr=subprocess.DEVNULL).strip()
-        git('init')
-        (source/'README').write_text('fixture\n')
-        (source/'.gitignore').write_text('ignored\n')
-        git('add','.')
-        git('commit','-qm','Fixture cookbook')
-        revision=git('rev-parse','HEAD')
-        destination=self.root/'.artifacts/cookbook'/revision
-        destination.parent.mkdir(parents=True)
-        source.rename(destination)
-        (self.root/'Makefile').write_text('COOKBOOK_REF := '+revision+'\n')
-        self.assertEqual(backup.prepared_cookbook(self.root),destination)
-        (destination/'ignored').write_text('poison')
-        with self.assertRaises(ValueError):
-            backup.prepared_cookbook(self.root)
+    def test_make_only_discovery_refuses_without_importing_or_fetching_a_recipe(self):
+        (self.root/'Makefile').write_text('COOKBOOK_REF := '+'a'*40+'\n')
+        with patch.object(backup.subprocess,'check_output') as effects:
+            with self.assertRaises((OSError,ValueError)):
+                backup.prepared_cookbook(self.root)
+            with self.assertRaises((OSError,ValueError)):
+                backup.local_recipe_context(self.root)
+            with self.assertRaisesRegex(ValueError,'verified Cookbook context'):
+                backup.restore_profile(self.root,TOOLS,'default','demo')
+            effects.assert_not_called()
 
 
 if __name__ == '__main__':

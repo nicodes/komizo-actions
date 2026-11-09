@@ -13,6 +13,20 @@ backup = importlib.util.module_from_spec(spec); spec.loader.exec_module(backup)
 
 
 class NativeBackupCommands(unittest.TestCase):
+    def test_missing_native_identity_refuses_before_export_or_upload_even_with_ambient_helpers(self):
+        with tempfile.TemporaryDirectory() as temp, chdir(temp), \
+                patch.dict(os.environ, {'TOOLS_ROOT': '/unselected/old-sdk'}, clear=True), \
+                patch.object(backup, 'export') as capture, patch.object(backup, 'upload') as upload:
+            Path('Makefile').write_text('COOKBOOK_REF := ' + 'a' * 40 + '\n')
+            for operation in ['export', 'upload']:
+                with self.subTest(operation=operation), \
+                        patch.object(backup.sys, 'argv', ['backup.py', operation, '--project', 'mailroom']), \
+                        self.assertRaises(SystemExit) as refused:
+                    backup.main()
+                self.assertEqual(refused.exception.code, 1)
+            capture.assert_not_called()
+            upload.assert_not_called()
+
     def test_source_declaration_cannot_select_programs_or_weaken_host_absence_proof(self):
         with tempfile.TemporaryDirectory() as temp:
             source = Path(temp) / 'backup.toml'; source.write_text('version=1\n')

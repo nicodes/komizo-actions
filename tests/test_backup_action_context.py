@@ -1,4 +1,4 @@
-"""Backup adapters retain verified modern roots and the genuine legacy target."""
+"""Backup adapters require verified native recipe and helper sources."""
 import json
 import os
 from pathlib import Path
@@ -8,7 +8,7 @@ import test_backup_namespace as namespaces
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIONS = ('application-backup-export', 'application-backup-upload')
-EXPRESSION = "${{ env.COOKBOOK_ROOT && env.TOOLS_ROOT || format('{0}/_delivery_cookbook', github.workspace) }}"
+EXPRESSION = '${{ env.TOOLS_ROOT }}'
 
 
 def selected_tools_root(action, environment, workspace):
@@ -17,7 +17,7 @@ def selected_tools_root(action, environment, workspace):
     expression = data['runs']['steps'][0]['env']['TOOLS_ROOT']
     if expression != EXPRESSION:
         raise AssertionError('backup action no longer declares the reviewed two-source boundary')
-    return (environment.get('COOKBOOK_ROOT') and environment.get('TOOLS_ROOT')) or str(workspace / '_delivery_cookbook')
+    return environment.get('TOOLS_ROOT','')
 
 
 class BackupActionContext(unittest.TestCase):
@@ -68,12 +68,18 @@ print(json.dumps(context.identities()))
         old_selected = self.fixture.root / '_delivery_cookbook'
         self.assertTrue(self.context(old_selected, refuses=True)['refused'])
 
-    def test_no_modern_claim_keeps_original_fixed_legacy_target_even_with_ambient_Tools(self):
+    def test_missing_native_identity_cannot_select_ambient_or_old_recipe_sources(self):
+        (self.fixture.caller/'mise.toml').unlink()
+        (self.fixture.caller/'Makefile').write_text('COOKBOOK_REF := '+self.fixture.ref+'\n')
         for action in ACTIONS:
-            for environment in [{}, {'TOOLS_ROOT': '/unselected-ambient-root'}, {'COOKBOOK_ROOT': '', 'TOOLS_ROOT': '/unselected-ambient-root'}]:
-                with self.subTest(action=action, environment=environment):
-                    self.assertEqual(selected_tools_root(action, environment, self.fixture.root),
-                                     str(self.fixture.root / '_delivery_cookbook'))
+            for environment in [{}, {'TOOLS_ROOT': '/unselected-ambient-root'}]:
+                with self.subTest(action=action,environment=environment):
+                    selected=selected_tools_root(action,environment,self.fixture.root)
+                    self.assertEqual(selected,environment.get('TOOLS_ROOT',''))
+                    self.fixture.control("""try:backup.local_recipe_context(root)
+except (OSError,ValueError):print(json.dumps({'refused':True}))
+else:raise AssertionError('missing native identity selected an old SDK')
+""")
 
     def test_modern_foreign_helper_is_preserved_for_strict_refusal_and_never_repaired(self):
         self.fixture.git(self.fixture.tools, 'remote', 'set-url', 'origin', 'https://github.com/foreign/tools.git')
