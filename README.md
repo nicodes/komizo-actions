@@ -1,3 +1,5 @@
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 499848517e219e2e306072cf29d143317669b6921c1d53b75315a9913f759310 -->
+
 # Komizo Actions
 
 GitHub adapters for immutable application releases, protected host submission, previews, readiness checks and encrypted backup transport. Pin actions and reusable workflows to reviewed full commits. Host policy independently authorizes each application, workflow and action.
@@ -8,7 +10,7 @@ Recipe-aware adapters require an exact `cookbook-ref`. Cookbook selects its revi
 
 Applications declare native workloads in `deploy/application.toml`. Complete source validation freezes a closed release packet containing `release.json`, `inventory.json`, selected image OCI archives, selected static archives and explicitly inventoried metadata. Static applications need no image. Publication uploads exact accepted OCI manifests and blobs without rebuilding artifacts or changing the descriptor.
 
-`application-publication` consumes complete same-run evidence and emits an immutable six-record host release artifact. Queued host effects run in the pinned `cookbook-deliver.yml` workflow. Its final authorizer checks publication, complete validation, source, current main or pull request and pinned providers immediately before minting the release proof. Source validation, publication and installed application acceptance remain distinct evidence.
+`application-publication` consumes complete same-run evidence and emits an immutable six-record host release artifact. Queued host effects run in the pinned `cookbook-deliver.yml` workflow. Its final authorizer checks publication, complete validation, source, current main or pull request and pinned providers immediately before minting the release proof. Source validation, publication and installed application acceptance remain distinct evidence. Delivery retains a small typed operation-metadata artifact separately from encrypted backup files. Historical dependency audits require an exact successful ready-operation receipt and report `activation_at_time` with `current_state = "unobserved"`. A staged stopped release cannot satisfy that scope; current host state requires independently authenticated inspection.
 
 ## Host submission
 
