@@ -186,6 +186,9 @@ def receipt(raw, submitted):
     except (ValueError, UnicodeError):
         raise ValueError('submission outcome is unknown; inspect the durable operation before retrying') from None
     inspecting_operation = submitted['action'] == 'inspect' and submitted.get('operation') is not None
+    if inspecting_operation and (not isinstance(submitted['release_digest'], str)
+            or not oci_registry.DIGEST.fullmatch(submitted['release_digest'])):
+        raise ValueError('operation inspection requires its exact admitted release digest')
     if submitted['action'] == 'inspect' and not inspecting_operation:
         required = {'kind', 'version', 'application', 'instance', 'installed'}
         if (not isinstance(value, dict) or not required <= set(value) <= required | {'plan', 'prepared'} or value.get('kind') != 'komizo.instance'
@@ -225,7 +228,7 @@ def receipt(raw, submitted):
         return value
     required = {'kind', 'version', 'operation_id', 'application', 'instance', 'release_digest',
                 'phase', 'ok', 'reconciliation_required'}
-    optional = {'previous_release_digest'} | ({'backup'} if submitted['action'] == 'backup' or inspecting_operation else set())
+    optional = {'previous_release_digest'} | ({'backup'} if submitted['action'] in {'backup', 'start'} or inspecting_operation else set())
     phases = TERMINAL | IN_PROGRESS if inspecting_operation else TERMINAL
     if (not isinstance(value, dict) or not required <= set(value) <= required | optional
             or value.get('kind') != 'komizo.operation' or type(value.get('version')) is not int
@@ -249,12 +252,17 @@ def receipt(raw, submitted):
         raise ValueError('inspection completion belongs to another selected operation')
     if 'backup' in value or submitted['action'] == 'backup' and value['ok']:
         backup = value.get('backup')
+        captured = submitted['release_digest']
+        if submitted['action'] == 'start':
+            captured = value.get('previous_release_digest')
+        elif inspecting_operation:
+            captured = value.get('previous_release_digest') or captured
         if backup == {'status': 'absent'}:
-            if submitted['release_digest'] != 'absent':
+            if submitted['action'] != 'backup' or submitted['release_digest'] != 'absent':
                 raise ValueError('backup absence differs from exact instance target')
         elif (not isinstance(backup, dict) or set(backup) != {'status', 'release_digest', 'files'} or backup['status'] != 'ready'
                 or not isinstance(backup['release_digest'], str) or not oci_registry.DIGEST.fullmatch(backup['release_digest'])
-                or backup['release_digest'] != submitted['release_digest']
+                or backup['release_digest'] != captured
                 or not isinstance(backup['files'], list) or len(backup['files']) != 2):
             raise ValueError('backup completion lacks its exact encrypted file inventory')
         else:

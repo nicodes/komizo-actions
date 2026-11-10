@@ -116,6 +116,59 @@ class NativeOperationContract(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises(ValueError):
                 submission.receipt(oci_registry.canonical(invalid), body)
 
+    def test_prepared_start_captures_its_previous_release_before_target_activation(self):
+        body = self.body('start')
+        previous = 'sha256:' + 'b' * 64
+        for phase in ['ready', 'failed', 'needs_reconciliation']:
+            value = receipt(body, phase=phase, ok=phase == 'ready', reconciliation_required=phase == 'needs_reconciliation',
+                previous_release_digest=previous, backup=self.backup_inventory(previous))
+            self.assertEqual(submission.receipt(oci_registry.canonical(value), body), value)
+            for invalid in [value | {'previous_release_digest': None},
+                            value | {'previous_release_digest': 'sha256:' + 'f' * 64},
+                            value | {'backup': self.backup_inventory(body['release_digest'])},
+                            value | {'backup': self.backup_inventory('sha256:' + 'f' * 64)},
+                            value | {'backup': {'status': 'absent'}}]:
+                with self.subTest(phase=phase), self.assertRaises(ValueError):
+                    submission.receipt(oci_registry.canonical(invalid), body)
+            missing = value.copy(); missing.pop('previous_release_digest')
+            with self.assertRaises(ValueError): submission.receipt(oci_registry.canonical(missing), body)
+
+    def test_inspected_prepared_start_backup_is_bound_to_previous_in_all_durable_phases(self):
+        body = self.body('inspect') | {'operation': 'c' * 32}
+        previous = 'sha256:' + 'b' * 64
+        for phase in [*NATIVE_PENDING, 'ready', 'prepared_stopped', 'failed', 'needs_reconciliation']:
+            value = receipt(body, operation_id=body['operation'], phase=phase,
+                ok=phase in {'ready', 'prepared_stopped'}, reconciliation_required=phase == 'needs_reconciliation',
+                previous_release_digest=previous, backup=self.backup_inventory(previous))
+            self.assertEqual(submission.receipt(oci_registry.canonical(value), body), value)
+            for captured in [body['release_digest'], 'sha256:' + 'f' * 64]:
+                invalid = value | {'backup': self.backup_inventory(captured)}
+                with self.subTest(phase=phase), self.assertRaises(ValueError):
+                    submission.receipt(oci_registry.canonical(invalid), body)
+
+    def test_backup_capture_does_not_extend_to_other_actions_or_foreign_installed_targets(self):
+        previous = 'sha256:' + 'b' * 64
+        for action in ['deploy', 'restart', 'stop', 'remove']:
+            body = self.body(action)
+            phase = 'prepared_stopped' if action in {'stop', 'remove'} else 'ready'
+            invalid = receipt(body, phase=phase, previous_release_digest=previous, backup=self.backup_inventory(previous))
+            with self.subTest(action=action), self.assertRaises(ValueError):
+                submission.receipt(oci_registry.canonical(invalid), body)
+        body = self.body('backup')
+        invalid = receipt(body, previous_release_digest=previous, backup=self.backup_inventory(previous))
+        with self.assertRaises(ValueError): submission.receipt(oci_registry.canonical(invalid), body)
+
+    def test_absent_backup_is_not_an_inspectable_release_target_or_a_replayed_mutation(self):
+        issued = []
+        for digest in ['absent', 'current']:
+            with self.subTest(digest=digest), self.assertRaises(ValueError):
+                submission.request('mailroom', 'production', 'inspect', ENV, release_digest=digest,
+                    operation='c' * 32, token_request=lambda *args: issued.append(args))
+        self.assertEqual(issued, [])
+        body = self.body('inspect') | {'release_digest': 'absent', 'operation': 'c' * 32}
+        value = receipt(body, operation_id=body['operation'], backup={'status': 'absent'})
+        with self.assertRaises(ValueError): submission.receipt(oci_registry.canonical(value), body)
+
     def test_owner_only_actions_do_not_acquire_ci_request_authority(self):
         issued = []
         for action in ['data-prepare', 'data-accept', 'secret-set', 'recover', 'expire']:
