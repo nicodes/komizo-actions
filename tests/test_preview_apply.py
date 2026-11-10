@@ -1,7 +1,10 @@
 """Preview URL selection is concrete, source-bound and precedes host effects."""
 import copy
 import importlib.util
+import json
+import os
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -85,10 +88,54 @@ class PreviewApply(unittest.TestCase):
         self.plan['action'] = 'down'
         installed = {'installed': {'release_digest': self.result['release_digest']}}
         with patch.object(submission, 'request'), \
-             patch.object(submission, 'submit', side_effect=[installed, self.result | {'phase': 'prepared_stopped'}]), \
+             patch.object(submission, 'submit', side_effect=[installed, self.result]), \
              patch.object(preview, 'output') as output:
             with self.assertRaisesRegex(ValueError, 'teardown did not finish'): preview.apply(self.plan, self.environment)
             output.assert_not_called()
+
+    def test_real_submission_seam_accepts_only_the_bound_native_stopped_removal(self):
+        self.plan['action'] = 'down'
+        self.plan['policy']['project'] = 'mailroom'
+        changes = [{}, {'phase': 'ready'}, {'ok': False}, {'reconciliation_required': True},
+                   {'application': 'foreign'}, {'instance': 'pr-41'}, {'operation_id': 'c' * 32},
+                   {'release_digest': 'sha256:' + 'c' * 64}, {'phase': 'admitted'}]
+        real_request, real_submit = submission.request, submission.submit
+        for change in changes:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                config = Path(directory) / 'ssh-config'; config.write_text('Host deploy-target\n'); config.chmod(0o600)
+                environment = {'KOMIZO_SSH_CONFIG': str(config), 'GITHUB_SERVER_URL': 'https://github.com',
+                    'GITHUB_REPOSITORY': 'example/mailroom', 'GITHUB_REPOSITORY_ID': '123',
+                    'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '456', 'GITHUB_RUN_ATTEMPT': '1',
+                    'GITHUB_REF': 'refs/heads/main', 'GITHUB_EVENT_NAME': 'issue_comment',
+                    'GITHUB_WORKFLOW_REF': 'example/mailroom/.github/workflows/pr-preview.yml@refs/heads/main',
+                    'GITHUB_WORKFLOW_SHA': 'a' * 40}
+                calls = []
+                def execute(arguments, **options):
+                    body = json.loads(options['input']); calls.append(body)
+                    self.assertEqual(arguments[-2:], ['deploy-target', 'komizo-box submit'])
+                    if body['action'] == 'inspect':
+                        result = {'kind': 'komizo.instance', 'version': 1, 'application': 'mailroom',
+                            'instance': 'pr-42', 'installed': {'release_digest': self.result['release_digest'],
+                                'desired_running': True, 'operation_id': 'd' * 32}}
+                    else:
+                        result = {'kind': 'komizo.operation', 'version': 1,
+                            **{key: body[key] for key in ['application', 'instance', 'release_digest']},
+                            'operation_id': submission.proposed_operation(body), 'phase': 'prepared_stopped',
+                            'ok': True, 'reconciliation_required': False, **change}
+                    return json.dumps(result).encode() + b'\n'
+                with patch.dict(os.environ, {'GITHUB_OUTPUT': str(Path(directory) / 'outputs')}), \
+                        patch.object(submission, 'request', side_effect=lambda *args, **kwargs:
+                            real_request(*args, **kwargs, token_request=lambda *_: 'synthetic.proof.signature')), \
+                        patch.object(submission, 'submit', side_effect=lambda config, body:
+                            real_submit(config, body, execute=execute)), patch.object(preview, 'output') as output:
+                    if change:
+                        with self.assertRaises(ValueError): preview.apply(self.plan, environment)
+                        output.assert_not_called()
+                    else:
+                        preview.apply(self.plan, environment)
+                        output.assert_called_once_with({'preview-url': '', 'api-url': ''}, environment)
+                self.assertEqual([body['action'] for body in calls], ['inspect', 'remove'])
+                self.assertEqual(calls[-1]['release_digest'], self.result['release_digest'])
 
     def test_target_validation_rejects_nonconcrete_or_control_character_hosts(self):
         for host in ['pr-42.*.test', 'pr-42.example..test', 'pr-42.example.test\n', 'pr-42.example.test\t', '-pr-42.example.test']:

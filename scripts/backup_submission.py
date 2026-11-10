@@ -116,7 +116,7 @@ def capture(project, stage, environment, *, pass_fds=(), timeout=900):
                                   operation=result['operation_id'], export_name=file['name'], timeout_seconds=remaining())
         download(config, body, file, destination / file['name'], timeout=remaining(), pass_fds=pass_fds)
     receipt = json.loads((destination / 'receipt.json').read_bytes(), object_pairs_hook=oci_registry.unique_object)
-    if (not isinstance(receipt, dict) or receipt.get('format') != 1
+    if (not isinstance(receipt, dict) or type(receipt.get('format')) is not int or receipt['format'] != 2
             or any(not isinstance(receipt.get(key), str) or not re.fullmatch('[a-f0-9]{64}', receipt[key])
                    for key in ['archive_sha256', 'ciphertext_sha256'])
             or not isinstance(receipt.get('image_id'), str) or not oci_registry.DIGEST.fullmatch(receipt['image_id'])):

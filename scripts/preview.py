@@ -446,7 +446,7 @@ def apply(plan, environment):
         if installed is not None:
             body = submission.request(application, instance, 'remove', environment, release_digest=installed['release_digest'])
             result = submission.submit(config, body)
-            if not result['ok'] or result['phase'] != 'ready': raise ValueError('preview teardown did not finish')
+            if not result['ok'] or result['phase'] != 'prepared_stopped': raise ValueError('preview teardown did not finish')
         output({'preview-url': '', 'api-url': ''}, environment)
 
 

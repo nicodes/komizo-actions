@@ -68,6 +68,68 @@ class RecoveryEvidence(unittest.TestCase):
             'digest':'sha256:'+'b'*64,'size_in_bytes':100}
         return repo,run,artifact
 
+    def test_routine_backup_transfers_the_actual_format_two_pair_with_bound_native_receipts(self):
+        from test_submission import ENV
+        import backup_submission
+        import submission
+        real_request, real_submit, real_download = submission.request, submission.submit, backup_submission.download
+        for format_value in [2, 1, True, '2']:
+            with self.subTest(format=format_value), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / 'ssh-config'; config.write_text('Host deploy-target\n'); config.chmod(0o600)
+                environment = ENV | {'KOMIZO_SSH_CONFIG': str(config)}
+                metadata = self.receipt | {'format': format_value}
+                pair = {'snapshot.cms': self.ciphertext, 'receipt.json': json.dumps(metadata).encode()}
+                inventory = [{'name': name, 'size_bytes': len(raw),
+                    'sha256': 'sha256:' + hashlib.sha256(raw).hexdigest()} for name, raw in pair.items()]
+                target = 'sha256:' + 'a' * 64
+                calls = []
+
+                def completion(arguments, **options):
+                    body = json.loads(options['input']); calls.append(body)
+                    self.assertEqual(arguments[-2:], ['deploy-target', 'komizo-box submit'])
+                    if body['action'] == 'inspect':
+                        value = {'kind': 'komizo.instance', 'version': 1, 'application': 'mailroom',
+                            'instance': 'production', 'installed': {'release_digest': target,
+                                'desired_running': True, 'operation_id': 'c' * 32}}
+                    else:
+                        self.assertEqual(body['action'], 'backup')
+                        self.assertEqual(body['release_digest'], target)
+                        value = {'kind': 'komizo.operation', 'version': 1, 'application': 'mailroom',
+                            'instance': 'production', 'release_digest': target,
+                            'operation_id': submission.proposed_operation(body), 'phase': 'ready',
+                            'ok': True, 'reconciliation_required': False,
+                            'backup': {'status': 'ready', 'release_digest': target, 'files': inventory}}
+                    return json.dumps(value).encode() + b'\n'
+
+                def download(config, body, expected, destination, **kwargs):
+                    self.assertEqual(body['action'], 'export')
+                    self.assertEqual(body['operation'], submission.proposed_operation(calls[-1]))
+                    header = {'kind': 'komizo.export', 'version': 1, 'operation_id': body['operation'],
+                        **{key: body[key] for key in ['application', 'instance', 'release_digest', 'export_name']},
+                        'size_bytes': expected['size_bytes'], 'sha256': expected['sha256']}
+                    raw = json.dumps(header).encode() + b'\n' + pair[expected['name']]
+                    source = [sys.executable, '-I', '-B', '-c',
+                        'import base64,sys;sys.stdin.buffer.read();sys.stdout.buffer.write(base64.b64decode("'
+                        + __import__('base64').b64encode(raw).decode() + '"))']
+                    real_download(config, body, expected, destination, **kwargs, arguments=source)
+
+                with patch.dict(os.environ, {'GITHUB_OUTPUT': str(root / 'outputs')}), \
+                        patch.object(submission, 'request', side_effect=lambda *args, **kwargs:
+                            real_request(*args, **kwargs, token_request=lambda *_: 'synthetic.proof.signature')), \
+                        patch.object(submission, 'submit', side_effect=lambda config, body, **kwargs:
+                            real_submit(config, body, **kwargs, execute=completion)), \
+                        patch.object(backup_submission, 'download', side_effect=download):
+                    if type(format_value) is int and format_value == 2:
+                        self.assertEqual(backup_submission.capture('mailroom', root, environment, timeout=20), 'export')
+                        self.assertEqual((root / 'export/snapshot.cms').read_bytes(), self.ciphertext)
+                        self.assertEqual((root / 'export/receipt.json').stat().st_mode & 0o777, 0o600)
+                        self.assertNotIn(self.plaintext, (root / 'export/snapshot.cms').read_bytes())
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'invalid envelope identity'):
+                            backup_submission.capture('mailroom', root, environment, timeout=20)
+                self.assertEqual([body['action'] for body in calls], ['inspect', 'backup'])
+
     def bundle(self,artifact,receipt=None,ciphertext=None,extra=None):
         stream = io.BytesIO()
         with zipfile.ZipFile(stream,'w') as bundle:
