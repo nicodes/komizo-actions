@@ -27,7 +27,7 @@ outputs:
     description: Durable host operation identity
     value: ${{ steps.submit.outputs.operation-id }}
   phase:
-    description: Verified terminal phase
+    description: Verified native phase; operation inspection can observe pending work
     value: ${{ steps.submit.outputs.phase }}
 runs:
   using: composite

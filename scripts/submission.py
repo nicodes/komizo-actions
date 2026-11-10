@@ -23,6 +23,13 @@ import release_packet
 MAX_REQUEST = 4 << 20
 ACTIONS = {'deploy', 'start', 'stop', 'restart', 'inspect', 'backup', 'export', 'remove'}
 NONCE = re.compile(r'[a-f0-9]{32}\Z')
+# The native controller returns these phases; only operation inspection may
+# observe work in progress. A stopped or removed instance does not report ready.
+IN_PROGRESS = {'admitted', 'staging', 'jobs', 'installing', 'activating', 'readiness'}
+TERMINAL = {'ready', 'prepared_stopped', 'failed', 'needs_reconciliation'}
+SUCCESS_PHASES = {'deploy': {'ready', 'prepared_stopped'}, 'start': {'ready'},
+                  'stop': {'prepared_stopped'}, 'restart': {'ready'},
+                  'backup': {'ready'}, 'remove': {'prepared_stopped'}}
 
 
 def proposed_operation(submitted):
@@ -178,7 +185,11 @@ def receipt(raw, submitted):
         value = json.loads(raw, object_pairs_hook=oci_registry.unique_object)
     except (ValueError, UnicodeError):
         raise ValueError('submission outcome is unknown; inspect the durable operation before retrying') from None
-    if submitted['action'] == 'inspect' and submitted['release_digest'] == 'current':
+    inspecting_operation = submitted['action'] == 'inspect' and submitted.get('operation') is not None
+    if inspecting_operation and (not isinstance(submitted['release_digest'], str)
+            or not oci_registry.DIGEST.fullmatch(submitted['release_digest'])):
+        raise ValueError('operation inspection requires its exact admitted release digest')
+    if submitted['action'] == 'inspect' and not inspecting_operation:
         required = {'kind', 'version', 'application', 'instance', 'installed'}
         if (not isinstance(value, dict) or not required <= set(value) <= required | {'plan', 'prepared'} or value.get('kind') != 'komizo.instance'
                 or type(value.get('version')) is not int or value['version'] != 1
@@ -191,6 +202,9 @@ def receipt(raw, submitted):
                 or type(installed['desired_running']) is not bool
                 or not isinstance(installed['operation_id'], str) or not NONCE.fullmatch(installed['operation_id'])):
             raise ValueError('instance inspection returned invalid installed state')
+        if submitted['release_digest'] != 'current' and (installed is None
+                or installed['release_digest'] != submitted['release_digest']):
+            raise ValueError('instance inspection differs from its exact release target')
         if 'prepared' in value:
             prepared = value['prepared']
             if (installed is None or installed['desired_running'] or not isinstance(prepared, dict)
@@ -214,16 +228,17 @@ def receipt(raw, submitted):
         return value
     required = {'kind', 'version', 'operation_id', 'application', 'instance', 'release_digest',
                 'phase', 'ok', 'reconciliation_required'}
-    optional = {'previous_release_digest'} | ({'backup'} if submitted['action'] == 'backup' else set())
+    optional = {'previous_release_digest'} | ({'backup'} if submitted['action'] in {'backup', 'start'} or inspecting_operation else set())
+    phases = TERMINAL | IN_PROGRESS if inspecting_operation else TERMINAL
     if (not isinstance(value, dict) or not required <= set(value) <= required | optional
             or value.get('kind') != 'komizo.operation' or type(value.get('version')) is not int
             or value['version'] != 1 or not isinstance(value.get('operation_id'), str)
             or not NONCE.fullmatch(value['operation_id'])
             or any(value.get(key) != submitted[key] for key in ['application', 'instance', 'release_digest'])
             or type(value.get('ok')) is not bool or type(value.get('reconciliation_required')) is not bool
-            or not isinstance(value['phase'], str) or value['phase'] not in {'ready', 'prepared_stopped', 'failed', 'needs_reconciliation'}
+            or not isinstance(value['phase'], str) or value['phase'] not in phases
             or value['ok'] != (value['phase'] in {'ready', 'prepared_stopped'})
-            or (value['phase'] == 'needs_reconciliation' and not value['reconciliation_required'])
+            or value['reconciliation_required'] != (value['phase'] == 'needs_reconciliation')
             or ('previous_release_digest' in value and value['previous_release_digest'] is not None
                 and not (isinstance(value['previous_release_digest'], str)
                          and oci_registry.DIGEST.fullmatch(value['previous_release_digest'])))):
@@ -231,16 +246,23 @@ def receipt(raw, submitted):
     if submitted['action'] in {'deploy', 'start', 'stop', 'restart', 'backup', 'remove'}:
         if value['operation_id'] != proposed_operation(submitted):
             raise ValueError('submission completion belongs to another request nonce')
+        if value['ok'] and value['phase'] not in SUCCESS_PHASES[submitted['action']]:
+            raise ValueError('submission completion has another action outcome')
     elif submitted.get('operation') is not None and value['operation_id'] != submitted['operation']:
         raise ValueError('inspection completion belongs to another selected operation')
-    if submitted['action'] == 'backup' and value['ok']:
+    if 'backup' in value or submitted['action'] == 'backup' and value['ok']:
         backup = value.get('backup')
+        captured = submitted['release_digest']
+        if submitted['action'] == 'start':
+            captured = value.get('previous_release_digest')
+        elif inspecting_operation:
+            captured = value.get('previous_release_digest') or captured
         if backup == {'status': 'absent'}:
-            if submitted['release_digest'] != 'absent':
+            if submitted['action'] != 'backup' or submitted['release_digest'] != 'absent':
                 raise ValueError('backup absence differs from exact instance target')
         elif (not isinstance(backup, dict) or set(backup) != {'status', 'release_digest', 'files'} or backup['status'] != 'ready'
                 or not isinstance(backup['release_digest'], str) or not oci_registry.DIGEST.fullmatch(backup['release_digest'])
-                or backup['release_digest'] != submitted['release_digest']
+                or backup['release_digest'] != captured
                 or not isinstance(backup['files'], list) or len(backup['files']) != 2):
             raise ValueError('backup completion lacks its exact encrypted file inventory')
         else:
