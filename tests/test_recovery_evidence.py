@@ -1,12 +1,13 @@
 """Actual format 2 transport through the isolated action entrypoint."""
 import copy
-from contextlib import redirect_stdout
+from contextlib import chdir, redirect_stdout
 import hashlib
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -149,6 +150,123 @@ class RecoveryEvidence(unittest.TestCase):
                 'SOURCE_ARTIFACT_ID':'456'}),patch.object(evidence,'api',side_effect=api), \
                 patch.object(evidence.subprocess,'run',side_effect=download),redirect_stdout(io.StringIO()):
             evidence.recovery(root,self.tools)
+
+    def published_artifacts(self, root, workflow, role):
+        """Real atomic producer output, archived relative to upload search roots.
+
+        actions/upload-artifact excludes directory entries and roots the ZIP at
+        the least common search ancestor, including missing explicit file paths.
+        Only the host capture itself is substituted with our real sealed fixture.
+        """
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        import backup
+        def capture(project, stage, environment, **kwargs):
+            self.assertEqual(project, 'mailroom')
+            if role == 'export':
+                output = stage / role
+                output.mkdir(mode=0o700)
+                (output / 'receipt.json').write_text(json.dumps(self.receipt))
+                (output / 'snapshot.cms').write_bytes(self.ciphertext)
+            else:
+                (stage / role).write_text(json.dumps({'synthetic_status': role}))
+            return role
+        if role is None:
+            values = {'has-export': ''}
+            (root / '.artifacts/backup').mkdir(parents=True)
+        else:
+            outputs = root / 'capture.outputs'
+            with chdir(root), patch('backup_submission.capture', side_effect=capture), \
+                    patch.dict(os.environ, {'GITHUB_OUTPUT': str(outputs)}, clear=True):
+                backup.export('mailroom', {'version': 1}, self.tools, Path('.artifacts/backup'), os.environ)
+            values = dict(line.split('=', 1) for line in outputs.read_text().splitlines())
+        # Unrelated retained diagnostics must never enter the encrypted pair.
+        (root / '.artifacts/backup/diagnostic.json').write_text('{}')
+        (root / '.artifacts/komizo-operation.json').write_text('{}')
+        job = 'backup' if workflow == 'backup' else 'deliver'
+        steps = yaml.safe_load((ROOT / f'.github/workflows/cookbook-{workflow}.yml').read_text())['jobs'][job]['steps']
+        artifacts = {}
+        for step in steps:
+            if not step.get('uses', '').startswith('actions/upload-artifact@'):
+                continue
+            condition = step.get('if', '')
+            if condition not in {'', 'always()'}:
+                match = re.fullmatch(r"\$\{\{ always\(\) && steps\.(capture|backup)\.outputs\.has-export == '(true|false)' \}\}", condition)
+                self.assertIsNotNone(match, 'preserve explicit completed-capture artifact guards')
+                self.assertEqual(match[1], 'capture' if job == 'backup' else 'backup')
+                if values['has-export'] != match[2]:
+                    continue
+            name = step['with']['name'].replace('${{ github.run_id }}', '123').replace(
+                '${{ github.run_attempt }}', '1').replace('${{ inputs.source }}', 'a' * 40).replace(
+                "${{ steps.plan.outputs['artifact-name'] }}", 'backup-123-1')
+            paths = [root / value for value in step['with']['path'].splitlines()]
+            search_root = Path(os.path.commonpath([str(path if path.is_dir() else path.parent) for path in paths]))
+            files = [file for path in paths for file in (path.rglob('*') if path.is_dir() else [path]) if file.is_file()]
+            self.assertEqual(step['with']['include-hidden-files'], True)
+            self.assertTrue(files, 'declared completed output must not silently disappear')
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, 'w') as archive:
+                for file in sorted(files):
+                    archive.write(file, file.relative_to(search_root))
+            artifacts[name] = stream.getvalue()
+        return artifacts
+
+    def test_both_workflow_producers_round_trip_atomic_format2_pair_through_strict_reader(self):
+        for workflow, path, event in [('backup', 'backup', 'schedule'), ('deliver', 'cd', 'push')]:
+            with self.subTest(workflow=workflow), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                outputs = self.published_artifacts(root, workflow, 'export')
+                _, run, artifact = self.facts()
+                run.update(path=f'.github/workflows/{path}.yml', event=event)
+                self.assertIn(artifact['name'], outputs)
+                data = outputs[artifact['name']]
+                artifact.update(digest='sha256:' + hashlib.sha256(data).hexdigest(), size_in_bytes=len(data))
+                self.verify(root, run, artifact, data)
+                with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                    self.assertEqual(sorted(archive.namelist()), ['receipt.json', 'snapshot.cms'])
+                    self.assertEqual(archive.read('snapshot.cms'), self.ciphertext)
+                report = json.loads((root / '.artifacts/recovery/transport.json').read_text())
+                self.assertTrue(report['transport_verified'])
+                self.assertFalse(report['metadata_authenticated'])
+                self.assertFalse(report['database_restored'])
+                self.assertEqual(report['ciphertext_sha256'], self.receipt['ciphertext_sha256'])
+
+    def test_absent_stopped_and_unattempted_captures_never_claim_recoverable_backup(self):
+        for workflow in ['backup', 'deliver']:
+            with self.subTest(workflow=workflow, role='not-attempted'), tempfile.TemporaryDirectory() as directory:
+                outputs = self.published_artifacts(Path(directory), workflow, None)
+                self.assertNotIn('backup-123-1', outputs)
+                self.assertNotIn('backup-status-123-1', outputs)
+            for role in ['first-deployment.json', 'stopped.json']:
+                with self.subTest(workflow=workflow, role=role), tempfile.TemporaryDirectory() as directory:
+                    outputs = self.published_artifacts(Path(directory), workflow, role)
+                    self.assertNotIn('backup-123-1', outputs)
+                    data = outputs['backup-status-123-1']
+                    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                        self.assertEqual(archive.namelist(), [role])
+                    repo, run, artifact = self.facts()
+                    artifact['name'] = 'backup-status-123-1'
+                    with self.assertRaisesRegex(ValueError, 'not an encrypted backup'):
+                        evidence.provenance(run, artifact, repo, '123', '456')
+
+    def test_nested_and_mixed_old_artifacts_remain_refused(self):
+        for kind in ['nested-export', 'mixed-activation', 'delivery-name']:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                _, run, artifact = self.facts()
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, 'w') as archive:
+                    prefix = 'export/' if kind == 'nested-export' else ''
+                    archive.writestr(prefix + 'receipt.json', json.dumps(self.receipt))
+                    archive.writestr(prefix + 'snapshot.cms', self.ciphertext)
+                    if kind == 'mixed-activation':
+                        archive.writestr('komizo-operation.json', '{}')
+                data = stream.getvalue()
+                if kind == 'delivery-name':
+                    artifact['name'] = 'delivery-' + 'a' * 40 + '-123-1'
+                artifact.update(digest='sha256:' + hashlib.sha256(data).hexdigest(), size_in_bytes=len(data))
+                with self.assertRaises(ValueError):
+                    self.verify(root, run, artifact, data)
+                self.assertFalse((root / '.artifacts/recovery/transport.json').exists())
 
     def test_exact_run_artifact_repository_and_main_provenance(self):
         repo,run,artifact = self.facts()

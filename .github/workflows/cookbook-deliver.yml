@@ -215,16 +215,27 @@ jobs:
         include-hidden-files: true
         if-no-files-found: warn
         retention-days: 30
-    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: always()
+    - name: Retain only the verified encrypted backup pair
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: ${{ always() && steps.backup.outputs.has-export == 'true' }}
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).artifact }}
       with:
-        name: delivery-${{ inputs.source }}-${{ github.run_id }}-${{ github.run_attempt }}
-        path: |
-          .artifacts/komizo-operation.json
-          .artifacts/backup/
+        name: backup-${{ github.run_id }}-${{ github.run_attempt }}
+        path: .artifacts/backup/export/
         include-hidden-files: true
-        if-no-files-found: warn
+        if-no-files-found: error
+        retention-days: 30
+    - name: Retain the distinct absent or stopped backup status
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: ${{ always() && steps.backup.outputs.has-export == 'false' }}
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).artifact }}
+      with:
+        name: backup-status-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          .artifacts/backup/first-deployment.json
+          .artifacts/backup/stopped.json
+        include-hidden-files: true
+        if-no-files-found: error
         retention-days: 30
     outputs:
       phase: ${{ steps.deploy.outputs.phase }}
