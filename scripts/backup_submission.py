@@ -2,16 +2,85 @@
 import hashlib
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import re
 import selectors
 import signal
+import stat
 import subprocess
 import time
 
 import oci_registry
 import submission
-from release_packet import regular
+from release_packet import fingerprint, regular
+
+
+@contextmanager
+def regular_at(directory, name, maximum):
+    """Read only a named encrypted member under an already admitted directory FD."""
+    if name not in {'receipt.json', 'snapshot.cms'}:
+        raise ValueError('owned backup reader requires an exact encrypted member')
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=directory)
+    with os.fdopen(fd, 'rb') as stream:
+        before = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or not 0 <= before.st_size <= maximum
+                or fingerprint(os.stat(name, dir_fd=directory, follow_symlinks=False)) != fingerprint(before)):
+            raise ValueError('encrypted backup requires a bounded ordinary owned file')
+        yield stream, before
+        if (fingerprint(os.fstat(stream.fileno())) != fingerprint(before)
+                or fingerprint(os.stat(name, dir_fd=directory, follow_symlinks=False)) != fingerprint(before)):
+            raise ValueError('encrypted backup changed during admission')
+
+
+def owned_parent(stage, pass_fds):
+    """Recognize only the transport's explicitly passed directory capability."""
+    stage = Path(stage)
+    if not pass_fds:
+        if stage.parts[:4] == ('/', 'proc', 'self', 'fd'):
+            raise ValueError('encrypted backup proc stage requires its owned transport FD')
+        return None
+    if (len(pass_fds) != 1 or type(pass_fds[0]) is not int or pass_fds[0] < 0
+            or stage.parts != ('/', 'proc', 'self', 'fd', str(pass_fds[0]), stage.name)
+            or not re.fullmatch(r'\.export-[a-z0-9_]+', stage.name)):
+        raise ValueError('encrypted backup stage differs from its owned transport FD')
+    parent = pass_fds[0]
+    if not stat.S_ISDIR(os.fstat(parent).st_mode):
+        raise ValueError('encrypted backup transport FD must be a directory')
+    return parent
+
+
+@contextmanager
+def export_readers(stage, pass_fds):
+    """The transport's exact FD capability admits its own stage, never other proc paths."""
+    stage = Path(stage)
+    parent = owned_parent(stage, pass_fds)
+    if parent is None:
+        yield lambda name, maximum: regular(stage / 'export' / name, maximum)
+        return
+    stage_fd = os.open(stage.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+    export_fd = None
+    try:
+        export_fd = os.open('export', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=stage_fd)
+        identities = [(parent, stage.name, stage_fd), (stage_fd, 'export', export_fd)]
+        before = []
+        for directory, name, opened in identities:
+            info = os.fstat(opened)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o700
+                    or fingerprint(os.stat(name, dir_fd=directory, follow_symlinks=False)) != fingerprint(info)):
+                raise ValueError('encrypted backup stage is not its private owned directory')
+            before.append(fingerprint(info))
+        yield lambda name, maximum: regular_at(export_fd, name, maximum)
+        for (directory, name, opened), original in zip(identities, before):
+            if (fingerprint(os.fstat(opened)) != original
+                    or fingerprint(os.stat(name, dir_fd=directory, follow_symlinks=False)) != original):
+                raise ValueError('encrypted backup stage changed during admission')
+    finally:
+        if export_fd is not None:
+            os.close(export_fd)
+        os.close(stage_fd)
 
 
 def export_header(raw, request, expected):
@@ -81,6 +150,7 @@ def download(config, request, expected, target, *, timeout=900, arguments=None, 
 
 
 def capture(project, stage, environment, *, pass_fds=(), timeout=900):
+    owned_parent(stage, pass_fds)
     deadline = time.monotonic() + timeout
     def remaining():
         value = int(deadline - time.monotonic())
@@ -115,13 +185,28 @@ def capture(project, stage, environment, *, pass_fds=(), timeout=900):
         body = submission.request(project, instance, 'export', environment, release_digest=target,
                                   operation=result['operation_id'], export_name=file['name'], timeout_seconds=remaining())
         download(config, body, file, destination / file['name'], timeout=remaining(), pass_fds=pass_fds)
-    receipt = json.loads((destination / 'receipt.json').read_bytes(), object_pairs_hook=oci_registry.unique_object)
-    if (not isinstance(receipt, dict) or type(receipt.get('format')) is not int or receipt['format'] != 2
-            or any(not isinstance(receipt.get(key), str) or not re.fullmatch('[a-f0-9]{64}', receipt[key])
-                   for key in ['archive_sha256', 'ciphertext_sha256'])
-            or not isinstance(receipt.get('image_id'), str) or not oci_registry.DIGEST.fullmatch(receipt['image_id'])):
-        raise ValueError('encrypted backup receipt has an invalid envelope identity')
-    with regular(destination / 'snapshot.cms', 8 << 30) as (stream, _):
-        if hashlib.file_digest(stream, 'sha256').hexdigest() != receipt['ciphertext_sha256']:
+    expected = {file['name']: file for file in result['backup']['files']}
+    with export_readers(stage, pass_fds) as reader, \
+            reader('receipt.json', 4 << 20) as (receipt_stream, _), \
+            reader('snapshot.cms', 8 << 30) as (stream, info):
+        raw = receipt_stream.read((4 << 20) + 1)
+        remaining()
+        if (len(raw) != expected['receipt.json']['size_bytes']
+                or oci_registry.digest(raw) != expected['receipt.json']['sha256']):
+            raise ValueError('encrypted backup receipt differs from its admitted bytes')
+        receipt = json.loads(raw, object_pairs_hook=oci_registry.unique_object)
+        if (not isinstance(receipt, dict) or type(receipt.get('format')) is not int or receipt['format'] != 2
+                or any(not isinstance(receipt.get(key), str) or not re.fullmatch('[a-f0-9]{64}', receipt[key])
+                       for key in ['archive_sha256', 'ciphertext_sha256'])
+                or not isinstance(receipt.get('image_id'), str) or not oci_registry.DIGEST.fullmatch(receipt['image_id'])):
+            raise ValueError('encrypted backup receipt has an invalid envelope identity')
+        actual = hashlib.sha256()
+        while block := stream.read(65536):
+            remaining()
+            actual.update(block)
+        remaining()
+        if (info.st_size != expected['snapshot.cms']['size_bytes']
+                or 'sha256:' + actual.hexdigest() != expected['snapshot.cms']['sha256']
+                or actual.hexdigest() != receipt['ciphertext_sha256']):
             raise ValueError('encrypted backup pair has inconsistent ciphertext integrity')
     return 'export'
