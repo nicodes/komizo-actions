@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Audit historically activated dependencies without observing current host state."""
 import base64
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 import json
@@ -14,6 +15,36 @@ import tempfile
 SHA = re.compile('[a-f0-9]{40}')
 IMAGE_ID = re.compile('sha256:[a-f0-9]{64}')
 COMPONENT = re.compile('[a-z][a-z0-9-]{0,62}')
+
+
+@contextmanager
+def registry_authority(environment):
+    """Keep GHCR read credentials in one disposable Podman authfile."""
+    username = environment.get('REGISTRY_USERNAME', '')
+    password = environment.get('REGISTRY_PASSWORD', '')
+    if (not isinstance(username, str) or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9-]{0,38}', username)
+            or not isinstance(password, str) or not 0 < len(password) <= 32768
+            or any(ord(char) < 32 or ord(char) == 127 for char in password)):
+        raise ValueError('deployed scans require bounded explicit GHCR read credentials')
+    with tempfile.TemporaryDirectory(prefix='deployed-registry-') as directory:
+        path = Path(directory).resolve() / 'auth.json'
+        encoded = base64.b64encode((username + ':' + password).encode()).decode()
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, 'w') as output:
+            json.dump({'auths': {'ghcr.io': {'auth': encoded}}}, output)
+            output.write('\n')
+        values = dict(environment, REGISTRY_AUTH_FILE=str(path))
+        # The pinned Go scanner also invokes container_runtime without an
+        # explicit environment. Bind that same file for those child calls.
+        previous = os.environ.get('REGISTRY_AUTH_FILE')
+        os.environ['REGISTRY_AUTH_FILE'] = str(path)
+        try:
+            yield values
+        finally:
+            if previous is None:
+                os.environ.pop('REGISTRY_AUTH_FILE', None)
+            else:
+                os.environ['REGISTRY_AUTH_FILE'] = previous
 
 
 def source_path(root, name):

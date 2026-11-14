@@ -1,5 +1,5 @@
 import copy
-from contextlib import chdir
+from contextlib import chdir, nullcontext
 import importlib.util
 import json
 import os
@@ -280,7 +280,8 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_source_and_deployed_audits_have_separate_explicit_execution_phases(self):
         effects=[]
-        deployed=SimpleNamespace(scan=lambda *args,**kwargs:effects.append('deployed'))
+        deployed=SimpleNamespace(scan=lambda *args,**kwargs:effects.append('deployed'),
+            registry_authority=lambda environment:nullcontext(environment))
         original_authority=driver.authority
         with chdir(self.root), patch.dict(os.environ,self.environment | {'OPERATION':'security'},clear=True), \
                 patch.object(driver,'ROOT',self.actions), \

@@ -3,6 +3,8 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
+import stat
 from source_fixture import write_source
 from pathlib import Path
 import subprocess
@@ -14,6 +16,77 @@ from unittest.mock import Mock, patch
 spec = importlib.util.spec_from_file_location('native_deployed_scan', Path(__file__).parents[1] / 'scripts/deployed_scan.py')
 scanner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scanner)
+
+
+class RegistryReadAuthority(unittest.TestCase):
+    def setUp(self):
+        self.environment = {'REGISTRY_USERNAME': 'fixture-owner',
+                            'REGISTRY_PASSWORD': 'fixture-read-token'}
+
+    def test_private_ghcr_only_file_is_consumed_by_the_native_runtime(self):
+        tools = Path(os.environ['RECIPE_SOURCE_SDK'])
+        runtime = scanner.helper(tools, 'container_runtime')
+        original = dict(self.environment)
+        with scanner.registry_authority(self.environment) as values:
+            path = Path(values['REGISTRY_AUTH_FILE'])
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+            self.assertEqual(path.stat().st_nlink, 1)
+            self.assertEqual(json.loads(path.read_text()), {'auths': {'ghcr.io': {
+                'auth': base64.b64encode(b'fixture-owner:fixture-read-token').decode()}}})
+            for environment in [values, None]:
+                arguments, inherited = runtime.command(['pull', 'ghcr.io/fixture/image@sha256:' + 'a' * 64], environment)
+                self.assertEqual(arguments[:5], ['podman', '--remote=false', 'pull', '--authfile', str(path)])
+                self.assertEqual(inherited['REGISTRY_AUTH_FILE'], str(path))
+                self.assertNotIn(self.environment['REGISTRY_PASSWORD'], arguments)
+        self.assertFalse(path.exists())
+        self.assertFalse(path.parent.exists())
+        self.assertEqual(self.environment, original)
+
+    def test_failure_removes_only_owned_credentials_and_restores_previous_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            previous = Path(directory) / 'existing-auth.json'
+            previous.write_text('original caller bytes\n')
+            with patch.dict(os.environ, {'REGISTRY_AUTH_FILE': str(previous)}):
+                with self.assertRaisesRegex(RuntimeError, '^scanner failed$'):
+                    with scanner.registry_authority(self.environment) as values:
+                        path = Path(values['REGISTRY_AUTH_FILE'])
+                        raise RuntimeError('scanner failed')
+                self.assertEqual(os.environ['REGISTRY_AUTH_FILE'], str(previous))
+                self.assertFalse(path.parent.exists())
+                self.assertEqual(previous.read_text(), 'original caller bytes\n')
+
+    def test_no_previous_authority_remains_absent_after_the_scan(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with scanner.registry_authority(self.environment):
+                self.assertIn('REGISTRY_AUTH_FILE', os.environ)
+            self.assertNotIn('REGISTRY_AUTH_FILE', os.environ)
+
+    def test_missing_malformed_or_oversized_credentials_refuse_before_file_creation(self):
+        for changes in [{'REGISTRY_USERNAME': ''}, {'REGISTRY_USERNAME': 'other:owner'},
+                        {'REGISTRY_USERNAME': 'x' * 40}, {'REGISTRY_USERNAME': None},
+                        {'REGISTRY_PASSWORD': ''}, {'REGISTRY_PASSWORD': 'x' * 32769},
+                        {'REGISTRY_PASSWORD': 'secret\n'}, {'REGISTRY_PASSWORD': 'secret\x7f'},
+                        {'REGISTRY_PASSWORD': None}]:
+            with self.subTest(changes=list(changes)), patch.object(scanner.tempfile, 'TemporaryDirectory') as temporary:
+                with self.assertRaisesRegex(ValueError, '^deployed scans require bounded explicit GHCR read credentials$'):
+                    with scanner.registry_authority(self.environment | changes):
+                        self.fail('invalid authority admitted')
+                temporary.assert_not_called()
+
+    def test_both_audit_workflows_prepare_podman_and_keep_credentials_in_the_deployed_step(self):
+        workflows = Path(__file__).parents[1] / '.github/workflows'
+        for name in ['cookbook-security-audit.yml', 'cookbook-security-audit-no-report.yml']:
+            text = (workflows / name).read_text()
+            with self.subTest(workflow=name):
+                self.assertNotIn('docker/login-action', text)
+                self.assertIn('run: bash "$TOOLS_ROOT/helpers/ci-container-runtime.sh"', text)
+                before, deployed = text.split('    - name: Audit actual deployed runtime dependencies\n')
+                deployed = deployed.split('    - uses: actions/upload-artifact@')[0]
+                self.assertNotIn('REGISTRY_PASSWORD:', before)
+                self.assertIn('REGISTRY_USERNAME: ${{ github.repository_owner }}', deployed)
+                self.assertIn('REGISTRY_PASSWORD: ${{ github.token }}', deployed)
+                self.assertIn("timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).deployed }}", deployed)
 
 
 class DeployedDependencies(unittest.TestCase):

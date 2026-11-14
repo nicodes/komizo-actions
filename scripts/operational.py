@@ -289,7 +289,8 @@ def main():
         elif args.command=='deployed':
             if operation!='security' or not record.get('deployed_policy'):raise ValueError('deployed audits require their actual native image policy')
             driver=module('operational_deployed_scan',ROOT/'scripts/deployed_scan.py')
-            driver.scan(root,root/record['deployed_policy'],tools,environment=environment)
+            with driver.registry_authority(environment) as registry_environment:
+                driver.scan(root,root/record['deployed_policy'],tools,environment=registry_environment)
         elif operation=='production':
             for check in record['checks']:native(root,check,environment)
         elif operation=='paid':
