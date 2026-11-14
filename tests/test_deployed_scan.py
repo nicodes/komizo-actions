@@ -87,6 +87,9 @@ class RegistryReadAuthority(unittest.TestCase):
                 self.assertIn('REGISTRY_USERNAME: ${{ github.repository_owner }}', deployed)
                 self.assertIn('REGISTRY_PASSWORD: ${{ github.token }}', deployed)
                 self.assertIn("timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).deployed }}", deployed)
+                self.assertIn('path: .artifacts/security-reader-tools', before)
+                self.assertIn('ref: ${{ steps.activation-reader.outputs.revision }}', before)
+                self.assertIn('--activation-reader-root .artifacts/security-reader-tools', deployed)
 
 
 class DeployedDependencies(unittest.TestCase):
@@ -255,19 +258,31 @@ class DeployedDependencies(unittest.TestCase):
         if missing_activation:del deployed.activation_for_deployment
         native = Mock(return_value=dict(inventory='cargo'))
         effects = []
+        helper_roots=[]
+        reader_root=self.root/'reader-tools'
+        reader_identity={'role':'historical-activation','repository':'nicodes/tools','revision':'f'*40}
+        def helper(root,name):
+            helper_roots.append((root,name))
+            self.assertEqual(root,reader_root if name=='scan-deployed' else self.root/'tools')
+            return deployed if name=='scan-deployed' else go
         def execute(arguments, environment, timeout=60, **kwargs):
             effects.append(arguments)
             if fail and arguments[:2] == ['trivy', 'image']:
                 raise subprocess.CalledProcessError(1, arguments)
         def capture(arguments, environment, timeout=60, **kwargs):
             return json.dumps([dict(Id=self.identity,Os='linux',Architecture='amd64')])
-        with patch.object(scanner, 'helper', side_effect=lambda tools, name: deployed if name == 'scan-deployed' else go), \
+        with patch.object(scanner, 'helper', side_effect=helper), \
+                patch.object(scanner,'activation_reader_context',return_value=(reader_root,reader_identity)) as checked_reader, \
                 patch.object(scanner, 'source_tree', return_value=self.tree), \
                 patch.object(scanner, 'source_lock', side_effect=lambda repo,tree,record,env:self.lock+(b'# renderer\n' if record['source_lock'].startswith('internal/') else b'')), \
                 patch.object(scanner, 'rust_image', native), \
                 patch.object(scanner, 'run', side_effect=execute), patch.object(scanner, 'capture', side_effect=capture), \
                 patch.object(scanner,'scan_os',side_effect=lambda image,identity,report,environment,*_:execute(['trivy','image','--input','/verified/oci/layout',identity],environment)):
-            result = scanner.scan(self.root, self.path, self.root / 'tools', environment={'GITHUB_REPOSITORY': 'owner/demo'})
+            result = scanner.scan(self.root, self.path, self.root / 'tools', environment={'GITHUB_REPOSITORY': 'owner/demo'},
+                activation_reader_root=reader_root)
+            checked_reader.assert_called_once_with(reader_root,{'GITHUB_REPOSITORY':'owner/demo'})
+            self.assertEqual(result['activation_reader'],reader_identity)
+            self.assertEqual([name for _,name in helper_roots],['scan-deployed','scan-image','container_runtime','oci_archive'])
         return result, effects, native, go
 
     def test_every_component_uses_immutable_image_and_its_actual_native_scanner(self):
@@ -284,6 +299,17 @@ class DeployedDependencies(unittest.TestCase):
         self.assertEqual(summary['audit'],'dependencies')
         self.assertEqual(summary['activations'][0]['operation']['phase'],'ready')
         self.assertFalse(summary['failures'])
+
+    def test_unaccepted_reader_refuses_before_loading_helpers_or_native_image_access(self):
+        self.write()
+        with patch.object(scanner,'activation_reader_context',side_effect=ValueError('unaccepted reader')), \
+                patch.object(scanner,'helper') as helper, patch.object(scanner,'run') as run:
+            with self.assertRaisesRegex(ValueError,'unaccepted reader'):
+                scanner.scan(self.root,self.path,self.root/'tools',environment={'GITHUB_REPOSITORY':'owner/demo'},
+                    activation_reader_root=self.root/'reader-tools')
+            helper.assert_not_called()
+            run.assert_not_called()
+        self.assertFalse((self.root/'.artifacts/security/deployed/summary.json').exists())
 
     def test_os_only_images_still_receive_the_full_os_and_library_scan(self):
         result,effects,native,go=self.pipeline(os_only=True)

@@ -177,6 +177,22 @@ jobs:
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
         mise exec -- python3 -I -B _operation_actions/scripts/operational.py check-artifacts "${sdk[@]}"
+    - name: Select the immutable historical activation reader
+      id: activation-reader
+      if: ${{ steps.plan.outputs.deployed == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
+      shell: bash
+      run: python3 -I -B _operation_actions/scripts/activation_reader.py --github-output
+    - name: Check out the separately pinned historical activation reader
+      if: ${{ steps.plan.outputs.deployed == 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
+      with:
+        repository: ${{ steps.activation-reader.outputs.repository }}
+        ref: ${{ steps.activation-reader.outputs.revision }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: .artifacts/security-reader-tools
     - name: Audit actual deployed runtime dependencies
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).deployed }}
       if: ${{ steps.plan.outputs.deployed == 'true' }}
@@ -187,7 +203,7 @@ jobs:
       run: |
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        mise exec -- python3 -I -B _operation_actions/scripts/operational.py deployed "${sdk[@]}"
+        mise exec -- python3 -I -B _operation_actions/scripts/operational.py deployed "${sdk[@]}" --activation-reader-root .artifacts/security-reader-tools
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
       if: ${{ always() && steps.plan.outputs.evidence != '' }}
