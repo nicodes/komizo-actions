@@ -295,7 +295,11 @@ class OperationalAuthority(unittest.TestCase):
                 driver.main()
             self.assertEqual(effects,['prepare','source'])
             effects.clear()
-            with patch.object(sys,'argv',['operational.py','deployed','--tools',str(self.tools)]):
+            with patch.object(sys,'argv',['operational.py','deployed','--tools',str(self.tools)]),self.assertRaises(SystemExit):
+                driver.main()
+            self.assertEqual(effects,[])
+            with patch.object(sys,'argv',['operational.py','deployed','--tools',str(self.tools),
+                    '--activation-reader-root',str(self.root/'reader-tools')]):
                 driver.main()
             self.assertEqual(effects,['deployed'])
         text=(Path(__file__).parents[1]/'.github/workflows/cookbook-security-audit.yml').read_text()

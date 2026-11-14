@@ -267,12 +267,19 @@ def scan_os(image, identity, report, environment, runtime, oci):
             archive.unchanged()
 
 
-def scan(root, path, tools, environment=None):
+def activation_reader_context(root, environment):
+    spec=importlib.util.spec_from_file_location('_deployed_activation_reader',Path(__file__).with_name('activation_reader.py'))
+    reader=importlib.util.module_from_spec(spec);spec.loader.exec_module(reader)
+    return reader.checkout(root,lambda path:json.loads(capture(['gh','api',path],environment)))
+
+
+def scan(root, path, tools, environment=None, *, activation_reader_root):
     root = Path(root).resolve()
     path = Path(path).absolute()
     environment = dict(os.environ) if environment is None else environment
     data = policy(root, path)
-    deployed = helper(tools, 'scan-deployed')
+    reader_root,reader_identity=activation_reader_context(activation_reader_root,environment)
+    deployed = helper(reader_root, 'scan-deployed')
     go = helper(tools, 'scan-image')
     runtime=helper(tools,'container_runtime')
     oci=helper(tools,'oci_archive')
@@ -331,6 +338,7 @@ def scan(root, path, tools, environment=None):
             except (OSError, AssertionError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                 failures.append(f'{image}: {error}')
     evidence = dict(scope='activation_at_time',current_state='unobserved',audit='dependencies',
+                    activation_reader=reader_identity,
                     activations=activations,revisions=revisions, images=results, failures=failures)
     (reports / 'summary.json').write_text(json.dumps(evidence, indent=2) + '\n')
     if failures:

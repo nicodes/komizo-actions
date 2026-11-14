@@ -235,6 +235,7 @@ def main():
     parser.add_argument('--cookbook-root',type=Path)
     parser.add_argument('--cookbook-ref')
     parser.add_argument('--tools-root',type=Path,help='Location of the exact helper dependency declared by Cookbook')
+    parser.add_argument('--activation-reader-root',type=Path,help='Separate pinned historical activation reader checkout')
     args=parser.parse_args()
     try:
         root=Path.cwd();environment=dict(os.environ);operation=environment['OPERATION']
@@ -288,9 +289,11 @@ def main():
             for check in record.get('checks',[]):native(root,check,environment)
         elif args.command=='deployed':
             if operation!='security' or not record.get('deployed_policy'):raise ValueError('deployed audits require their actual native image policy')
+            if args.activation_reader_root is None:raise ValueError('deployed audits require the separate immutable activation reader')
             driver=module('operational_deployed_scan',ROOT/'scripts/deployed_scan.py')
             with driver.registry_authority(environment) as registry_environment:
-                driver.scan(root,root/record['deployed_policy'],tools,environment=registry_environment)
+                driver.scan(root,root/record['deployed_policy'],tools,environment=registry_environment,
+                    activation_reader_root=args.activation_reader_root)
         elif operation=='production':
             for check in record['checks']:native(root,check,environment)
         elif operation=='paid':
