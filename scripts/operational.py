@@ -20,7 +20,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
 import recipe_context
 SHA=re.compile('[a-f0-9]{40}')
-WORKFLOWS={'backup':'backup.yml','recovery':'recovery.yml','retention':'recovery.yml','security':'security-scan.yml','production':'production-verification.yml','paid':'production-verification.yml'}
+WORKFLOWS={'backup':'backup.yml','recovery':'recovery.yml','security':'security-scan.yml','production':'production-verification.yml','paid':'production-verification.yml'}
 
 
 def capture(arguments,root=None,environment=None,timeout=30):
@@ -106,22 +106,15 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
     if data['definition']!=environment.get('DECLARATION') or data['komizo_ref']!=revisions['komizo-actions']:
         raise ValueError('operational input differs from trusted native policy')
     record=next((item for item in data.get('paid',[]) if item['id']==selected),None) if operation=='paid' else data.get(operation)
-    if operation=='retention':record=data.get('recovery',{}).get('legacy_retention')
     if record is None:raise ValueError('this operational role has no actual native implementation')
     if operation=='production' and selected and not any(item['id']==selected and item.get('inline') for item in data.get('paid',[])):
         raise ValueError('ordinary production may select only its original inline paid assertion')
-    if operation in {'paid','retention'}:
-        if environment['GITHUB_EVENT_NAME']!='workflow_dispatch':raise ValueError('legacy retention requires explicit manual dispatch')
+    if operation=='paid':
         path=Path(environment['GITHUB_EVENT_PATH'])
         if path.is_symlink() or not path.is_file() or path.stat().st_size>1048576:raise ValueError('paid dispatch metadata must be bounded')
         event=json.loads(path.read_text())
         if not isinstance(event,dict) or not isinstance(event.get('inputs',{}),dict):raise ValueError('paid dispatch metadata is invalid')
-        if operation=='paid' and event.get('inputs',{}).get(selected) not in (True,'true'):raise ValueError('paid native check was not explicitly requested')
-        if operation=='retention':
-            inputs=event.get('inputs',{})
-            if inputs.get('operation')!='retain-legacy':raise ValueError('legacy retention was not explicitly requested')
-            for key in ['artifact-id','run-id']:
-                if not re.fullmatch('[1-9][0-9]{0,19}',str(inputs.get(key,''))):raise ValueError('legacy retention requires immutable artifact and run IDs')
+        if event.get('inputs',{}).get(selected) not in (True,'true'):raise ValueError('paid native check was not explicitly requested')
     expected=workflow.workflow_files(root,cookbook_ref if context else revisions['tools'],config)
     path='.github/workflows/'+WORKFLOWS[operation]
     if (root/path).read_text()!=expected[path]:raise ValueError('operational caller differs from its canonical authority contract')

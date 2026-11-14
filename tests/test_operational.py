@@ -188,31 +188,9 @@ class OperationalAuthority(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'current main'):
             self.admit(environment, 'paid', 'model_smoke', old_main)
 
-    def test_legacy_retention_requires_exact_manual_selection_and_immutable_ids(self):
-        legacy = dict(runner='ubuntu-22.04', timeout_minutes=10,
-                      environment='production', format='age-pb-v1')
-        self.data['recovery'] = dict(runner='ubuntu-24.04', timeout_minutes=45,
-                                    environment='production', legacy_retention=legacy)
-        native_recipe_fixture.write(self.root / 'deploy/operations.toml', self.data)
-        for name, text in workflows.workflow_files(self.root, self.environment['TOOLS_REF'], self.config).items():
-            (self.root / name).write_text(text)
-        self.git(self.root, 'add', '.')
-        self.git(self.root, 'commit', '-qm', 'Legacy retention policy')
-        self.revision = self.git(self.root, 'rev-parse', 'HEAD')
-        environment = self.environment | dict(GITHUB_SHA=self.revision, GITHUB_WORKFLOW_SHA=self.revision,
-            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/recovery.yml@refs/heads/main',
-            OPERATION_RUNNER='ubuntu-22.04', OPERATION_TIMEOUT='10', OPERATION_ENVIRONMENT='production',
-            OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('retention', legacy)))
-        valid = dict(operation='retain-legacy', **{'artifact-id': '456', 'run-id': '789'})
-        self.event.write_text(json.dumps(dict(inputs=valid)))
-        self.admit(environment, 'retention')
-        for changes in [dict(operation='verify-transport'), {'artifact-id': '../escape'}, {'run-id': '0'}]:
-            self.event.write_text(json.dumps(dict(inputs=valid | changes)))
-            with self.subTest(changes=changes), self.assertRaises(ValueError):
-                self.admit(environment, 'retention')
-        self.event.write_text(json.dumps(dict(inputs=valid)))
-        with self.assertRaisesRegex(ValueError, 'manual dispatch'):
-            self.admit(environment | dict(GITHUB_EVENT_NAME='schedule'), 'retention')
+    def test_retired_retention_role_has_no_operational_authority(self):
+        with self.assertRaisesRegex(ValueError, 'exact trusted-main workflow source'):
+            self.admit(operation='retention')
 
     def test_prepare_and_execution_derive_the_same_pinned_environment(self):
         original = self.environment | dict(TOOLS_ROOT='wrong', EXPECTED_REVISION='wrong', MISE_AUTO_INSTALL='true')
