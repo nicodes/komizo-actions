@@ -35,7 +35,9 @@ jobs:
   verify:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
-    environment: ${{ inputs.environment }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: false
     permissions:
       contents: read
       actions: read

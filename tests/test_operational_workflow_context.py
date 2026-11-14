@@ -7,6 +7,53 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NativeWorkflowContext(unittest.TestCase):
+    def assert_environment_scope(self, workflow, name, job):
+        effects = {('cookbook-deliver.yml', 'deliver'): '${{ inputs.environment }}',
+                   ('cookbook-preview-effects.yml', 'effects'): 'Preview'}
+        value = job['environment']
+        if (workflow, name) in effects:
+            expected = effects[workflow, name]
+            if isinstance(value, dict):
+                self.assertEqual(value['name'], expected)
+                self.assertIs(value.get('deployment', True), True)
+            else:
+                self.assertEqual(value, expected)
+        else:
+            self.assertIsInstance(value, dict)
+            self.assertEqual(set(value), {'name', 'deployment'})
+            expected = 'Preview' if workflow == 'cookbook-preview-request.yml' else '${{ inputs.environment }}'
+            self.assertEqual(value['name'], expected)
+            self.assertIs(value['deployment'], False)
+
+    def test_only_native_lifecycle_effects_create_environment_deployments(self):
+        observed = set()
+        for path in ROOT.glob('.github/workflows/*.yml'):
+            for name, job in yaml.safe_load(path.read_text()).get('jobs', {}).items():
+                if 'environment' not in job:
+                    continue
+                with self.subTest(workflow=path.name, job=name):
+                    self.assert_environment_scope(path.name, name, job)
+                observed.add((path.name, name))
+        self.assertEqual(observed, {
+            ('cookbook-deliver.yml', 'deliver'), ('cookbook-preview-effects.yml', 'effects'),
+            ('cookbook-backup.yml', 'backup'), ('cookbook-legacy-retention.yml', 'verify'),
+            ('cookbook-notify.yml', 'notify'), ('cookbook-preview-request.yml', 'request'),
+            ('cookbook-production-check.yml', 'verify'), ('cookbook-recovery.yml', 'verify'),
+            ('cookbook-report.yml', 'notify')})
+
+    def test_operational_environment_contract_refuses_tracking_or_changed_secret_scope(self):
+        for value in ['${{ inputs.environment }}',
+                      {'name': '${{ inputs.environment }}', 'deployment': True},
+                      {'name': '${{ inputs.environment }}', 'deployment': 'false'},
+                      {'name': 'other-environment', 'deployment': False}]:
+            with self.subTest(environment=value), self.assertRaises(AssertionError):
+                self.assert_environment_scope('cookbook-notify.yml', 'notify', {'environment': value})
+        for workflow, name, environment in [('cookbook-deliver.yml', 'deliver', '${{ inputs.environment }}'),
+                                             ('cookbook-preview-effects.yml', 'effects', 'Preview')]:
+            with self.subTest(workflow=workflow), self.assertRaises(AssertionError):
+                self.assert_environment_scope(workflow, name,
+                                              {'environment': {'name': environment, 'deployment': False}})
+
     def test_public_recipe_interfaces_require_real_cookbook_and_have_no_tools_alias(self):
         for path in [*ROOT.glob('.github/workflows/cookbook-*.yml'), *ROOT.glob('*/action.yml')]:
             value = yaml.safe_load(path.read_text())

@@ -133,7 +133,9 @@ jobs:
       || inputs.deployment == 'failure')
     runs-on: ${{ inputs.notify-runner }}
     timeout-minutes: ${{ inputs.notify-timeout }}
-    environment: ${{ inputs.environment }}
+    environment:
+      name: ${{ inputs.environment }}
+      deployment: false
     permissions:
       contents: read
     steps:
