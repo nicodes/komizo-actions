@@ -6,6 +6,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NativeMaintenance(unittest.TestCase):
+    def test_backup_deadline_can_read_actual_job_metadata_before_connecting(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/cookbook-backup.yml').read_text())
+        job = workflow['jobs']['backup']
+        self.assertEqual(workflow['permissions'], {})
+        self.assertEqual(job['permissions'], {'contents': 'read', 'actions': 'read',
+                         'id-token': 'write', 'attestations': 'read'})
+        self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
+        budgets = [index for index, step in enumerate(job['steps'])
+                   if 'scripts/operation_budget.py --job backup' in step.get('run', '')]
+        connections = [index for index, step in enumerate(job['steps'])
+                       if step.get('uses', '').endswith('/connect')]
+        self.assertEqual(len(budgets), 1)
+        self.assertEqual(len(connections), 1)
+        self.assertLess(budgets[0], connections[0])
+
     def test_backup_uses_current_pinned_transport_without_private_frames_or_shell_exporters(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/cookbook-backup.yml').read_text())
         job = workflow['jobs']['backup']
