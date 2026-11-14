@@ -34,7 +34,9 @@ name: Resolve trusted Preview request
 permissions: {}
 jobs:
   request:
-    environment: Preview
+    environment:
+      name: Preview
+      deployment: false
     runs-on: ubuntu-slim
     timeout-minutes: 3
     permissions:
