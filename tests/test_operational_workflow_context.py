@@ -36,7 +36,7 @@ class NativeWorkflowContext(unittest.TestCase):
                 observed.add((path.name, name))
         self.assertEqual(observed, {
             ('cookbook-deliver.yml', 'deliver'), ('cookbook-preview-effects.yml', 'effects'),
-            ('cookbook-backup.yml', 'backup'), ('cookbook-legacy-retention.yml', 'verify'),
+            ('cookbook-backup.yml', 'backup'),
             ('cookbook-notify.yml', 'notify'), ('cookbook-preview-request.yml', 'request'),
             ('cookbook-production-check.yml', 'verify'), ('cookbook-recovery.yml', 'verify'),
             ('cookbook-report.yml', 'notify')})
