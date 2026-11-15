@@ -22,6 +22,7 @@ import recipe_data
 import recipe_context
 import release_packet
 import submission
+import workflow_run
 
 FILES = {'release.json', 'publication.json', 'validation.json', 'inventory.json', 'build.json', 'test.json'}
 MAX_ARCHIVE = 24 << 20
@@ -66,7 +67,7 @@ def retrieve(repository, source, run, attempt, destination, lookup=api):
     return destination
 
 
-def admit(directory, application, source, configuration, cookbook_revision, groups, jobs, environment, *, providers, combined=False):
+def admit(directory, application, source, configuration, cookbook_revision, groups, jobs, environment, *, providers, job_source, combined=False):
     submission.workflow(environment)
     directory = Path(directory)
     if {path.name for path in directory.iterdir()} != FILES:
@@ -111,7 +112,7 @@ def admit(directory, application, source, configuration, cookbook_revision, grou
     spec = importlib.util.spec_from_file_location('_late_acceptance', Path(__file__).with_name('application-publication.py'))
     acceptance = importlib.util.module_from_spec(spec); spec.loader.exec_module(acceptance)
     acceptance.accept(proof, configuration, source, cookbook_revision, proof.get('source_tree'), groups, jobs,
-                      environment, workflow_source=environment['GITHUB_SHA'])
+                      environment, job_source=job_source)
     publication.admit_records(values['build.json'], values['test.json'], proof, source, groups)
     if combined:
         if context.get('GITHUB_JOB') != 'deliver' or environment.get('GITHUB_JOB') != 'deliver':
@@ -119,7 +120,7 @@ def admit(directory, application, source, configuration, cookbook_revision, grou
     else:
         if context.get('GITHUB_JOB') != 'publish': raise ValueError('publication did not use its declared producer role')
         writers = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ publish') or job.get('name', '').endswith('/ Publish exact Preview images')]
-        if len(writers) != 1 or writers[0].get('conclusion') != 'success' or writers[0].get('head_sha') != environment['GITHUB_SHA']:
+        if len(writers) != 1 or writers[0].get('conclusion') != 'success' or writers[0].get('head_sha') != job_source:
             raise ValueError('independent trusted publisher has not completed successfully')
     return SimpleNamespace(descriptor=descriptor, release_digest=identity, release_bytes=raw)
 
@@ -160,11 +161,7 @@ def main():
             if bool(declaration.get('combined', False)) != args.combined: raise ValueError('combined delivery differs from authored source policy')
             groups = context.module('recipe').test_suites(Path.cwd(), configuration)
         run, attempt = environment['GITHUB_RUN_ID'], environment['GITHUB_RUN_ATTEMPT']
-        metadata = api(f"repos/{environment['GITHUB_REPOSITORY']}/actions/runs/{run}")
-        if (str(metadata.get('run_attempt')) != attempt or metadata.get('head_sha') != environment['GITHUB_SHA']
-                or metadata.get('repository', {}).get('full_name') != environment['GITHUB_REPOSITORY']
-                or metadata.get('head_repository', {}).get('full_name') != environment['GITHUB_REPOSITORY']):
-            raise ValueError('authorization run belongs to another source, repository or attempt')
+        metadata, jobs, job_source = workflow_run.current(environment, api)
         references = metadata.get('referenced_workflows', [])
         required = {'nicodes/cookbook/.github/workflows/cookbook-ci.yml@' + args.cookbook_ref}
         own = environment.get('KOMIZO_REF', '')
@@ -177,12 +174,11 @@ def main():
             raise ValueError('authorization requires its exact independent CI, publisher and delivery providers')
         if not args.combined:
             retrieve(environment['GITHUB_REPOSITORY'], args.source, run, attempt, args.directory)
-        jobs = api(f"repos/{environment['GITHUB_REPOSITORY']}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100")
         context.require_proof(release_packet.document(args.directory / 'validation.json'))
         providers = {'cookbook_revision': context.cookbook_revision, 'tools_revision': context.tools_revision,
                      'core_revision': context.module('komizo_core').pin()['revision']}
         admitted = admit(args.directory, args.application, args.source, configuration, args.cookbook_ref, groups, jobs, environment,
-                         providers=providers, combined=args.combined)
+                         providers=providers, job_source=job_source, combined=args.combined)
         source = api(f"repos/{environment['GITHUB_REPOSITORY']}/git/commits/{args.source}")
         proof = release_packet.document(args.directory / 'validation.json')
         if source.get('sha') != args.source or source.get('tree', {}).get('sha') != proof['source_tree']:

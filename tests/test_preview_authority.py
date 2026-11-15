@@ -150,11 +150,34 @@ class PreviewAuthority(unittest.TestCase):
             'published':{name:artifact['reference'] for name,artifact in release['artifacts'].items()},
             'execution_context':self.environment|{'GITHUB_JOB':'publish'}}}
 
+    def publication_lookup(self,jobs):
+        def lookup(path):
+            if path.endswith('/jobs?per_page=100'):
+                return jobs|{'jobs':[dict(id=index+1,run_id=123,run_attempt=2,status='completed')|job
+                    for index,job in enumerate(jobs['jobs'])]}
+            return dict(id=123,run_attempt=2,event=self.environment['GITHUB_EVENT_NAME'],
+                path='.github/workflows/pr-preview.yml',head_sha=self.head if self.environment['GITHUB_EVENT_NAME']=='pull_request_target' else self.base,
+                repository=dict(full_name='owner/demo',id=123),head_repository=dict(full_name='owner/demo',id=123))
+        return lookup
+
+    def test_pr_target_publisher_jobs_bind_the_triggering_head_and_keep_main_authority(self):
+        self.environment['GITHUB_EVENT_NAME']='pull_request_target';self.plan['trigger']='pull_request_target'
+        event=dict(action='synchronize',number=42,repository=dict(full_name='owner/demo',id=123),
+            pull_request=copy.deepcopy(self.request))
+        for key in ['head','base']:event['pull_request'][key]['repo']['id']=123
+        evidence=self.publication_evidence();path=self.root/'publication.json';path.write_text(json.dumps(evidence))
+        jobs=dict(total_count=1,jobs=[dict(name='publish / Publish exact Preview images',conclusion='success',head_sha=self.head)])
+        with patch.object(preview.workflow_run,'read_event',return_value=event):
+            preview.publication_evidence(self.plan,path,self.environment,self.publication_lookup(jobs))
+            self.assertEqual(evidence['publication']['execution_context']['GITHUB_SHA'],self.base)
+            jobs['jobs'][0]['head_sha']=self.base
+            with self.assertRaises(ValueError):preview.publication_evidence(self.plan,path,self.environment,self.publication_lookup(jobs))
+
     def test_host_effects_require_actual_successful_same_attempt_publisher(self):
         evidence=self.publication_evidence();path=self.root/'publication.json'
         jobs={'total_count':1,'jobs':[{'name':'publish / Publish exact Preview images','conclusion':'success','head_sha':self.base}]}
         def check():
-            path.write_text(json.dumps(evidence)); preview.publication_evidence(self.plan,path,self.environment,lambda _:jobs)
+            path.write_text(json.dumps(evidence)); preview.publication_evidence(self.plan,path,self.environment,self.publication_lookup(jobs))
         check()
         original=copy.deepcopy(evidence)
         for change in [{'release_digest':'sha256:'+'e'*64},{'published':{}}]:
@@ -238,12 +261,12 @@ class PreviewAuthority(unittest.TestCase):
         path=self.root/'publication.json'
         jobs=dict(total_count=1,jobs=[dict(name='publish / Publish exact Preview images',conclusion='success',head_sha=self.base)])
         path.write_text(json.dumps(evidence))
-        preview.publication_evidence(plan,path,self.environment,lambda _:jobs,context=context)
+        preview.publication_evidence(plan,path,self.environment,self.publication_lookup(jobs),context=context)
         for change in [{'tools_commit':'d'*40},{'tools_repository':'nicodes/cookbook'},
                        {'entrypoint_contract':'make-v0'}]:
             path.write_text(json.dumps(evidence|change))
             with self.subTest(change=change),self.assertRaises(ValueError):
-                preview.publication_evidence(plan,path,self.environment,lambda _:jobs,context=context)
+                preview.publication_evidence(plan,path,self.environment,self.publication_lookup(jobs),context=context)
 
 
 

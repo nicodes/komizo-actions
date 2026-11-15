@@ -25,10 +25,29 @@ class ApplicationPublication(unittest.TestCase):
 
     def accept(self):
         publication.accept(self.proof, self.config, 'a' * 40, 'c' * 40, 'b' * 40,
-                           ['lint', 'unit', 'security', 'e2e'], self.jobs, self.environment)
+                           ['lint', 'unit', 'security', 'e2e'], self.jobs, self.environment, job_source='a'*40)
 
     def test_current_complete_same_run_host_is_admitted(self):
         self.accept()
+
+    def test_pr_target_jobs_are_the_selected_head_while_proof_authority_remains_main(self):
+        self.environment.update(GITHUB_EVENT_NAME='pull_request_target',GITHUB_SHA='d'*40,
+            GITHUB_WORKFLOW_SHA='d'*40,GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/pr-preview.yml@refs/heads/main')
+        self.proof['execution_context']=self.environment|{'GITHUB_JOB':'validate'}
+        self.accept()
+        self.assertEqual(self.proof['source_commit'],'a'*40)
+        self.assertEqual(self.proof['execution_context']['GITHUB_SHA'],'d'*40)
+        self.jobs['jobs'][0]['head_sha']='d'*40
+        with self.assertRaises(ValueError):self.accept()
+
+    def test_comment_preview_keeps_main_job_source_even_when_product_head_differs(self):
+        self.environment.update(GITHUB_EVENT_NAME='issue_comment',GITHUB_SHA='d'*40,
+            GITHUB_WORKFLOW_SHA='d'*40,GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/pr-preview.yml@refs/heads/main')
+        self.proof['execution_context']=self.environment|{'GITHUB_JOB':'validate'}
+        self.jobs['jobs'][0]['head_sha']='d'*40
+        publication.accept(self.proof,self.config,'a'*40,'c'*40,'b'*40,
+            ['lint','unit','security','e2e'],self.jobs,self.environment,job_source='d'*40)
+        with self.assertRaises(ValueError):self.accept()
 
     def test_preview_acceptance_cannot_publish_as_production_even_at_the_same_source_revision(self):
         self.environment.update(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/cd.yml@refs/heads/main',

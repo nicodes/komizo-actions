@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from authorize import api
 import submission
+import workflow_run
 
 LABELS = {'deliver': 'Deliver exact release', 'effects': 'Apply verified Preview lifecycle', 'backup': 'Capture encrypted backup'}
 
@@ -46,9 +47,8 @@ def main():
     args = parser.parse_args()
     try:
         submission.workflow(os.environ)
-        repository, run, attempt = (os.environ[key] for key in ['GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'])
-        jobs = api(f'repos/{repository}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100')
-        absolute, seconds = deadline(jobs, os.environ['GITHUB_SHA'], args.total_minutes, args.job,
+        _, jobs, job_source = workflow_run.current(os.environ, api)
+        absolute, seconds = deadline(jobs, job_source, args.total_minutes, args.job,
                                      completed=args.completed, phase_seconds=args.phase_seconds)
         with open(os.environ['GITHUB_ENV'], 'a') as output:
             output.write('KOMIZO_OPERATION_DEADLINE=' + str(absolute) + '\n')

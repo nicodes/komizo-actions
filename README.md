@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 84407e0ac162569d3bb36ce66db66e17dcbd281b2196aa7a487ec974e8866420 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: b1d62f5e89ce4b75d26d99c37e994ea660451f57923cd61df03e71c04e823cc7 -->
 
 # Komizo Actions
 
@@ -25,6 +25,8 @@ Routine CI supplies logical secret references and optional expected generations.
 ## Previews and product checks
 
 Preview workflows separate trusted request planning, selected-source validation, immutable publication and protected effects. The host supplies public planned origins before the descriptor is compiled and tested. Preview descriptors bind those origins, an isolated instance graph and its lifetime before acceptance. Cleanup uses the same application authority and recorded resource ownership. Preview health uses the descriptor’s concrete app root and dedicated API root origins. Route matchers such as `/api/*` remain source-owned dispatch rules. Target validation precedes submission, and live Preview URLs require a successful `ready` operation; stopped preparation publishes no live URLs. Preview removal confirms the successful `prepared_stopped` result before workflow cleanup.
+
+For `pull_request_target`, job records identify the triggering PR head separately from the trusted main workflow. Adapters verify the authenticated run, attempt, event and jobs against that head. Publication and host authority retain the trusted workflow identity. Budgets remain bound to the selected job's original start time.
 
 `application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Automated public checks bind the exact current source and immutable release identity. A read-only manual `production-verification.yml` dispatch from the exact main workflow may select an explicit historical `expected-source`; product configuration cannot enable historical selection for automated delivery. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
 
