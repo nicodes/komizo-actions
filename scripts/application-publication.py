@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import recipe_data
 import recipe_context
 import publication
+import workflow_run
 
 
 def git(*arguments):
@@ -26,7 +27,7 @@ def read(path, limit=4 << 20):
     return json.loads(path.read_text())
 
 
-def accept(proof, config, source, tools, tree, groups, jobs, environment, workflow_source=None):
+def accept(proof, config, source, tools, tree, groups, jobs, environment, *, job_source):
     if (type(proof.get('version')) is not int or proof['version'] != 1 or proof.get('source_commit') != source
             or proof.get('source_tree') != tree or proof.get('cookbook_commit') != tools
             or proof.get('recipe') != config.get('recipe') or config.get('recipe') not in {'react-native', 'godot-game'}
@@ -45,7 +46,8 @@ def accept(proof, config, source, tools, tree, groups, jobs, environment, workfl
     if jobs.get('total_count') != len(jobs.get('jobs', [])):
         raise ValueError('publication requires complete current-attempt job metadata')
     hosts = [job for job in jobs['jobs'] if job['name'].endswith('/ Make full')]
-    if len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != (workflow_source or source):
+    if (job_source != (source if environment['GITHUB_EVENT_NAME'] == 'pull_request_target' else environment['GITHUB_SHA'])
+            or len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != job_source):
         raise ValueError('the actual full validation job must have succeeded at this source')
     if config['ci']['runner'] not in hosts[0].get('labels', []):
         raise ValueError('full validation ran on another declared runner')
@@ -91,10 +93,10 @@ def main():
         definition = verify.release_definition(Path(definition_name))
         if definition['project'] != args.project:
             raise ValueError('publication project differs from its source declaration')
-        repository, run, attempt = (os.environ[key] for key in ['GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'])
-        jobs = json.loads(subprocess.check_output(['gh', 'api',
-            f'repos/{repository}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100'], timeout=30))
-        accept(proof, config, args.source, revision, git('rev-parse', 'HEAD^{tree}'), definition['tests'], jobs, os.environ)
+        lookup = lambda path: json.loads(subprocess.check_output(['gh', 'api', path], timeout=30))
+        _, jobs, job_source = workflow_run.current(os.environ, lookup)
+        accept(proof, config, args.source, revision, git('rev-parse', 'HEAD^{tree}'), definition['tests'], jobs, os.environ,
+               job_source=job_source)
         if config['recipe'] == 'godot-game':
             sys.path.insert(0, str(cookbook.resolve() / 'cookbook'))
             import godot_ci

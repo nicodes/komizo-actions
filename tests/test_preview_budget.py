@@ -16,16 +16,22 @@ class OriginalProducerBudget(unittest.TestCase):
         self.jobs = {'total_count': 1, 'jobs': [self.job]}
 
     def test_setup_queue_and_source_runtime_all_consume_original_budget(self):
-        self.assertEqual(preview.producer_deadline(self.plan, self.jobs, self.now), 600)
-        self.assertEqual(preview.producer_deadline(self.plan, self.jobs, self.now + timedelta(minutes=9)), 60)
-        with self.assertRaises(ValueError): preview.producer_deadline(self.plan, self.jobs, self.now + timedelta(minutes=10))
+        self.assertEqual(preview.producer_deadline(self.plan, self.jobs, 'a'*40, self.now), 600)
+        self.assertEqual(preview.producer_deadline(self.plan, self.jobs, 'a'*40, self.now + timedelta(minutes=9)), 60)
+        with self.assertRaises(ValueError): preview.producer_deadline(self.plan, self.jobs, 'a'*40, self.now + timedelta(minutes=10))
+
+    def test_pr_target_producer_retains_head_job_time_without_relabelling_controller(self):
+        self.plan['controller']='b'*40
+        self.assertEqual(preview.producer_deadline(self.plan,self.jobs,'a'*40,self.now),600)
+        self.assertEqual(self.plan['controller'],'b'*40)
+        with self.assertRaises(ValueError):preview.producer_deadline(self.plan,self.jobs,'b'*40,self.now)
 
     def test_partial_metadata_failed_source_foreign_runner_future_or_missing_time_refuse(self):
         for changes in [{'conclusion': 'failure'}, {'head_sha': 'b'*40}, {'labels': ['foreign']},
                         {'started_at': (self.now + timedelta(seconds=6)).isoformat()}, {'started_at': 'invalid'}]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                preview.producer_deadline(self.plan, {'total_count': 1, 'jobs': [self.job | changes]}, self.now)
-        with self.assertRaises(ValueError): preview.producer_deadline(self.plan, self.jobs | {'total_count': 2}, self.now)
+                preview.producer_deadline(self.plan, {'total_count': 1, 'jobs': [self.job | changes]}, 'a'*40, self.now)
+        with self.assertRaises(ValueError): preview.producer_deadline(self.plan, self.jobs | {'total_count': 2}, 'a'*40, self.now)
 
 
 if __name__ == '__main__': unittest.main()

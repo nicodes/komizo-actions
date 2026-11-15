@@ -52,7 +52,8 @@ class FreshReleaseAuthority(unittest.TestCase):
 
     def admit(self, environment=None, jobs=None):
         return authorize.admit(self.directory, 'mailroom', 'a'*40, self.config, 'c'*40,
-                               self.proof['test_groups'], jobs or self.jobs, environment or self.environment, providers=self.proof['providers'])
+                               self.proof['test_groups'], jobs or self.jobs, environment or self.environment,
+                               providers=self.proof['providers'], job_source='a'*40)
 
     def mutate(self, name, update):
         path = self.directory / name; value = json.loads(path.read_bytes()); update(value); path.write_bytes(registry.canonical(value))
@@ -63,6 +64,24 @@ class FreshReleaseAuthority(unittest.TestCase):
         unsigned = proof.copy(); unsigned.pop('proof')
         self.assertEqual(audiences, ['komizo-release:sha256:' + hashlib.sha256(registry.canonical(unsigned)).hexdigest()])
         self.assertEqual(proof['release_digest'], admitted.release_digest)
+
+    def test_pr_target_keeps_independent_main_authority_and_actual_selected_head_jobs(self):
+        self.environment.update(GITHUB_EVENT_NAME='pull_request_target',GITHUB_SHA='d'*40,
+            GITHUB_WORKFLOW_SHA='d'*40,GITHUB_WORKFLOW_REF='example/mailroom/.github/workflows/pr-preview.yml@refs/heads/main')
+        contexts={'publication.json':('execution_context',),'validation.json':('execution_context',),
+            'build.json':('provenance','execution_context'),'test.json':('execution_context',)}
+        for name,keys in contexts.items():
+            value=json.loads((self.directory/name).read_bytes());context=value
+            for key in keys:context=context[key]
+            context.update({key:self.environment[key] for key in ['GITHUB_SHA','GITHUB_WORKFLOW_SHA','GITHUB_WORKFLOW_REF','GITHUB_EVENT_NAME']})
+            (self.directory/name).write_bytes(registry.canonical(value))
+        self.mutate('publication.json',lambda value:value.update(validation_sha256=hashlib.sha256((self.directory/'validation.json').read_bytes()).hexdigest()))
+        admitted=self.admit()
+        proof=publication.release_proof(admitted,self.environment,token_request=lambda *_:'a.b.c')
+        self.assertEqual(proof['workflow_sha'],'d'*40)
+        self.assertEqual(proof['source_revision'],'a'*40)
+        for job in self.jobs['jobs']:job['head_sha']='d'*40
+        with self.assertRaises(ValueError):self.admit()
         self.assertEqual(proof['source_revision'], 'a'*40)
         self.assertEqual(set(path.name for path in self.directory.iterdir()), authorize.FILES)
 

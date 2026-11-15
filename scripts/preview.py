@@ -25,6 +25,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
 import recipe_context
 import publication as native_publication
+import workflow_run
 SHA=re.compile('[a-f0-9]{40}')
 REPOSITORY=re.compile('[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}')
 
@@ -252,14 +253,15 @@ def source_policy(plan,source_root,tools):
     return config,definition
 
 
-def producer_deadline(plan, jobs, now=None):
+def producer_deadline(plan, jobs, job_source, now=None):
     now = now or datetime.now(timezone.utc)
     total = plan['policy'].get('producer_timeout_minutes')
     if total is None: return None
     if type(total) is not int or not 1 <= total <= 180 or jobs.get('total_count') != len(jobs.get('jobs', [])):
         raise ValueError('preview requires its complete original aggregate producer budget')
     hosts = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ Make full')]
-    if (len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != plan['controller']
+    if (not isinstance(job_source, str) or not SHA.fullmatch(job_source)
+            or len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != job_source
             or plan['policy']['validation_runner'] not in hosts[0].get('labels', [])):
         raise ValueError('preview aggregate budget requires the actual successful source job')
     try: started = datetime.fromisoformat(hosts[0]['started_at'].replace('Z', '+00:00'))
@@ -277,8 +279,8 @@ def producer_budget(function):
     def bounded(plan, root, source_root, tools, tools_ref, incoming, environment, lookup=api, *arguments, **options):
         if 'producer_timeout_minutes' not in plan['policy']:
             return function(plan, root, source_root, tools, tools_ref, incoming, environment, lookup, *arguments, **options)
-        jobs = lookup(f"repos/{plan['repository']}/actions/runs/{environment['GITHUB_RUN_ID']}/attempts/{environment['GITHUB_RUN_ATTEMPT']}/jobs?per_page=100")
-        seconds = producer_deadline(plan, jobs)
+        _, jobs, job_source = workflow_run.current(environment, lookup)
+        seconds = producer_deadline(plan, jobs, job_source)
         if not hasattr(signal, 'SIGALRM'): raise ValueError('aggregate preview publication requires its Linux deadline supervisor')
         def expired(*_): raise ValueError('original aggregate preview producer budget expired')
         prior_handler = signal.signal(signal.SIGALRM, expired)
@@ -308,9 +310,9 @@ def publication(plan,root,source_root,tools,tools_ref,incoming,environment,looku
     repository=plan['repository'];run=environment['GITHUB_RUN_ID'];attempt=environment['GITHUB_RUN_ATTEMPT']
     if not run.isdecimal() or not attempt.isdecimal():
         raise ValueError('Preview publication requires valid same-attempt run metadata')
-    jobs=lookup(f'repos/{repository}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100')
+    _,jobs,job_source=workflow_run.current(environment,lookup)
     authority.accept(proof,config,plan['head'],tools_ref,git(source_root,'rev-parse','HEAD^{tree}'),
-                     plan['policy']['test_groups'],jobs,environment,workflow_source=plan['controller'])
+                     plan['policy']['test_groups'],jobs,environment,job_source=job_source)
     if config['recipe']=='godot-game':
         sys.path.insert(0,str(tools.resolve()/'cookbook'))
         import godot_ci
@@ -414,12 +416,11 @@ def publication_evidence(plan, path, environment, lookup=api, *, context=None):
                 'GITHUB_SHA', 'GITHUB_WORKFLOW_REF', 'GITHUB_WORKFLOW_SHA']:
         if not environment.get(key) or context_fields.get(key) != environment[key]:
             raise ValueError('preview publication belongs to another workflow execution')
-    repository = plan['repository']; run = environment['GITHUB_RUN_ID']; attempt = environment['GITHUB_RUN_ATTEMPT']
-    jobs = lookup(f'repos/{repository}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100')
+    _, jobs, job_source = workflow_run.current(environment, lookup)
     if jobs.get('total_count') != len(jobs.get('jobs', [])):
         raise ValueError('preview publication requires complete current-attempt job metadata')
     publishers = [job for job in jobs['jobs'] if job['name'].endswith('/ Publish exact Preview images')]
-    if len(publishers) != 1 or publishers[0].get('conclusion') != 'success' or publishers[0].get('head_sha') != plan['controller']:
+    if len(publishers) != 1 or publishers[0].get('conclusion') != 'success' or publishers[0].get('head_sha') != job_source:
         raise ValueError('trusted same-source preview publisher has not succeeded')
     return value
 
