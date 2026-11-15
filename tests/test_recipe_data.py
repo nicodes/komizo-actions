@@ -95,7 +95,7 @@ print(json.dumps(result))
                  'head_sha': 'a' * 40, 'conclusion': 'success', 'labels': ['ubuntu-24.04']}]}
         def accept():
             publication.accept(proof, config, 'a' * 40, SDK_REF, 'b' * 40,
-                               ['lint', 'unit', 'security'], jobs, environment)
+                               ['lint', 'unit', 'security'], jobs, environment, job_source='a'*40)
         return accept, proof, jobs
 
     def test_omitted_runner_counterfactual_and_actual_sdk_default_keep_host_admission(self):
