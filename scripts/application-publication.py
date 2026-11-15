@@ -105,7 +105,7 @@ def main():
                 revision, os.environ, proof['configuration_sha256'], root=Path.cwd())
         receipts = publication.admit_receipts(args.incoming, proof, args.source, definition['tests'])
         packet = publication.stage(args.incoming, proof, Path('.artifacts/release'), args.project)
-        if packet.descriptor['source'] != {'repository': repository, 'repository_id': os.environ['GITHUB_REPOSITORY_ID'], 'revision': args.source}:
+        if packet.descriptor['source'] != {'repository': os.environ['GITHUB_REPOSITORY'], 'repository_id': os.environ['GITHUB_REPOSITORY_ID'], 'revision': args.source}:
             raise ValueError('accepted release differs from its exact workflow source')
         published = publication.publish(packet, helpers, os.environ)
         publication.write_evidence(packet, proof, published, os.environ, receipts=receipts)
