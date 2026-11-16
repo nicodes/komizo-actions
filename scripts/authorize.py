@@ -67,6 +67,25 @@ def retrieve(repository, source, run, attempt, destination, lookup=api):
     return destination
 
 
+def admit_workflows(metadata, cookbook_revision, actions_revision, route, *, preview=False, combined=False):
+    """Require the exact complete recipe route selected by the accepted SDK."""
+    workflows = {'host': 'cookbook-validation.yml', 'native': 'cookbook-native.yml',
+                 'godot': 'cookbook-godot.yml'}
+    if route not in workflows:
+        raise ValueError('authorization requires its selected complete recipe route')
+    if not release_packet.COMMIT.fullmatch(actions_revision):
+        raise ValueError('authorization has no immutable Actions provider')
+    required = {'nicodes/cookbook/.github/workflows/' + workflows[route] + '@' + cookbook_revision}
+    required.add('nicodes/komizo-actions/.github/workflows/'
+        + ('cookbook-preview-effects.yml' if preview else 'cookbook-deliver.yml') + '@' + actions_revision)
+    if not combined:
+        required.add('nicodes/komizo-actions/.github/workflows/'
+            + ('cookbook-preview-publish.yml' if preview else 'cookbook-publish.yml') + '@' + actions_revision)
+    actual = {entry.get('path'): entry.get('sha') for entry in metadata.get('referenced_workflows', [])}
+    if any(actual.get(path) != path.rsplit('@', 1)[1] for path in required):
+        raise ValueError('authorization requires its exact independent CI, publisher and delivery providers')
+
+
 def admit(directory, application, source, configuration, cookbook_revision, groups, jobs, environment, *, providers, job_source, combined=False):
     submission.workflow(environment)
     directory = Path(directory)
@@ -162,16 +181,9 @@ def main():
             groups = context.module('recipe').test_suites(Path.cwd(), configuration)
         run, attempt = environment['GITHUB_RUN_ID'], environment['GITHUB_RUN_ATTEMPT']
         metadata, jobs, job_source = workflow_run.current(environment, api)
-        references = metadata.get('referenced_workflows', [])
-        required = {'nicodes/cookbook/.github/workflows/cookbook-ci.yml@' + args.cookbook_ref}
-        own = environment.get('KOMIZO_REF', '')
-        if not release_packet.COMMIT.fullmatch(own): raise ValueError('authorization has no immutable Actions provider')
-        required.add('nicodes/komizo-actions/.github/workflows/' + ('cookbook-preview-effects.yml' if args.preview_plan else 'cookbook-deliver.yml') + '@' + own)
-        if not args.combined:
-            required.add('nicodes/komizo-actions/.github/workflows/' + ('cookbook-preview-publish.yml' if args.preview_plan else 'cookbook-publish.yml') + '@' + own)
-        actual = {entry.get('path'): entry.get('sha') for entry in references}
-        if any(actual.get(path) != path.rsplit('@', 1)[1] for path in required):
-            raise ValueError('authorization requires its exact independent CI, publisher and delivery providers')
+        route = context.module('orchestration').model(configuration)['route']
+        admit_workflows(metadata, args.cookbook_ref, environment.get('KOMIZO_REF', ''), route,
+                        preview=bool(args.preview_plan), combined=args.combined)
         if not args.combined:
             retrieve(environment['GITHUB_REPOSITORY'], args.source, run, attempt, args.directory)
         context.require_proof(release_packet.document(args.directory / 'validation.json'))
