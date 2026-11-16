@@ -1,4 +1,4 @@
-name: Run owned production acceptance
+name: Reusable public production verification
 'on':
   workflow_call:
     inputs:
@@ -33,6 +33,7 @@ name: Run owned production acceptance
 permissions: {}
 jobs:
   verify:
+    name: Verify production
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
     permissions:

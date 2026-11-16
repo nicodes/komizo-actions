@@ -1,4 +1,4 @@
-name: Publish exact accepted Preview images
+name: Reusable preview publication
 'on':
   workflow_call:
     inputs:
@@ -20,7 +20,7 @@ name: Publish exact accepted Preview images
 permissions: {}
 jobs:
   publish:
-    name: Publish exact Preview images
+    name: Publish
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
     permissions:

@@ -1,4 +1,4 @@
-name: Audit explicit source and artifact dependencies
+name: Reusable source audit
 'on':
   workflow_call:
     inputs:
@@ -36,6 +36,7 @@ name: Audit explicit source and artifact dependencies
 permissions: {}
 jobs:
   verify:
+    name: Audit
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
     permissions:

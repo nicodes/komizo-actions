@@ -1,4 +1,4 @@
-name: Verify encrypted recovery transport
+name: Reusable recovery verification
 'on':
   workflow_call:
     inputs:
@@ -33,6 +33,7 @@ name: Verify encrypted recovery transport
 permissions: {}
 jobs:
   verify:
+    name: Verify recovery
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
     environment:

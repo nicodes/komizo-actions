@@ -1,4 +1,4 @@
-name: Report application delivery
+name: Reusable delivery report
 'on':
   workflow_call:
     inputs:
@@ -24,6 +24,7 @@ name: Report application delivery
         type: string
         default: ''
       notify:
+    name: Notify
         type: boolean
         default: true
       environment:
@@ -53,6 +54,7 @@ name: Report application delivery
 permissions: {}
 jobs:
   report:
+    name: Report
     if: inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure'
     runs-on: ${{ inputs.report-runner }}
     timeout-minutes: ${{ inputs.report-timeout }}

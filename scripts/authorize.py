@@ -119,7 +119,7 @@ def admit(directory, application, source, configuration, cookbook_revision, grou
             raise ValueError('combined publication requires its same protected immutable job')
     else:
         if context.get('GITHUB_JOB') != 'publish': raise ValueError('publication did not use its declared producer role')
-        writers = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ publish') or job.get('name', '').endswith('/ Publish exact Preview images')]
+        writers = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ Publish')]
         if len(writers) != 1 or writers[0].get('conclusion') != 'success' or writers[0].get('head_sha') != job_source:
             raise ValueError('independent trusted publisher has not completed successfully')
     return SimpleNamespace(descriptor=descriptor, release_digest=identity, release_bytes=raw)

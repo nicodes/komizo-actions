@@ -1,4 +1,4 @@
-name: Capture routine encrypted backup
+name: Reusable backup
 'on':
   workflow_call:
     inputs:
@@ -191,8 +191,9 @@ jobs:
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 30
-    name: Capture encrypted backup
+    name: Backup
   report:
+    name: Report
     needs: backup
     if: failure()
     runs-on: ${{ inputs.runner }}

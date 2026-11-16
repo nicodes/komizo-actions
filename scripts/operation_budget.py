@@ -11,7 +11,7 @@ from authorize import api
 import submission
 import workflow_run
 
-LABELS = {'deliver': 'Deliver exact release', 'effects': 'Apply verified Preview lifecycle', 'backup': 'Capture encrypted backup'}
+LABELS = {'deliver': 'Deploy', 'effects': 'Preview', 'backup': 'Backup'}
 
 
 def deadline(jobs, source, total_minutes, role, *, now=None, completed=False, phase_seconds=None):

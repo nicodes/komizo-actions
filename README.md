@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: b1d62f5e89ce4b75d26d99c37e994ea660451f57923cd61df03e71c04e823cc7 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: b4453567fa94c6ef1c5a6ebeefaec5fba414bb7e97695fe45a7d785cd4e24afd -->
 
 # Komizo Actions
 
@@ -11,6 +11,10 @@ Recipe-aware adapters require an exact `cookbook-ref`, native TOML declarations 
 Applications declare native workloads in `deploy/application.toml`. Complete source validation freezes a closed release packet containing `release.json`, `inventory.json`, selected image OCI archives, selected static archives and explicitly inventoried metadata. Static applications need no image. Publication uploads exact accepted OCI manifests and blobs without rebuilding artifacts or changing the descriptor.
 
 `application-publication` consumes complete same-run evidence and emits an immutable six-record host release artifact. Queued host effects run in the pinned `cookbook-deliver.yml` workflow. Its final authorizer checks publication, complete validation, source, current main or pull request and pinned providers immediately before minting the release proof. Source validation, publication and installed application acceptance remain distinct evidence. Delivery retains a small typed operation-metadata artifact separately from encrypted backup files. Historical dependency audits require an exact successful ready-operation receipt and report `activation_at_time` with `current_state = "unobserved"`. A staged stopped release cannot satisfy that scope; current host state requires independently authenticated inspection.
+
+## Workflow names
+
+Application callers use `Build & Test`, `Deploy`, `Release` and `PR Preview` for their top-level workflows. Reusable workflows use short role names such as `Publish`, `Deploy`, `Readiness`, `Backup` and `Report`. These labels also identify jobs in same-run evidence checks; update the reviewed Actions pin and generated callers together. Host policy continues to authorize immutable workflow paths and commits independently of display names.
 
 ## Host submission
 

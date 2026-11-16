@@ -1,4 +1,4 @@
-name: Apply verified Preview lifecycle
+name: Reusable preview
 'on':
   workflow_call:
     inputs:
@@ -29,7 +29,7 @@ name: Apply verified Preview lifecycle
 permissions: {}
 jobs:
   effects:
-    name: Apply verified Preview lifecycle
+    name: Preview
     environment: Preview
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}

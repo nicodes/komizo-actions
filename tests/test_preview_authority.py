@@ -166,7 +166,7 @@ class PreviewAuthority(unittest.TestCase):
             pull_request=copy.deepcopy(self.request))
         for key in ['head','base']:event['pull_request'][key]['repo']['id']=123
         evidence=self.publication_evidence();path=self.root/'publication.json';path.write_text(json.dumps(evidence))
-        jobs=dict(total_count=1,jobs=[dict(name='publish / Publish exact Preview images',conclusion='success',head_sha=self.head)])
+        jobs=dict(total_count=1,jobs=[dict(name='publish / Publish',conclusion='success',head_sha=self.head)])
         with patch.object(preview.workflow_run,'read_event',return_value=event):
             preview.publication_evidence(self.plan,path,self.environment,self.publication_lookup(jobs))
             self.assertEqual(evidence['publication']['execution_context']['GITHUB_SHA'],self.base)
@@ -175,7 +175,7 @@ class PreviewAuthority(unittest.TestCase):
 
     def test_host_effects_require_actual_successful_same_attempt_publisher(self):
         evidence=self.publication_evidence();path=self.root/'publication.json'
-        jobs={'total_count':1,'jobs':[{'name':'publish / Publish exact Preview images','conclusion':'success','head_sha':self.base}]}
+        jobs={'total_count':1,'jobs':[{'name':'publish / Publish','conclusion':'success','head_sha':self.base}]}
         def check():
             path.write_text(json.dumps(evidence)); preview.publication_evidence(self.plan,path,self.environment,self.publication_lookup(jobs))
         check()
@@ -259,7 +259,7 @@ class PreviewAuthority(unittest.TestCase):
         plan=self.plan|context.identities()|{'entrypoint_contract':'mise-v1'}
         evidence=self.publication_evidence()|context.identities()|{'entrypoint_contract':'mise-v1','plan':plan}
         path=self.root/'publication.json'
-        jobs=dict(total_count=1,jobs=[dict(name='publish / Publish exact Preview images',conclusion='success',head_sha=self.base)])
+        jobs=dict(total_count=1,jobs=[dict(name='publish / Publish',conclusion='success',head_sha=self.base)])
         path.write_text(json.dumps(evidence))
         preview.publication_evidence(plan,path,self.environment,self.publication_lookup(jobs),context=context)
         for change in [{'tools_commit':'d'*40},{'tools_repository':'nicodes/cookbook'},

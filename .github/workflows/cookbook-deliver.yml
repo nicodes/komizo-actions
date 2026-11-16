@@ -1,4 +1,4 @@
-name: Deliver accepted native release
+name: Reusable deploy
 'on':
   workflow_call:
     inputs:
@@ -51,7 +51,7 @@ name: Deliver accepted native release
         required: false
 jobs:
   deliver:
-    name: Deliver exact release
+    name: Deploy
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     environment: ${{ inputs.environment }}
@@ -244,6 +244,7 @@ jobs:
       readiness-required: ${{ steps.deploy.outputs.phase == 'ready' && (steps.plan.outputs.readiness != '' || steps.plan.outputs.readiness-operation
         == 'true') }}
   readiness:
+    name: Readiness
     needs: deliver
     if: needs.deliver.outputs.readiness-required == 'true'
     uses: ./.github/workflows/cookbook-readiness.yml

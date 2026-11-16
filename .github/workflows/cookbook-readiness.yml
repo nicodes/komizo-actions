@@ -1,4 +1,4 @@
-name: Verify product readiness
+name: Reusable readiness
 'on':
   workflow_call:
     inputs:
@@ -23,6 +23,7 @@ name: Verify product readiness
 permissions: {}
 jobs:
   verify:
+    name: Readiness
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
