@@ -259,7 +259,7 @@ def producer_deadline(plan, jobs, job_source, now=None):
     if total is None: return None
     if type(total) is not int or not 1 <= total <= 180 or jobs.get('total_count') != len(jobs.get('jobs', [])):
         raise ValueError('preview requires its complete original aggregate producer budget')
-    hosts = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ Make full')]
+    hosts = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ Tests')]
     if (not isinstance(job_source, str) or not SHA.fullmatch(job_source)
             or len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != job_source
             or plan['policy']['validation_runner'] not in hosts[0].get('labels', [])):
@@ -419,7 +419,7 @@ def publication_evidence(plan, path, environment, lookup=api, *, context=None):
     _, jobs, job_source = workflow_run.current(environment, lookup)
     if jobs.get('total_count') != len(jobs.get('jobs', [])):
         raise ValueError('preview publication requires complete current-attempt job metadata')
-    publishers = [job for job in jobs['jobs'] if job['name'].endswith('/ Publish exact Preview images')]
+    publishers = [job for job in jobs['jobs'] if job['name'].endswith('/ Publish')]
     if len(publishers) != 1 or publishers[0].get('conclusion') != 'success' or publishers[0].get('head_sha') != job_source:
         raise ValueError('trusted same-source preview publisher has not succeeded')
     return value

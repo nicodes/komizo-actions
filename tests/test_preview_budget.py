@@ -11,7 +11,7 @@ class OriginalProducerBudget(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
         self.plan = {'controller': 'a'*40, 'policy': {'producer_timeout_minutes': 60, 'validation_runner': 'fixture-4vcpu'}}
-        self.job = {'name': 'full / Make full', 'conclusion': 'success', 'head_sha': 'a'*40, 'labels': ['fixture-4vcpu'],
+        self.job = {'name': 'full / Tests', 'conclusion': 'success', 'head_sha': 'a'*40, 'labels': ['fixture-4vcpu'],
                     'started_at': (self.now - timedelta(minutes=50)).isoformat()}
         self.jobs = {'total_count': 1, 'jobs': [self.job]}
 

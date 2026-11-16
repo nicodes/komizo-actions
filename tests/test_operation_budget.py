@@ -13,7 +13,7 @@ from test_release_packet import descriptor
 class OriginalOperationBudget(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 11, 8, 12, tzinfo=timezone.utc)
-        self.job = {'name': 'deploy / Deliver exact release', 'head_sha': 'a'*40, 'status': 'in_progress',
+        self.job = {'name': 'deploy / Deploy', 'head_sha': 'a'*40, 'status': 'in_progress',
                     'started_at': (self.now - timedelta(minutes=20)).isoformat()}
         self.jobs = {'total_count': 1, 'jobs': [self.job]}
 

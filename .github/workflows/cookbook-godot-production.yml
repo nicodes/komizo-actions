@@ -1,4 +1,4 @@
-name: Verify exact public Godot release
+name: Reusable Godot production verification
 'on':
   workflow_call:
     inputs:
@@ -27,6 +27,7 @@ name: Verify exact public Godot release
 permissions: {}
 jobs:
   verify:
+    name: Verify production
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs.timeout-minutes }}

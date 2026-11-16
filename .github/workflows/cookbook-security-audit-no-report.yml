@@ -1,4 +1,4 @@
-name: Audit deployed and source dependencies
+name: Reusable security audit
 'on':
   workflow_call:
     inputs:
@@ -36,6 +36,7 @@ name: Audit deployed and source dependencies
 permissions: {}
 jobs:
   verify:
+    name: Audit
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
     permissions:

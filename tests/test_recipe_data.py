@@ -91,7 +91,7 @@ print(json.dumps(result))
                      recipe=config['recipe'], status='passed', tracked_source_clean=True,
                      build_verified=True, tests_verified=True, test_groups=['lint', 'unit', 'security'],
                      execution_context=environment | {'GITHUB_JOB': 'validate'})
-        jobs = {'total_count': 1, 'jobs': [{'name': 'validate / Full source checks / Make full',
+        jobs = {'total_count': 1, 'jobs': [{'name': 'validate / Full source checks / Tests',
                  'head_sha': 'a' * 40, 'conclusion': 'success', 'labels': ['ubuntu-24.04']}]}
         def accept():
             publication.accept(proof, config, 'a' * 40, SDK_REF, 'b' * 40,
@@ -158,14 +158,12 @@ print(json.dumps(result))
         self.write(config)
         self.read(failure=True)
 
-    def test_dependency_security_source_policy_survives_ci_default_merge(self):
+    def test_retired_duplicate_dependency_job_is_rejected_by_current_recipe(self):
         config = self.native()
-        policy = {'runner': 'ubuntu-24.04', 'timeout_minutes': 10, 'setup_timeout_minutes': 5}
-        config['ci'] = {'dependency_security': policy}
+        config['ci'] = {'dependency_security': {'runner': 'ubuntu-24.04',
+            'timeout_minutes': 10, 'setup_timeout_minutes': 5}}
         self.write(config)
-        actual = self.read()['config']['ci']
-        self.assertEqual(actual['dependency_security'], policy)
-        self.assertEqual((actual['runner'], actual['timeout_minutes']), ('ubuntu-24.04', 30))
+        self.read(failure=True)
 
     def test_obsolete_sdks_refuse_without_running_source_or_changing_declarations(self):
         body=self.write(self.native())

@@ -27,7 +27,7 @@ class ApplicationPublication(unittest.TestCase):
                           tests_verified=True, test_groups=['lint', 'unit', 'security', 'e2e'],
                           execution_context=self.environment | {'GITHUB_JOB': 'validate'})
         self.config = dict(recipe='react-native', ci={'runner': 'ubuntu-24.04'})
-        self.jobs = dict(total_count=1, jobs=[dict(name='validate / Full source checks / Make full',
+        self.jobs = dict(total_count=1, jobs=[dict(name='validate / Full source checks / Tests',
                            conclusion='success', head_sha='a' * 40, labels=['ubuntu-24.04'])])
 
     def accept(self):

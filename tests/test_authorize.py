@@ -47,8 +47,8 @@ class FreshReleaseAuthority(unittest.TestCase):
         for name, value in [('publication.json', published), ('validation.json', self.proof), ('build.json', build), ('test.json', test)]:
             (self.directory / name).write_bytes(registry.canonical(value))
         self.config = {'recipe': 'react-native', 'ci': {'runner': 'ubuntu-24.04'}}
-        self.jobs = {'total_count': 2, 'jobs': [{'name': 'validate / Make full', 'conclusion': 'success', 'head_sha': 'a'*40, 'labels': ['ubuntu-24.04']},
-                                              {'name': 'publish / publish', 'conclusion': 'success', 'head_sha': 'a'*40}]}
+        self.jobs = {'total_count': 2, 'jobs': [{'name': 'validate / Tests', 'conclusion': 'success', 'head_sha': 'a'*40, 'labels': ['ubuntu-24.04']},
+                                              {'name': 'Images / Publish', 'conclusion': 'success', 'head_sha': 'a'*40}]}
 
     def admit(self, environment=None, jobs=None):
         return authorize.admit(self.directory, 'mailroom', 'a'*40, self.config, 'c'*40,

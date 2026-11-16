@@ -1,4 +1,4 @@
-name: Notify application delivery
+name: Reusable delivery notification
 'on':
   workflow_call:
     inputs:
@@ -54,6 +54,7 @@ name: Notify application delivery
 permissions: {}
 jobs:
   notify:
+    name: Notify
     if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
       || inputs.deployment == 'failure')
     runs-on: ${{ inputs.notify-runner }}

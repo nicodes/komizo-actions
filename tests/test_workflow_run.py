@@ -33,7 +33,7 @@ class ActualWorkflowRun(unittest.TestCase):
                 base=dict(ref='main', repo=repository.copy())))
         self.now = datetime(2026, 11, 15, 12, tzinfo=timezone.utc)
         self.job = dict(id=789, run_id=456, run_attempt=2, head_sha='a'*40,
-            name='down / Apply verified Preview lifecycle', status='in_progress',
+            name='down / Preview', status='in_progress',
             started_at=(self.now-timedelta(minutes=1)).isoformat())
         self.jobs = dict(total_count=1, jobs=[self.job])
         self.calls = []

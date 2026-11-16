@@ -1,4 +1,4 @@
-name: Report application delivery
+name: Reusable delivery report
 'on':
   workflow_call:
     inputs:
@@ -53,6 +53,7 @@ name: Report application delivery
 permissions: {}
 jobs:
   report:
+    name: Report
     if: inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure'
     runs-on: ${{ inputs.report-runner }}
     timeout-minutes: ${{ inputs.report-timeout }}
@@ -129,6 +130,7 @@ jobs:
         if [[ -n "$COOKBOOK_REF" ]]; then tools=.artifacts/recipe-sdks/_tools; fi
         python3 -I -B "$tools/helpers/report-failure.py"
   notify:
+    name: Notify
     if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
       || inputs.deployment == 'failure')
     runs-on: ${{ inputs.notify-runner }}

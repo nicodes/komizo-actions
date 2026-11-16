@@ -1,4 +1,4 @@
-name: Resolve trusted Preview request
+name: Reusable preview request
 'on':
   workflow_call:
     inputs:
@@ -34,6 +34,7 @@ name: Resolve trusted Preview request
 permissions: {}
 jobs:
   request:
+    name: Request
     environment:
       name: Preview
       deployment: false

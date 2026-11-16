@@ -1,4 +1,4 @@
-name: Audit source and deployed dependencies
+name: Reusable security audit and report
 'on':
   workflow_call:
     inputs:
@@ -36,6 +36,7 @@ name: Audit source and deployed dependencies
 permissions: {}
 jobs:
   verify:
+    name: Audit
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
     permissions:
@@ -214,6 +215,7 @@ jobs:
         if-no-files-found: ${{ steps.plan.outputs['evidence-missing'] || 'error' }}
         retention-days: 7
   report:
+    name: Report
     needs: verify
     if: failure()
     runs-on: ${{ inputs.runner }}

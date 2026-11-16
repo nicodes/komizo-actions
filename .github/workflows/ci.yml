@@ -64,8 +64,17 @@ jobs:
       timeout-minutes: 1
       with:
         repository: nicodes/cookbook
-        ref: 651cd9fa66ea28b63c63f246d347a84de048e7c5
+        ref: d641e584b4c1a48428e2ba00025bcfaaa128fe62
         path: .artifacts/recipe-task-sdk
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Prepare the Cookbook provider's exact Tools dependency
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: 1
+      with:
+        repository: nicodes/tools
+        ref: 834b7eab9cdeb1452988f383184a8016feb08e04
+        path: .artifacts/recipe-task-tools
         fetch-depth: 1
         persist-credentials: false
     - name: Prepare the accepted format 2 transport SDK for real envelope controls
@@ -90,10 +99,10 @@ jobs:
       RECIPE_LEGACY_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-legacy-test-sdk
       RECIPE_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-test-sdk
       RECIPE_CONTRACT_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
-      RECIPE_CONTRACT_TEST_SDK_REF: 651cd9fa66ea28b63c63f246d347a84de048e7c5
+      RECIPE_CONTRACT_TEST_SDK_REF: d641e584b4c1a48428e2ba00025bcfaaa128fe62
       RECIPE_SOURCE_SDK: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
       RECIPE_SOURCE_SDK_REF: 7873bb0fdae1726295dbf7f9317c58daa374b2a6
       RECIPE_TASK_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
-      RECIPE_TASK_SDK_REF: 651cd9fa66ea28b63c63f246d347a84de048e7c5
-      RECIPE_TASK_TOOLS: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
+      RECIPE_TASK_SDK_REF: d641e584b4c1a48428e2ba00025bcfaaa128fe62
+      RECIPE_TASK_TOOLS: ${{ github.workspace }}/.artifacts/recipe-task-tools
       RECOVERY_TEST_TOOLS: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
