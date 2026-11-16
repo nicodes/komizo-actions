@@ -24,7 +24,6 @@ name: Reusable delivery report
         type: string
         default: ''
       notify:
-    name: Notify
         type: boolean
         default: true
       environment:
@@ -131,6 +130,7 @@ jobs:
         if [[ -n "$COOKBOOK_REF" ]]; then tools=.artifacts/recipe-sdks/_tools; fi
         python3 -I -B "$tools/helpers/report-failure.py"
   notify:
+    name: Notify
     if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
       || inputs.deployment == 'failure')
     runs-on: ${{ inputs.notify-runner }}

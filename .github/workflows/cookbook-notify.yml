@@ -25,7 +25,6 @@ name: Reusable delivery notification
         type: string
         default: ''
       notify:
-    name: Notify
         type: boolean
         default: true
       environment:
@@ -55,6 +54,7 @@ name: Reusable delivery notification
 permissions: {}
 jobs:
   notify:
+    name: Notify
     if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
       || inputs.deployment == 'failure')
     runs-on: ${{ inputs.notify-runner }}
