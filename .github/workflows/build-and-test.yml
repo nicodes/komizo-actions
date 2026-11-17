@@ -64,7 +64,7 @@ jobs:
       timeout-minutes: 1
       with:
         repository: nicodes/cookbook
-        ref: 390f974939fc979a250d6297a84be9fff82562e8
+        ref: 0c55c2daa7ecf69d8e1520c78ea0539fea5540fb
         path: .artifacts/recipe-task-sdk
         fetch-depth: 1
         persist-credentials: false
@@ -99,10 +99,10 @@ jobs:
       RECIPE_LEGACY_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-legacy-test-sdk
       RECIPE_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-test-sdk
       RECIPE_CONTRACT_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
-      RECIPE_CONTRACT_TEST_SDK_REF: 390f974939fc979a250d6297a84be9fff82562e8
+      RECIPE_CONTRACT_TEST_SDK_REF: 0c55c2daa7ecf69d8e1520c78ea0539fea5540fb
       RECIPE_SOURCE_SDK: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
       RECIPE_SOURCE_SDK_REF: 7873bb0fdae1726295dbf7f9317c58daa374b2a6
       RECIPE_TASK_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
-      RECIPE_TASK_SDK_REF: 390f974939fc979a250d6297a84be9fff82562e8
+      RECIPE_TASK_SDK_REF: 0c55c2daa7ecf69d8e1520c78ea0539fea5540fb
       RECIPE_TASK_TOOLS: ${{ github.workspace }}/.artifacts/recipe-task-tools
       RECOVERY_TEST_TOOLS: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
