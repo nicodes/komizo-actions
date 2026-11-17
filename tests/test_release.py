@@ -95,10 +95,12 @@ class ExactSourceRelease(unittest.TestCase):
 class CompleteTrustedCI(unittest.TestCase):
     def setUp(self):
         self.source = 'a'*40
+        self.workflow_id = 123456
         self.fixtures = {
-            'actions/workflows/' + str(r.WORKFLOW_ID): {'id': r.WORKFLOW_ID, 'path': '.github/workflows/ci.yml'},
-            f'actions/workflows/{r.WORKFLOW_ID}/runs': {'workflow_runs': [{'id': 10}]},
-            'actions/runs/10': {'workflow_id': r.WORKFLOW_ID, 'path': '.github/workflows/ci.yml',
+            'actions/workflows/build-and-test.yml': {'id': self.workflow_id,
+                'path': '.github/workflows/build-and-test.yml', 'name': 'Build and test'},
+            f'actions/workflows/{self.workflow_id}/runs': {'workflow_runs': [{'id': 10}]},
+            'actions/runs/10': {'workflow_id': self.workflow_id, 'path': '.github/workflows/build-and-test.yml',
                 'repository': {'full_name': r.REPO}, 'head_repository': {'full_name': r.REPO},
                 'event': 'push', 'head_branch': 'main', 'head_sha': self.source, 'status': 'completed',
                 'conclusion': 'success', 'check_suite_id': 20, 'run_attempt': 2},
@@ -125,6 +127,21 @@ class CompleteTrustedCI(unittest.TestCase):
             self.fixtures = saved
         self.fixtures['check-suites/20/check-runs']['check_runs'][0]['url'] = 'unlinked'
         with self.assertRaises(RuntimeError): self.verify()
+
+    def test_old_workflow_names_paths_and_foreign_ids_cannot_authorize_release(self):
+        for field, value in [('id', True), ('id', 0), ('id', '123456'),
+                             ('path', '.github/workflows/ci.yml'),
+                             ('name', 'Build & Test'), ('name', 'Build and Test')]:
+            saved = copy.deepcopy(self.fixtures)
+            self.fixtures['actions/workflows/build-and-test.yml'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(RuntimeError, 'wrong CI workflow'):
+                self.verify()
+            self.fixtures = saved
+        for field, value in [('workflow_id', self.workflow_id + 1), ('path', '.github/workflows/ci.yml')]:
+            saved = copy.deepcopy(self.fixtures)
+            self.fixtures['actions/runs/10'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(RuntimeError): self.verify()
+            self.fixtures = saved
 
 
 if __name__ == '__main__': unittest.main()

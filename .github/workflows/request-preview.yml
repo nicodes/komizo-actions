@@ -1,4 +1,4 @@
-name: Reusable preview request
+name: Request preview
 'on':
   workflow_call:
     inputs:
@@ -64,7 +64,8 @@ jobs:
       run: |
         set -euo pipefail
         [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
@@ -95,14 +96,16 @@ jobs:
         "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
         printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
         printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out Cookbook
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         repository: nicodes/cookbook
         ref: ${{ inputs.cookbook-ref }}
         persist-credentials: false
         fetch-depth: 0
         path: .artifacts/recipe-sdks/_cookbook
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}

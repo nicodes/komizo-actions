@@ -10,7 +10,8 @@ import re
 import subprocess
 
 REPO = 'nicodes/komizo-actions'
-WORKFLOW_ID = 325265928
+WORKFLOW = 'build-and-test.yml'
+WORKFLOW_PATH = '.github/workflows/' + WORKFLOW
 APP_ID = 15368
 SHA = re.compile(r'[a-f0-9]{40}\Z')
 VERSION = re.compile(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\Z')
@@ -54,22 +55,24 @@ def pages(path, key=None):
 
 
 def trusted_ci(merged):
-    workflow = api(f"actions/workflows/{WORKFLOW_ID}")
+    workflow = api(f"actions/workflows/{WORKFLOW}")
+    workflow_id = workflow.get('id')
     require(
-        workflow["id"] == WORKFLOW_ID
-        and workflow["path"] == ".github/workflows/ci.yml",
+        type(workflow_id) is int and workflow_id > 0
+        and workflow.get('path') == WORKFLOW_PATH
+        and workflow.get('name') == 'Build and test',
         "wrong CI workflow",
     )
     runs = pages(
-        f"actions/workflows/{WORKFLOW_ID}/runs?head_sha={merged}&event=push",
+        f"actions/workflows/{workflow_id}/runs?head_sha={merged}&event=push",
         "workflow_runs",
     )
     for item in runs:
         run_id = item["id"]
         evidence = api(f"actions/runs/{run_id}")
         if not (
-            evidence["workflow_id"] == WORKFLOW_ID
-            and evidence["path"] == ".github/workflows/ci.yml"
+            evidence["workflow_id"] == workflow_id
+            and evidence["path"] == WORKFLOW_PATH
             and evidence["repository"]["full_name"] == REPO
             and evidence["head_repository"]["full_name"] == REPO
             and evidence["event"] == "push"

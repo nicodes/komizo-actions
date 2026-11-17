@@ -57,7 +57,7 @@ print(json.dumps({'refused':True}))
 
     def test_native_request_requires_the_real_provider_before_private_route_resolution(self):
         root=Path(__file__).resolve().parents[1]
-        workflow=yaml.safe_load((root/'.github/workflows/cookbook-preview-request.yml').read_text())
+        workflow=yaml.safe_load((root/'.github/workflows/request-preview.yml').read_text())
         inputs=workflow['on']['workflow_call']['inputs']
         self.assertTrue(inputs['cookbook-ref']['required']);self.assertNotIn('tools-ref',inputs)
         steps=workflow['jobs']['request']['steps']

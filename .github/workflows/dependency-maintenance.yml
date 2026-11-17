@@ -1,4 +1,4 @@
-name: Dependency Maintenance
+name: Dependency maintenance
 'on':
   workflow_dispatch: null
 permissions:
@@ -23,7 +23,7 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
-    - name: Dependency Maintenance
+    - name: Dependency maintenance
       run: mise run dependency-maintenance
       env:
         GH_TOKEN: ${{ github.token }}

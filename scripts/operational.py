@@ -130,9 +130,9 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
         current=json.loads(lookup(f'repos/{repository}/git/ref/heads/main')).get('object',{}).get('sha')
         if current!=revision:raise ValueError('operational source is no longer current main')
     if operation=='paid' and record.get('deployment_required'):
-        runs=json.loads(lookup(f'repos/{repository}/actions/workflows/cd.yml/runs?head_sha={revision}&status=success&per_page=100'))
+        runs=json.loads(lookup(f'repos/{repository}/actions/workflows/deploy.yml/runs?head_sha={revision}&status=success&per_page=100'))
         if not any(value.get('head_sha')==revision and value.get('head_branch')=='main' and value.get('conclusion')=='success'
-                and value.get('path')=='.github/workflows/cd.yml' and value.get('event') in {'push','workflow_dispatch'}
+                and value.get('path')=='.github/workflows/deploy.yml' and value.get('event') in {'push','workflow_dispatch'}
                 and type(value.get('run_attempt')) is int and value['run_attempt']>0 for value in runs.get('workflow_runs',[])):
             raise ValueError('paid production check requires a successful deployment of this exact revision')
     result=(config,data,record)

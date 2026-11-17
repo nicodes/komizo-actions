@@ -69,18 +69,18 @@ def retrieve(repository, source, run, attempt, destination, lookup=api):
 
 def admit_workflows(metadata, cookbook_revision, actions_revision, route, *, preview=False, combined=False):
     """Require the exact complete recipe route selected by the accepted SDK."""
-    workflows = {'host': 'cookbook-validation.yml', 'native': 'cookbook-native.yml',
-                 'godot': 'cookbook-godot.yml'}
+    workflows = {'host': 'build-and-test-host.yml', 'native': 'build-and-test-native.yml',
+                 'godot': 'build-and-test-godot.yml'}
     if route not in workflows:
         raise ValueError('authorization requires its selected complete recipe route')
     if not release_packet.COMMIT.fullmatch(actions_revision):
         raise ValueError('authorization has no immutable Actions provider')
     required = {'nicodes/cookbook/.github/workflows/' + workflows[route] + '@' + cookbook_revision}
     required.add('nicodes/komizo-actions/.github/workflows/'
-        + ('cookbook-preview-effects.yml' if preview else 'cookbook-deliver.yml') + '@' + actions_revision)
+        + ('pr-preview.yml' if preview else 'deploy.yml') + '@' + actions_revision)
     if not combined:
         required.add('nicodes/komizo-actions/.github/workflows/'
-            + ('cookbook-preview-publish.yml' if preview else 'cookbook-publish.yml') + '@' + actions_revision)
+            + ('publish-preview.yml' if preview else 'publish.yml') + '@' + actions_revision)
     actual = {entry.get('path'): entry.get('sha') for entry in metadata.get('referenced_workflows', [])}
     if any(actual.get(path) != path.rsplit('@', 1)[1] for path in required):
         raise ValueError('authorization requires its exact independent CI, publisher and delivery providers')
@@ -172,7 +172,7 @@ def main():
                 raise ValueError('fresh preview authority differs from its current authorized request')
             groups = plan['policy']['test_groups']
         else:
-            if environment.get('GITHUB_WORKFLOW_REF') != environment['GITHUB_REPOSITORY'] + '/.github/workflows/cd.yml@refs/heads/main':
+            if environment.get('GITHUB_WORKFLOW_REF') != environment['GITHUB_REPOSITORY'] + '/.github/workflows/deploy.yml@refs/heads/main':
                 raise ValueError('production authority requires its exact trusted main caller')
             if args.source != environment['GITHUB_SHA'] or api('repos/' + environment['GITHUB_REPOSITORY'] + '/branches/main')['commit']['sha'] != args.source:
                 raise ValueError('production source is no longer current main')

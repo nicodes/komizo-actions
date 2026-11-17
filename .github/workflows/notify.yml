@@ -1,4 +1,4 @@
-name: Reusable delivery notification
+name: Notify
 'on':
   workflow_call:
     inputs:
@@ -65,14 +65,16 @@ jobs:
     permissions:
       contents: read
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).checkout }}
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
         path: _komizo
         persist-credentials: false
-    - uses: ./_komizo/notify-discord
+    - name: Notify
+      uses: ./_komizo/notify-discord
       continue-on-error: true
       timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).notify }}
       with:

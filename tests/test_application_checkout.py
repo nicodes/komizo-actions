@@ -11,7 +11,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTION = yaml.safe_load((ROOT / 'application-publication/action.yml').read_text())
-WORKFLOW = yaml.safe_load((ROOT / '.github/workflows/cookbook-publish.yml').read_text())
+WORKFLOW = yaml.safe_load((ROOT / '.github/workflows/publish.yml').read_text())
 
 
 class ApplicationCheckout(unittest.TestCase):

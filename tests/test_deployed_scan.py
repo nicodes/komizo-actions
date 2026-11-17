@@ -76,7 +76,7 @@ class RegistryReadAuthority(unittest.TestCase):
 
     def test_both_audit_workflows_prepare_podman_and_keep_credentials_in_the_deployed_step(self):
         workflows = Path(__file__).parents[1] / '.github/workflows'
-        for name in ['cookbook-security-audit.yml', 'cookbook-security-audit-no-report.yml']:
+        for name in ['audit-security-and-report.yml', 'audit-security.yml']:
             text = (workflows / name).read_text()
             with self.subTest(workflow=name):
                 self.assertNotIn('docker/login-action', text)
@@ -111,7 +111,7 @@ class DeployedDependencies(unittest.TestCase):
         self.data = dict(version=1, deployment='deploy/scan.toml', rust={'api':{'user':self.contract['user'],
             'forbidden':self.contract['forbidden'],'units':[{key:self.contract[key] for key in ['source_lock','lock_installed','binaries']}]}},os=[],
                         go={'gate': dict(forbidden=[])})
-        self.deployment = dict(repository='owner/demo', application='demo',workflow='.github/workflows/cd.yml',
+        self.deployment = dict(repository='owner/demo', application='demo',workflow='.github/workflows/deploy.yml',
                                components=['api', 'gate'], environment='production')
         write_source(self.root / 'deploy/scan.toml',self.deployment)
         self.path = self.root / 'deploy/deployed-scan.toml'

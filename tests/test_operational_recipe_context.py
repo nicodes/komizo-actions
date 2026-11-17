@@ -57,7 +57,7 @@ class ExtractedRecipeAuthority(unittest.TestCase):
             'def declaration(root,config): return tomllib.loads((root/"deploy/delivery.toml").read_text())\n'
             'def historical_deadlines(data): return {"deploy":30}\n')
         (modules/'generate.py').write_text('import tomllib\n'
-            'def workflow_files(root,pin): return {".github/workflows/cd.yml":"canonical "+pin+"\\n"}\n'
+            'def workflow_files(root,pin): return {".github/workflows/deploy.yml":"canonical "+pin+"\\n"}\n'
             'def check_entrypoint(root,pin):\n'
             ' if tomllib.loads((root/"mise.toml").read_text())["vars"]["cookbook_ref"]!=pin: raise ValueError("wrong Cookbook task source")\n'
             'def entrypoint_files(root,pin): return ["mise.toml"]\n')

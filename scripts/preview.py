@@ -259,7 +259,7 @@ def producer_deadline(plan, jobs, job_source, now=None):
     if total is None: return None
     if type(total) is not int or not 1 <= total <= 180 or jobs.get('total_count') != len(jobs.get('jobs', [])):
         raise ValueError('preview requires its complete original aggregate producer budget')
-    hosts = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ Tests')]
+    hosts = [job for job in jobs['jobs'] if job.get('name', '').endswith('/ Test')]
     if (not isinstance(job_source, str) or not SHA.fullmatch(job_source)
             or len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != job_source
             or plan['policy']['validation_runner'] not in hosts[0].get('labels', [])):
