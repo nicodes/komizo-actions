@@ -195,9 +195,9 @@ class PreviewAuthority(unittest.TestCase):
 
     def test_reusable_roles_keep_source_execution_separate_from_package_and_host_authority(self):
         workflows=ROOT/'.github/workflows'
-        publisher=(workflows/'cookbook-preview-publish.yml').read_text()
-        effects=(workflows/'cookbook-preview-effects.yml').read_text()
-        request=(workflows/'cookbook-preview-request.yml').read_text()
+        publisher=(workflows/'publish-preview.yml').read_text()
+        effects=(workflows/'pr-preview.yml').read_text()
+        request=(workflows/'request-preview.yml').read_text()
         self.assertNotIn('packages: write',request)
         self.assertNotIn('environment: Preview',publisher)
         self.assertNotIn('secrets.CLERK_SECRET_KEY',publisher)

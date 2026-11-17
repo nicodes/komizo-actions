@@ -1,4 +1,4 @@
-name: Reusable backup
+name: Audit security and report
 'on':
   workflow_call:
     inputs:
@@ -24,34 +24,32 @@ name: Reusable backup
         type: string
         required: false
         default: ''
+      operation:
+        type: string
+        required: true
+      check:
+        type: string
+        required: true
       report-timeout:
         type: number
         required: true
-    secrets:
-      KOMIZO_DEPLOY_KEY:
-        required: false
-      BACKUP_S3_ACCESS_KEY:
-        required: false
-      BACKUP_S3_SECRET_KEY:
-        required: false
 permissions: {}
 jobs:
-  backup:
+  verify:
+    name: Audit
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
-    environment:
-      name: ${{ inputs.environment }}
-      deployment: false
     permissions:
       contents: read
       actions: read
-      id-token: write
       attestations: read
+      packages: read
+      deployments: read
     env:
       COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       KOMIZO_REF: ${{ inputs.komizo-ref }}
       DECLARATION: ${{ inputs.declaration }}
-      OPERATION: backup
+      OPERATION: security
       OPERATION_CHECK: ''
       OPERATION_RUNNER: ${{ inputs.runner }}
       OPERATION_TIMEOUT: ${{ inputs['timeout-minutes'] }}
@@ -73,7 +71,8 @@ jobs:
       run: |
         set -euo pipefail
         [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         ref: ${{ github.sha }}
@@ -105,7 +104,8 @@ jobs:
         "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
         printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
         printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out Cookbook
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/cookbook
@@ -113,7 +113,8 @@ jobs:
         persist-credentials: false
         fetch-depth: 0
         path: .artifacts/recipe-sdks/_cookbook
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/komizo-actions
@@ -123,9 +124,10 @@ jobs:
         path: _operation_actions
     - name: Prepare accepted recipe SDKs
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
-      uses: ./_operation_actions/recipe-sources
+      uses: ./_operation_actions/recipe-setup
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
+        tools: python
     - name: Admit exact trusted main and bounded native operational policy
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).plan }}
       id: plan
@@ -134,67 +136,91 @@ jobs:
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
         python3 -I -B _operation_actions/scripts/operational.py plan "${sdk[@]}"
-    - name: Retain the original protected backup deadline
+    - name: Prepare the accepted native Podman runtime
+      if: ${{ steps.plan.outputs.deployed == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).registry }}
       shell: bash
-      env:
-        TOTAL_MINUTES: ${{ inputs.timeout-minutes }}
-      run: python3 -I -B _operation_actions/scripts/operation_budget.py --job backup --total-minutes "$TOTAL_MINUTES"
-    - uses: ./_operation_actions/connect
-      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).connect }}
-      env:
-        KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
-        KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
-        KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
-    - name: Capture only verified encrypted host output
-      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).capture }}
-      id: capture
+      run: bash "$TOOLS_ROOT/helpers/ci-container-runtime.sh"
+    - name: Prepare dependencies and audit declared source
+      if: ${{ steps.plan.outputs['artifact-validation'] != 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).source }}
       shell: bash
-      env:
-        PROJECT: ${{ steps.plan.outputs.project }}
-        BACKUP_CONFIG: ${{ steps.plan.outputs.backup }}
-        COOKBOOK_ROOT: ${{ format('{0}/.artifacts/recipe-sdks/_cookbook', github.workspace) }}
-        TOOLS_ROOT: ${{ format('{0}/.artifacts/recipe-sdks/_tools', github.workspace) }}
-      run: python3 -I -B _operation_actions/scripts/backup.py export --project "$PROJECT" --config "$BACKUP_CONFIG"
-    - name: Upload only received encrypted backup
-      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).upload }}
-      if: ${{ steps.capture.outputs.has-export == 'true' }}
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        mise exec -- python3 -I -B _operation_actions/scripts/operational.py source "${sdk[@]}"
+    - name: Prepare frozen native artifact SDKs and dependencies
+      if: ${{ steps.plan.outputs['artifact-validation'] == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).prepare }}
       shell: bash
-      env:
-        PROJECT: ${{ steps.plan.outputs.project }}
-        COOKBOOK_ROOT: ${{ format('{0}/.artifacts/recipe-sdks/_cookbook', github.workspace) }}
-        TOOLS_ROOT: ${{ format('{0}/.artifacts/recipe-sdks/_tools', github.workspace) }}
-        BACKUP_ALLOWED_SLUGS: ${{ steps.plan.outputs['allowed-products'] }}
-        BACKUP_S3_ACCESS_KEY: ${{ secrets.BACKUP_S3_ACCESS_KEY }}
-        BACKUP_S3_SECRET_KEY: ${{ secrets.BACKUP_S3_SECRET_KEY }}
-        BACKUP_S3_HOSTNAME: ${{ vars.BACKUP_S3_HOSTNAME }}
-        BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
-      run: python3 -I -B _operation_actions/scripts/backup.py upload --project "$PROJECT"
-    - name: Retain only the verified encrypted backup pair
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: ${{ always() && steps.capture.outputs.has-export == 'true' }}
-      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        mise exec -- python3 -I -B _operation_actions/scripts/operational.py setup-artifacts "${sdk[@]}"
+    - name: Build and validate the explicitly requested native artifacts
+      if: ${{ steps.plan.outputs['artifact-validation'] == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).build }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        mise exec -- python3 -I -B _operation_actions/scripts/operational.py build-artifacts "${sdk[@]}"
+    - name: Audit the prepared native artifacts
+      if: ${{ steps.plan.outputs['artifact-validation'] == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).source }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        mise exec -- python3 -I -B _operation_actions/scripts/operational.py audit-artifacts "${sdk[@]}"
+    - name: Run the original selected artifact assertions
+      if: ${{ steps.plan.outputs['artifact-validation'] == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checks }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        mise exec -- python3 -I -B _operation_actions/scripts/operational.py check-artifacts "${sdk[@]}"
+    - name: Select the immutable historical activation reader
+      id: activation-reader
+      if: ${{ steps.plan.outputs.deployed == 'true' }}
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
+      shell: bash
+      run: python3 -I -B _operation_actions/scripts/activation_reader.py --github-output
+    - name: Check out the separately pinned historical activation reader
+      if: ${{ steps.plan.outputs.deployed == 'true' }}
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
-        name: backup-${{ github.run_id }}-${{ github.run_attempt }}
-        path: .artifacts/backup/export/
-        include-hidden-files: true
-        if-no-files-found: error
-        retention-days: 30
-    - name: Retain the distinct absent or stopped backup status
+        repository: ${{ steps.activation-reader.outputs.repository }}
+        ref: ${{ steps.activation-reader.outputs.revision }}
+        persist-credentials: false
+        fetch-depth: 0
+        path: .artifacts/security-reader-tools
+    - name: Audit actual deployed runtime dependencies
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).deployed }}
+      if: ${{ steps.plan.outputs.deployed == 'true' }}
+      shell: bash
+      env:
+        REGISTRY_USERNAME: ${{ github.repository_owner }}
+        REGISTRY_PASSWORD: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        mise exec -- python3 -I -B _operation_actions/scripts/operational.py deployed "${sdk[@]}" --activation-reader-root .artifacts/security-reader-tools
+    - name: Upload artifacts
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-      if: ${{ always() && steps.capture.outputs.has-export == 'false' }}
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
+      if: ${{ always() && steps.plan.outputs.evidence != '' }}
       with:
-        name: backup-status-${{ github.run_id }}-${{ github.run_attempt }}
-        path: |
-          .artifacts/backup/first-deployment.json
-          .artifacts/backup/stopped.json
+        name: ${{ steps.plan.outputs['artifact-name'] }}
+        path: ${{ steps.plan.outputs.evidence }}
         include-hidden-files: true
-        if-no-files-found: error
-        retention-days: 30
-    name: Backup
+        if-no-files-found: ${{ steps.plan.outputs['evidence-missing'] || 'error' }}
+        retention-days: 7
   report:
     name: Report
-    needs: backup
+    needs: verify
     if: failure()
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['report-timeout'] }}
@@ -212,7 +238,8 @@ jobs:
       run: |
         set -euo pipefail
         [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         ref: ${{ github.sha }}
@@ -244,7 +271,8 @@ jobs:
         "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
         printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
         printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out Cookbook
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         repository: nicodes/cookbook
@@ -252,7 +280,8 @@ jobs:
         persist-credentials: false
         fetch-depth: 0
         path: .artifacts/recipe-sdks/_cookbook
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_checkout }}
       with:
         repository: nicodes/komizo-actions
@@ -262,10 +291,11 @@ jobs:
         path: _operation_actions
     - name: Prepare accepted recipe SDKs
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report_setup }}
-      uses: ./_operation_actions/recipe-sources
+      uses: ./_operation_actions/recipe-setup
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
-    - name: Report bounded backup failure
+        tools: python
+    - name: Report bounded audit failure
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report }}
       shell: bash
       env:

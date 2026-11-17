@@ -1,4 +1,4 @@
-name: Reusable production verification
+name: Verify public production
 'on':
   workflow_call:
     inputs:
@@ -30,24 +30,12 @@ name: Reusable production verification
       check:
         type: string
         required: true
-      inline-paid:
-        type: boolean
-        default: false
-      inline-step-timeouts:
-        type: string
-        default: '{}'
-    secrets:
-      OPENROUTER_API_KEY:
-        required: false
 permissions: {}
 jobs:
   verify:
     name: Verify production
     runs-on: ${{ inputs.runner }}
     timeout-minutes: ${{ inputs['timeout-minutes'] }}
-    environment:
-      name: ${{ inputs.environment }}
-      deployment: false
     permissions:
       contents: read
       actions: read
@@ -77,7 +65,8 @@ jobs:
       run: |
         set -euo pipefail
         [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         ref: ${{ github.sha }}
@@ -109,7 +98,8 @@ jobs:
         "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
         printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
         printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out Cookbook
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/cookbook
@@ -117,7 +107,8 @@ jobs:
         persist-credentials: false
         fetch-depth: 0
         path: .artifacts/recipe-sdks/_cookbook
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).checkout }}
       with:
         repository: nicodes/komizo-actions
@@ -153,32 +144,8 @@ jobs:
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
         mise exec -- python3 -I -B _operation_actions/scripts/operational.py run "${sdk[@]}"
-      env:
-        OPENROUTER_API_KEY: ${{ inputs.operation == 'paid' && secrets.OPENROUTER_API_KEY || '' }}
-    - name: Prepare the original inline paid assertion only after explicit opt-in
-      if: ${{ inputs.operation == 'production' && inputs.inline-paid }}
-      timeout-minutes: ${{ fromJSON(inputs.inline-step-timeouts).prepare }}
-      shell: bash
-      env:
-        OPERATION: paid
-        OPERATION_STEP_TIMEOUTS: ${{ inputs.inline-step-timeouts }}
-      run: |
-        set -euo pipefail
-        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        mise exec -- python3 -I -B _operation_actions/scripts/operational.py prepare "${sdk[@]}"
-    - name: Run the original inline paid assertion within this same production job
-      if: ${{ inputs.operation == 'production' && inputs.inline-paid }}
-      timeout-minutes: ${{ fromJSON(inputs.inline-step-timeouts).run }}
-      shell: bash
-      env:
-        OPERATION: paid
-        OPERATION_STEP_TIMEOUTS: ${{ inputs.inline-step-timeouts }}
-        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      run: |
-        set -euo pipefail
-        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        mise exec -- python3 -I -B _operation_actions/scripts/operational.py run "${sdk[@]}"
-    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+    - name: Upload artifacts
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).artifact }}
       if: ${{ always() && (steps.plan.outputs.evidence != '' || false) }}
       with:

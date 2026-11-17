@@ -1,4 +1,4 @@
-name: Reusable publication
+name: Publish
 'on':
   workflow_call:
     inputs:
@@ -32,18 +32,21 @@ jobs:
       packages: write
       attestations: read
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ inputs.source }}
         fetch-depth: 0
         persist-credentials: false
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
         path: _publication_actions
         persist-credentials: false
-    - uses: ./_publication_actions/application-publication
+    - name: Publish
+      uses: ./_publication_actions/application-publication
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
         komizo-ref: ${{ inputs.komizo-ref }}

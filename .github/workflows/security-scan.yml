@@ -1,4 +1,4 @@
-name: Security Scan
+name: Security scan
 'on':
   workflow_dispatch: null
 permissions:
@@ -18,11 +18,11 @@ jobs:
       with:
         persist-credentials: false
     - name: Set up development tools
-      uses: nicodes/tools/setup@d475b54c402754a5a37a44fbd65328551995025c
+      uses: nicodes/tools/setup@71540eb673ebd47162de3b78bb6ffbf77605d2ab
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
-    - name: Security Scan
+    - name: Security scan
       run: mise run security-scan
     permissions:
       contents: read

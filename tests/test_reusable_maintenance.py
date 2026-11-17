@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class NativeMaintenance(unittest.TestCase):
     def test_backup_deadline_can_read_actual_job_metadata_before_connecting(self):
-        workflow = yaml.safe_load((ROOT / '.github/workflows/cookbook-backup.yml').read_text())
+        workflow = yaml.safe_load((ROOT / '.github/workflows/backup.yml').read_text())
         job = workflow['jobs']['backup']
         self.assertEqual(workflow['permissions'], {})
         self.assertEqual(job['permissions'], {'contents': 'read', 'actions': 'read',
@@ -22,7 +22,7 @@ class NativeMaintenance(unittest.TestCase):
         self.assertLess(budgets[0], connections[0])
 
     def test_backup_uses_current_pinned_transport_without_private_frames_or_shell_exporters(self):
-        workflow = yaml.safe_load((ROOT / '.github/workflows/cookbook-backup.yml').read_text())
+        workflow = yaml.safe_load((ROOT / '.github/workflows/backup.yml').read_text())
         job = workflow['jobs']['backup']
         self.assertEqual(job['permissions']['id-token'], 'write')
         source = str(job)
@@ -37,7 +37,7 @@ class NativeMaintenance(unittest.TestCase):
                 self.assertNotIn('backup.py export', step.get('run', ''))
 
     def test_delivery_retains_runner_storage_scope_and_immutable_ciphertext_artifact(self):
-        workflow = yaml.safe_load((ROOT / '.github/workflows/cookbook-deliver.yml').read_text())
+        workflow = yaml.safe_load((ROOT / '.github/workflows/deploy.yml').read_text())
         job = workflow['jobs']['deliver']
         for step in job['steps']:
             values = step.get('env', {})

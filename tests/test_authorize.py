@@ -19,7 +19,7 @@ class FreshReleaseAuthority(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name); packet = make_packet(self.root)
-        self.environment = ENV | {'GITHUB_WORKFLOW_REF': 'example/mailroom/.github/workflows/cd.yml@refs/heads/main',
+        self.environment = ENV | {'GITHUB_WORKFLOW_REF': 'example/mailroom/.github/workflows/deploy.yml@refs/heads/main',
                                   'GITHUB_WORKFLOW_SHA': 'a'*40, 'GITHUB_JOB': 'deliver'}
         self.context = self.environment | {'GITHUB_JOB': 'publish'}
         artifacts = {'.artifacts/release/' + name: hashlib.sha256((packet / name).read_bytes()).hexdigest()
@@ -47,7 +47,7 @@ class FreshReleaseAuthority(unittest.TestCase):
         for name, value in [('publication.json', published), ('validation.json', self.proof), ('build.json', build), ('test.json', test)]:
             (self.directory / name).write_bytes(registry.canonical(value))
         self.config = {'recipe': 'react-native', 'ci': {'runner': 'ubuntu-24.04'}}
-        self.jobs = {'total_count': 2, 'jobs': [{'name': 'validate / Tests', 'conclusion': 'success', 'head_sha': 'a'*40, 'labels': ['ubuntu-24.04']},
+        self.jobs = {'total_count': 2, 'jobs': [{'name': 'validate / Test', 'conclusion': 'success', 'head_sha': 'a'*40, 'labels': ['ubuntu-24.04']},
                                               {'name': 'Images / Publish', 'conclusion': 'success', 'head_sha': 'a'*40}]}
 
     def admit(self, environment=None, jobs=None):

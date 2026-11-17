@@ -85,13 +85,13 @@ print(json.dumps(result))
     def acceptance(self, config):
         environment = dict(GITHUB_SERVER_URL='https://github.com', GITHUB_REPOSITORY='owner/demo',
                            GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', GITHUB_SHA='a' * 40,
-                           GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/cd.yml@refs/heads/main',
+                           GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main',
                            GITHUB_WORKFLOW_SHA='a' * 40, GITHUB_EVENT_NAME='push')
         proof = dict(version=1, source_commit='a' * 40, source_tree='b' * 40, cookbook_commit=SDK_REF,
                      recipe=config['recipe'], status='passed', tracked_source_clean=True,
                      build_verified=True, tests_verified=True, test_groups=['lint', 'unit', 'security'],
                      execution_context=environment | {'GITHUB_JOB': 'validate'})
-        jobs = {'total_count': 1, 'jobs': [{'name': 'validate / Full source checks / Tests',
+        jobs = {'total_count': 1, 'jobs': [{'name': 'validate / Full source checks / Test',
                  'head_sha': 'a' * 40, 'conclusion': 'success', 'labels': ['ubuntu-24.04']}]}
         def accept():
             publication.accept(proof, config, 'a' * 40, SDK_REF, 'b' * 40,

@@ -20,14 +20,14 @@ class ApplicationPublication(unittest.TestCase):
     def setUp(self):
         self.environment = dict(GITHUB_SERVER_URL='https://github.com', GITHUB_REPOSITORY='owner/demo',
                                 GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='2', GITHUB_SHA='a' * 40,
-                                GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/ci.yml@refs/heads/main',
+                                GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/build-and-test.yml@refs/heads/main',
                                 GITHUB_WORKFLOW_SHA='a' * 40, GITHUB_EVENT_NAME='workflow_dispatch')
         self.proof = dict(version=1, source_commit='a' * 40, source_tree='b' * 40, cookbook_commit='c' * 40,
                           recipe='react-native', status='passed', tracked_source_clean=True, build_verified=True,
                           tests_verified=True, test_groups=['lint', 'unit', 'security', 'e2e'],
                           execution_context=self.environment | {'GITHUB_JOB': 'validate'})
         self.config = dict(recipe='react-native', ci={'runner': 'ubuntu-24.04'})
-        self.jobs = dict(total_count=1, jobs=[dict(name='validate / Full source checks / Tests',
+        self.jobs = dict(total_count=1, jobs=[dict(name='validate / Full source checks / Test',
                            conclusion='success', head_sha='a' * 40, labels=['ubuntu-24.04'])])
 
     def accept(self):
@@ -36,6 +36,11 @@ class ApplicationPublication(unittest.TestCase):
 
     def test_current_complete_same_run_host_is_admitted(self):
         self.accept()
+
+    def test_retired_producer_job_name_cannot_authorize_publication(self):
+        self.jobs['jobs'][0]['name'] = 'validate / Full source checks / Tests'
+        with self.assertRaisesRegex(ValueError, 'actual full validation job'):
+            self.accept()
 
     def main_at_publication_boundary(self, packet_source, *, event='push'):
         """Run the entry point through its real acceptance and final source check."""
@@ -134,7 +139,7 @@ class ApplicationPublication(unittest.TestCase):
         with self.assertRaises(ValueError):self.accept()
 
     def test_preview_acceptance_cannot_publish_as_production_even_at_the_same_source_revision(self):
-        self.environment.update(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/cd.yml@refs/heads/main',
+        self.environment.update(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main',
             GITHUB_EVENT_NAME='push')
         self.proof['execution_context'].update(
             GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/pr-preview.yml@refs/heads/main',

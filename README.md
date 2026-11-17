@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: b4453567fa94c6ef1c5a6ebeefaec5fba414bb7e97695fe45a7d785cd4e24afd -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 480c5d69fe983034b71718f663209b541909822205bbd7de9ad75c6f6a581bff -->
 
 # Komizo Actions
 
@@ -10,11 +10,11 @@ Recipe-aware adapters require an exact `cookbook-ref`, native TOML declarations 
 
 Applications declare native workloads in `deploy/application.toml`. Complete source validation freezes a closed release packet containing `release.json`, `inventory.json`, selected image OCI archives, selected static archives and explicitly inventoried metadata. Static applications need no image. Publication uploads exact accepted OCI manifests and blobs without rebuilding artifacts or changing the descriptor.
 
-`application-publication` consumes complete same-run evidence and emits an immutable six-record host release artifact. Queued host effects run in the pinned `cookbook-deliver.yml` workflow. Its final authorizer checks publication, complete validation, source, current main or pull request and pinned providers immediately before minting the release proof. Source validation, publication and installed application acceptance remain distinct evidence. Delivery retains a small typed operation-metadata artifact separately from encrypted backup files. Historical dependency audits require an exact successful ready-operation receipt and report `activation_at_time` with `current_state = "unobserved"`. A staged stopped release cannot satisfy that scope; current host state requires independently authenticated inspection.
+`application-publication` consumes complete same-run evidence and emits an immutable six-record host release artifact. Queued host effects run in the pinned `deploy.yml` workflow. Its final authorizer checks publication, complete validation, source, current main or pull request and pinned providers immediately before minting the release proof. Source validation, publication and installed application acceptance remain distinct evidence. Delivery retains a small typed operation-metadata artifact separately from encrypted backup files. Historical dependency audits require an exact successful ready-operation receipt and report `activation_at_time` with `current_state = "unobserved"`. A staged stopped release cannot satisfy that scope; current host state requires independently authenticated inspection.
 
 ## Workflow names
 
-Application callers use `Build & Test`, `Deploy`, `Release` and `PR Preview` for their top-level workflows. Reusable workflows use short role names such as `Publish`, `Deploy`, `Readiness`, `Backup` and `Report`. These labels also identify jobs in same-run evidence checks; update the reviewed Actions pin and generated callers together. Host policy continues to authorize immutable workflow paths and commits independently of display names.
+Workflow filenames match their sentence-case titles: `Build and test` uses `build-and-test.yml`, `Deploy` uses `deploy.yml`, and `PR preview` uses `pr-preview.yml`. Jobs use short role names such as `Test`, `Publish`, `Deploy`, `Readiness`, `Backup` and `Report`. These labels also identify jobs in same-run evidence checks; update the reviewed Actions pin and generated callers together. Host policy independently authorizes the exact workflow paths and commits. Retired filenames and job labels are rejected.
 
 ## Host submission
 
@@ -32,7 +32,7 @@ Preview workflows separate trusted request planning, selected-source validation,
 
 For `pull_request_target`, job records identify the triggering PR head separately from the trusted main workflow. Adapters verify the authenticated run, attempt, event and jobs against that head. Publication and host authority retain the trusted workflow identity. Budgets remain bound to the selected job's original start time.
 
-`application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Automated public checks bind the exact current source and immutable release identity. A read-only manual `production-verification.yml` dispatch from the exact main workflow may select an explicit historical `expected-source`; product configuration cannot enable historical selection for automated delivery. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
+`application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Automated public checks bind the exact current source and immutable release identity. A read-only manual `verify-production.yml` dispatch from the exact main workflow may select an explicit historical `expected-source`; product configuration cannot enable historical selection for automated delivery. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
 
 Source and security audit workflows retain declared runners, deadlines, native assertions and reporting permissions. `recipe-setup` prepares the exact provider identities. `application-delivery` prepares a read-only delivery plan; the protected reusable workflow performs host effects.
 

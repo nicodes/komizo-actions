@@ -86,7 +86,7 @@ class OperationalAuthority(unittest.TestCase):
         self.event.write_text(json.dumps({'inputs': {'model_smoke': False}}))
         self.environment = dict(os.environ, GITHUB_REPOSITORY='owner/demo', GITHUB_SHA=self.revision,
             GITHUB_WORKFLOW_SHA=self.revision, GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
-            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/security-scan.yml@refs/heads/main',
+            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/audit-security.yml@refs/heads/main',
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_PATH=str(self.event),
             TOOLS_REF=tools_sha, KOMIZO_REF=actions_sha, DECLARATION='deploy/operations.toml',
             OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='', OPERATION_REPORT_TIMEOUT='5',
@@ -98,7 +98,7 @@ class OperationalAuthority(unittest.TestCase):
         if '/git/ref/heads/main' in path:
             return json.dumps({'object': {'sha': self.revision}})
         return json.dumps({'workflow_runs': [dict(head_sha=self.revision, head_branch='main', conclusion='success',
-            path='.github/workflows/cd.yml', event='workflow_dispatch', run_attempt=1)]})
+            path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=1)]})
 
     def admit(self, environment=None, operation='security', selected='', lookup=None):
         with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(workflows, None, None)):
@@ -106,7 +106,7 @@ class OperationalAuthority(unittest.TestCase):
                                     environment or self.environment, lookup or self.lookup)
 
     def paid_environment(self):
-        return self.environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/production-verification.yml@refs/heads/main',
+        return self.environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/verify-production.yml@refs/heads/main',
             OPERATION_TIMEOUT='20', OPERATION_ENVIRONMENT='Production',
             OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('paid',self.data['paid'][0])))
 
@@ -115,10 +115,19 @@ class OperationalAuthority(unittest.TestCase):
         self.assertEqual(data['project'], 'demo')
         self.assertEqual(record['report_timeout'], 5)
 
+    def test_retired_operational_caller_paths_refuse_before_any_effect(self):
+        for operation, filename in [('security', 'security-scan.yml'), ('recovery', 'recovery.yml'),
+                                    ('production', 'production-verification.yml'),
+                                    ('paid', 'production-verification.yml')]:
+            environment = self.environment | {
+                'GITHUB_WORKFLOW_REF': 'owner/demo/.github/workflows/' + filename + '@refs/heads/main'}
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, 'exact trusted-main workflow'):
+                self.admit(environment, operation=operation)
+
     def test_source_workflow_runner_budget_and_report_identity_refusals(self):
         for changes in [dict(GITHUB_REF='refs/heads/feature'), dict(GITHUB_SHA='f' * 40),
                         dict(GITHUB_WORKFLOW_SHA='f' * 40), dict(GITHUB_EVENT_NAME='pull_request'),
-                        dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/ci.yml@refs/heads/main'),
+                        dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/build-and-test.yml@refs/heads/main'),
                         dict(GITHUB_RUN_ATTEMPT='0'), dict(OPERATION_RUNNER='ubuntu-22.04'),
                         dict(OPERATION_TIMEOUT='111'), dict(OPERATION_REPORT_TIMEOUT='11'), dict(OPERATION_STEP_TIMEOUTS='{}'),
                         dict(OPERATION_ENVIRONMENT='Production'), dict(DECLARATION='deploy/other.json'),
@@ -143,7 +152,7 @@ class OperationalAuthority(unittest.TestCase):
     def test_nonaccepted_sdk_and_changed_canonical_main_caller_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'accepted on main'):
             self.admit(lookup=lambda path: json.dumps({'status': 'diverged'}))
-        path = self.root / '.github/workflows/security-scan.yml'
+        path = self.root / '.github/workflows/audit-security.yml'
         path.write_text(path.read_text() + '# Changed source caller\n')
         self.git(self.root, 'add', '.')
         self.git(self.root, 'commit', '-qm', 'Change caller without its policy')
@@ -160,7 +169,8 @@ class OperationalAuthority(unittest.TestCase):
         self.admit(environment, 'paid', 'model_smoke')
         with self.assertRaisesRegex(ValueError, 'manual dispatch'):
             self.admit(environment | dict(GITHUB_EVENT_NAME='schedule'), 'paid', 'model_smoke')
-        for changes in [dict(head_sha='f' * 40), dict(conclusion='failure'), dict(path='.github/workflows/ci.yml'),
+        for changes in [dict(head_sha='f' * 40), dict(conclusion='failure'), dict(path='.github/workflows/build-and-test.yml'),
+                        dict(path='.github/workflows/cd.yml'),
                         dict(event='pull_request'), dict(run_attempt=0)]:
             def lookup(path):
                 value = json.loads(self.lookup(path))
@@ -216,18 +226,18 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_every_leaf_prepares_its_parser_before_admission_and_keeps_credentials_late(self):
         root = Path(__file__).parents[1] / '.github/workflows'
-        for name in ['backup', 'recovery', 'security-audit', 'production-check', 'public-production-check']:
-            text = (root / ('cookbook-' + name + '.yml')).read_text()
+        for name in ['backup', 'verify-recovery', 'audit-security-and-report', 'verify-production', 'verify-public-production']:
+            text = (root / (name + '.yml')).read_text()
             with self.subTest(workflow=name):
                 self.assertLess(text.index('Prepare accepted recipe SDKs'), text.index('Admit exact trusted main'))
                 self.assertNotIn('install_args: python', text)
                 self.assertIn("PYTHONDONTWRITEBYTECODE: '1'", text)
-        production = (root / 'cookbook-production-check.yml').read_text()
+        production = (root / 'verify-production.yml').read_text()
         preparation = production.split('    - name: Run owned production assertions')[0]
         self.assertNotIn('secrets.OPENROUTER_API_KEY', preparation)
 
     def test_inline_paid_steps_keep_credentials_late_inside_the_same_job(self):
-        text = (Path(__file__).parents[1] / '.github/workflows/cookbook-production-check.yml').read_text()
+        text = (Path(__file__).parents[1] / '.github/workflows/verify-production.yml').read_text()
         ordinary, inline = text.split('    - name: Prepare the original inline paid assertion', 1)
         prepare, run = inline.split('    - name: Run the original inline paid assertion', 1)
         self.assertNotIn('secrets.OPENROUTER_API_KEY', prepare)
@@ -280,7 +290,7 @@ class OperationalAuthority(unittest.TestCase):
                     '--activation-reader-root',str(self.root/'reader-tools')]):
                 driver.main()
             self.assertEqual(effects,['deployed'])
-        text=(Path(__file__).parents[1]/'.github/workflows/cookbook-security-audit.yml').read_text()
+        text=(Path(__file__).parents[1]/'.github/workflows/audit-security-and-report.yml').read_text()
         self.assertIn("fromJSON(inputs['step-timeouts']).source",text)
         self.assertIn("fromJSON(inputs['step-timeouts']).deployed",text)
 

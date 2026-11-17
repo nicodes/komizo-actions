@@ -20,7 +20,7 @@ SCRIPT_SHA256='d60eacb11a7b401fd71189acdc82d96f2e222cf11023becafb6af2a85c1c4887'
 
 
 def source_blocks():
-    paths=[*ROOT.glob('.github/workflows/cookbook-*.yml'),*ROOT.glob('*/action.yml')]
+    paths=[*ROOT.glob('.github/workflows/*.yml'),*ROOT.glob('*/action.yml')]
     for path in paths:
         document=yaml.safe_load(path.read_text())
         blocks=[('action',document['runs'])] if 'runs' in document else document.get('jobs',{}).items()

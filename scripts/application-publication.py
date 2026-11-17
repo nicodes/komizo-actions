@@ -45,7 +45,7 @@ def accept(proof, config, source, tools, tree, groups, jobs, environment, *, job
         raise ValueError('publication evidence must come from the declared shared validation gate')
     if jobs.get('total_count') != len(jobs.get('jobs', [])):
         raise ValueError('publication requires complete current-attempt job metadata')
-    hosts = [job for job in jobs['jobs'] if job['name'].endswith('/ Tests')]
+    hosts = [job for job in jobs['jobs'] if job['name'].endswith('/ Test')]
     if (job_source != (source if environment['GITHUB_EVENT_NAME'] == 'pull_request_target' else environment['GITHUB_SHA'])
             or len(hosts) != 1 or hosts[0].get('conclusion') != 'success' or hosts[0].get('head_sha') != job_source):
         raise ValueError('the actual full validation job must have succeeded at this source')

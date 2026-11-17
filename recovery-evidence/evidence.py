@@ -57,7 +57,7 @@ def provenance(run, artifact, repo, run_id, artifact_id):
         raise ValueError('backup source must belong to this repository')
     if run['head_branch'] != 'main' or run['conclusion'] != 'success' or run['status'] != 'completed':
         raise ValueError('backup must come from a successful completed main run')
-    if run['path'] not in {'.github/workflows/cd.yml','.github/workflows/backup.yml'}:
+    if run['path'] not in {'.github/workflows/deploy.yml','.github/workflows/backup.yml'}:
         raise ValueError('backup source is not an approved workflow')
     if run['event'] not in {'push','schedule','workflow_dispatch'}: raise ValueError('untrusted backup event')
     if artifact['expired'] or artifact.get('workflow_run',{}).get('id') != int(run_id):

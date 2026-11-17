@@ -75,14 +75,14 @@ class ActualWorkflowRun(unittest.TestCase):
 
     def test_wrong_main_controller_or_caller_refuses_before_github_reads(self):
         for change in [dict(GITHUB_REF='refs/pull/42/merge'), dict(GITHUB_EVENT_NAME='pull_request'),
-                       dict(GITHUB_WORKFLOW_SHA='a'*40), dict(GITHUB_WORKFLOW_REF='example/mailroom/.github/workflows/ci.yml@refs/heads/main')]:
+                       dict(GITHUB_WORKFLOW_SHA='a'*40), dict(GITHUB_WORKFLOW_REF='example/mailroom/.github/workflows/build-and-test.yml@refs/heads/main')]:
             with self.subTest(change=change), patch.dict(self.environment, change), self.assertRaises(ValueError):
                 self.current()
             self.assertEqual(self.calls, [])
 
     def test_foreign_run_attempt_event_workflow_or_repository_refuses(self):
         original = copy.deepcopy(self.metadata)
-        changes = [dict(id=457), dict(run_attempt=1), dict(event='issue_comment'), dict(path='.github/workflows/cd.yml'),
+        changes = [dict(id=457), dict(run_attempt=1), dict(event='issue_comment'), dict(path='.github/workflows/deploy.yml'),
                    dict(head_sha='c'*40), dict(head_sha='invalid'), dict(repository=dict(full_name='foreign/mailroom',id=123)),
                    dict(repository=dict(full_name='example/mailroom',id=124)),
                    dict(head_repository=dict(full_name='foreign/mailroom',id=123)), dict(run_attempt=True)]

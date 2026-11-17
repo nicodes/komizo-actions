@@ -183,7 +183,7 @@ class RecoveryEvidence(unittest.TestCase):
         (root / '.artifacts/backup/diagnostic.json').write_text('{}')
         (root / '.artifacts/komizo-operation.json').write_text('{}')
         job = 'backup' if workflow == 'backup' else 'deliver'
-        steps = yaml.safe_load((ROOT / f'.github/workflows/cookbook-{workflow}.yml').read_text())['jobs'][job]['steps']
+        steps = yaml.safe_load((ROOT / f'.github/workflows/{workflow}.yml').read_text())['jobs'][job]['steps']
         artifacts = {}
         for step in steps:
             if not step.get('uses', '').startswith('actions/upload-artifact@'):
@@ -211,7 +211,7 @@ class RecoveryEvidence(unittest.TestCase):
         return artifacts
 
     def test_both_workflow_producers_round_trip_atomic_format2_pair_through_strict_reader(self):
-        for workflow, path, event in [('backup', 'backup', 'schedule'), ('deliver', 'cd', 'push')]:
+        for workflow, path, event in [('backup', 'backup', 'schedule'), ('deploy', 'deploy', 'push')]:
             with self.subTest(workflow=workflow), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 outputs = self.published_artifacts(root, workflow, 'export')
@@ -231,7 +231,7 @@ class RecoveryEvidence(unittest.TestCase):
                 self.assertEqual(report['ciphertext_sha256'], self.receipt['ciphertext_sha256'])
 
     def test_absent_stopped_and_unattempted_captures_never_claim_recoverable_backup(self):
-        for workflow in ['backup', 'deliver']:
+        for workflow in ['backup', 'deploy']:
             with self.subTest(workflow=workflow, role='not-attempted'), tempfile.TemporaryDirectory() as directory:
                 outputs = self.published_artifacts(Path(directory), workflow, None)
                 self.assertNotIn('backup-123-1', outputs)
@@ -273,6 +273,7 @@ class RecoveryEvidence(unittest.TestCase):
         evidence.provenance(run,artifact,repo,'123','456')
         for kind,field,value in [('run','id',124),('run','head_branch','untrusted'),
                 ('run','status','in_progress'),('run','conclusion','failure'),
+                ('run','path','.github/workflows/cd.yml'),
                 ('run','path','.github/workflows/other.yml'),('run','event','pull_request'),
                 ('artifact','id',457),('artifact','expired',True),('artifact','name','arbitrary'),
                 ('artifact','digest','missing')]:
@@ -346,7 +347,7 @@ sys.stdout.buffer.write((root/paths[command[1]]).read_bytes())
         self.assertIn('python3 -I -B ',verify['run'])
         self.assertIn('--tools-root "$TRANSPORT_TOOLS_DIRECTORY"',verify['run'])
         self.assertNotIn('TOOLS_ROOT',str(action))
-        job = yaml.safe_load((ROOT/'.github/workflows/ci.yml').read_text())['jobs']['ci']
+        job = yaml.safe_load((ROOT/'.github/workflows/build-and-test.yml').read_text())['jobs']['ci']
         prepared = next(step for step in job['steps']
             if step.get('with',{}).get('path')==checkout['with']['path'])
         self.assertEqual(prepared['with']['ref'],evidence.TOOLS_REVISION)

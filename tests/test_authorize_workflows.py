@@ -14,16 +14,16 @@ import authorize
 class ExactRecipeProviders(unittest.TestCase):
     cookbook = 'c' * 40
     actions = 'd' * 40
-    workflows = {'host': 'cookbook-validation.yml', 'native': 'cookbook-native.yml',
-                 'godot': 'cookbook-godot.yml'}
+    workflows = {'host': 'build-and-test-host.yml', 'native': 'build-and-test-native.yml',
+                 'godot': 'build-and-test-godot.yml'}
 
     def metadata(self, route, preview=False, combined=False):
         paths = ['nicodes/cookbook/.github/workflows/' + self.workflows[route] + '@' + self.cookbook,
             'nicodes/komizo-actions/.github/workflows/'
-            + ('cookbook-preview-effects.yml' if preview else 'cookbook-deliver.yml') + '@' + self.actions]
+            + ('pr-preview.yml' if preview else 'deploy.yml') + '@' + self.actions]
         if not combined:
             paths.append('nicodes/komizo-actions/.github/workflows/'
-                + ('cookbook-preview-publish.yml' if preview else 'cookbook-publish.yml') + '@' + self.actions)
+                + ('publish-preview.yml' if preview else 'publish.yml') + '@' + self.actions)
         return {'referenced_workflows': [{'path': path, 'sha': path.rsplit('@', 1)[1]} for path in paths]}
 
     def admit(self, metadata, route='host', **options):
@@ -39,7 +39,7 @@ class ExactRecipeProviders(unittest.TestCase):
 
     def test_wrong_recipe_or_unselected_router_cannot_replace_the_selected_route(self):
         for route in self.workflows:
-            for wrong in [*set(self.workflows.values()) - {self.workflows[route]}, 'cookbook-ci.yml']:
+            for wrong in [*set(self.workflows.values()) - {self.workflows[route]}, 'build-and-test-recipe.yml']:
                 changed = self.metadata(route)
                 changed['referenced_workflows'][0]['path'] = 'nicodes/cookbook/.github/workflows/' + wrong + '@' + self.cookbook
                 with self.subTest(route=route, wrong=wrong), self.assertRaises(ValueError):
@@ -61,8 +61,27 @@ class ExactRecipeProviders(unittest.TestCase):
         for preview in [False, True]:
             with self.subTest(preview=preview), self.assertRaises(ValueError):
                 self.admit(self.metadata('host', not preview), preview=preview)
-        for route in ['unknown', 'fast', 'cookbook-ci.yml']:
+        for route in ['unknown', 'fast', 'build-and-test-recipe.yml']:
             with self.subTest(route=route), self.assertRaises(ValueError): self.admit(original, route)
+
+    def test_retired_provider_paths_cannot_replace_current_authority(self):
+        old_routes = {'host': 'cookbook-validation.yml', 'native': 'cookbook-native.yml',
+                      'godot': 'cookbook-godot.yml'}
+        for route in self.workflows:
+            for preview in [False, True]:
+                for combined in [False, True]:
+                    original = self.metadata(route, preview, combined)
+                    old_names = [old_routes[route],
+                        'cookbook-preview-effects.yml' if preview else 'cookbook-deliver.yml']
+                    if not combined:
+                        old_names.append('cookbook-preview-publish.yml' if preview else 'cookbook-publish.yml')
+                    for index, old in enumerate(old_names):
+                        changed = copy.deepcopy(original)
+                        entry = changed['referenced_workflows'][index]
+                        prefix = entry['path'].rsplit('/', 1)[0]
+                        entry['path'] = prefix + '/' + old + '@' + entry['sha']
+                        with self.subTest(route=route, preview=preview, combined=combined, old=old), self.assertRaises(ValueError):
+                            self.admit(changed, route, preview=preview, combined=combined)
 
     def test_the_real_accepted_sdk_model_and_generated_caller_select_the_same_authority(self):
         program = '''import json,re,sys,tempfile
@@ -77,7 +96,7 @@ with tempfile.TemporaryDirectory() as directory:
  for recipe in ['react-native','rust-cli','godot-game']:
   config={'version':1,'recipe':recipe,'tests':{'unit':[{'runner':'python','path':'check.py'}]}}
   route=orchestration.model(config)['route']
-  body=generator.workflow_files(root,context.cookbook_revision,config)['.github/workflows/ci.yml']
+  body=generator.workflow_files(root,context.cookbook_revision,config)['.github/workflows/build-and-test.yml']
   match=re.search(r'^    uses: (nicodes/cookbook/[^\\n]+)$',body,re.MULTILINE)
   assert match is not None
   result.append({'route':route,'workflow':match.group(1)})
