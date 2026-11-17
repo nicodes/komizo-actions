@@ -39,11 +39,12 @@ class PublicVerification(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'current main payload'):
             public.select(self.config,self.plan,SOURCE,RELEASE,self.env,self.entry['runner'],15,older)
         manual={**self.env,'GITHUB_REPOSITORY':'example/game','GITHUB_WORKFLOW_SHA':SOURCE,
-            'GITHUB_WORKFLOW_REF':'example/game/.github/workflows/production-verification.yml@refs/heads/main'}
+            'GITHUB_WORKFLOW_REF':'example/game/.github/workflows/verify-production.yml@refs/heads/main'}
         self.assertEqual(public.select(self.config,self.plan,SOURCE,RELEASE,manual,self.entry['runner'],15,older),self.entry)
         with self.assertRaises(ValueError):public.select(self.config,self.plan,older,RELEASE,manual,self.entry['runner'],15,older)
         for key,value in [('GITHUB_EVENT_NAME','push'),('GITHUB_WORKFLOW_SHA',older),
             ('GITHUB_WORKFLOW_REF','example/game/.github/workflows/deploy.yml@refs/heads/main'),
+            ('GITHUB_WORKFLOW_REF','example/game/.github/workflows/production-verification.yml@refs/heads/main'),
             ('GITHUB_REPOSITORY','foreign/game')]:
             with self.subTest(key=key),self.assertRaisesRegex(ValueError,'current main payload'):
                 public.select(self.config,self.plan,SOURCE,RELEASE,{**manual,key:value},self.entry['runner'],15,older)

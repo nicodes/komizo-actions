@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 8ca9bf3e1f7bdec285df80c04aae2b996fc165171b78f4f40bc8c96724740330 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 480c5d69fe983034b71718f663209b541909822205bbd7de9ad75c6f6a581bff -->
 
 # Komizo Actions
 
@@ -32,7 +32,7 @@ Preview workflows separate trusted request planning, selected-source validation,
 
 For `pull_request_target`, job records identify the triggering PR head separately from the trusted main workflow. Adapters verify the authenticated run, attempt, event and jobs against that head. Publication and host authority retain the trusted workflow identity. Budgets remain bound to the selected job's original start time.
 
-`application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Automated public checks bind the exact current source and immutable release identity. A read-only manual `production-verification.yml` dispatch from the exact main workflow may select an explicit historical `expected-source`; product configuration cannot enable historical selection for automated delivery. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
+`application-readiness`, `health-check`, `godot-production` and reusable production workflows retain caller-owned assertions. Automated public checks bind the exact current source and immutable release identity. A read-only manual `verify-production.yml` dispatch from the exact main workflow may select an explicit historical `expected-source`; product configuration cannot enable historical selection for automated delivery. Paid checks require explicit default-off dispatch, their protected environment and declared budgets. Credentials enter only the selected execution step.
 
 Source and security audit workflows retain declared runners, deadlines, native assertions and reporting permissions. `recipe-setup` prepares the exact provider identities. `application-delivery` prepares a read-only delivery plan; the protected reusable workflow performs host effects.
 

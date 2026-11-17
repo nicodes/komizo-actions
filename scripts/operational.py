@@ -20,7 +20,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
 import recipe_context
 SHA=re.compile('[a-f0-9]{40}')
-WORKFLOWS={'backup':'backup.yml','recovery':'recovery.yml','security':'security-scan.yml','production':'production-verification.yml','paid':'production-verification.yml'}
+WORKFLOWS={'backup':'backup.yml','recovery':'verify-recovery.yml','security':'audit-security.yml','production':'verify-production.yml','paid':'verify-production.yml'}
 
 
 def capture(arguments,root=None,environment=None,timeout=30):

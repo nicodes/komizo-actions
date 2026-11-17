@@ -25,7 +25,7 @@ def manual_context(environment, source):
     return (re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repository) is not None
         and environment.get('GITHUB_EVENT_NAME')=='workflow_dispatch'
         and environment.get('GITHUB_WORKFLOW_SHA')==source
-        and environment.get('GITHUB_WORKFLOW_REF')==repository+'/.github/workflows/production-verification.yml@refs/heads/main')
+        and environment.get('GITHUB_WORKFLOW_REF')==repository+'/.github/workflows/verify-production.yml@refs/heads/main')
 
 
 def select(config, plan, source, release, environment, runner, timeout, expected_source=None):

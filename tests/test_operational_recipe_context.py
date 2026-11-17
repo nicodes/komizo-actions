@@ -51,7 +51,7 @@ class ExtractedRecipeAuthority(unittest.TestCase):
             'def parse_source_data(raw,maximum): return tomllib.loads(raw)\n')
         (modules/'operational_workflows.py').write_text('import tomllib\n'
             'def declaration(root,config): return tomllib.loads((root/"deploy/operations.toml").read_text())\n'
-            'def workflow_files(root,pin,config): return {".github/workflows/security-scan.yml":"canonical "+pin+"\\n"}\n'
+            'def workflow_files(root,pin,config): return {".github/workflows/audit-security.yml":"canonical "+pin+"\\n"}\n'
             'def step_timeouts(operation,record): return {"checks":3}\n')
         (modules/'delivery_workflows.py').write_text('import tomllib\n'
             'def declaration(root,config): return tomllib.loads((root/"deploy/delivery.toml").read_text())\n'
@@ -72,7 +72,7 @@ class ExtractedRecipeAuthority(unittest.TestCase):
             '[delivery]\ndefinition="deploy/delivery.toml"\n'
             '[operations]\ndefinition="deploy/operations.toml"\n')
         (self.app/'mise.toml').write_text('[vars]\ncookbook_ref="'+self.cookbook_ref+'"\n')
-        for name in ['security-scan','cd']:
+        for name in ['audit-security','deploy']:
             (self.app/'.github/workflows'/f'{name}.yml').write_text('canonical '+self.cookbook_ref+'\n')
         (self.app/'deploy/operations.toml').write_text('definition="deploy/operations.toml"\n'
             'project="application"\nkomizo_ref="'+self.actions_ref+'"\n'
@@ -100,7 +100,7 @@ source,cookie,tool,komizo,version=sys.argv[7:]
 operational.ROOT=actions
 env=dict(GITHUB_REPOSITORY='example/application',GITHUB_SHA=source,GITHUB_WORKFLOW_SHA=source,
  GITHUB_REF='refs/heads/main',GITHUB_EVENT_NAME='workflow_dispatch',GITHUB_RUN_ID='123',GITHUB_RUN_ATTEMPT='1',
- GITHUB_WORKFLOW_REF='example/application/.github/workflows/security-scan.yml@refs/heads/main',
+ GITHUB_WORKFLOW_REF='example/application/.github/workflows/audit-security.yml@refs/heads/main',
  GITHUB_EVENT_PATH=str(event),COOKBOOK_REF=cookie,TOOLS_REF='',KOMIZO_REF=komizo,
  DECLARATION='deploy/operations.toml',OPERATION_RUNNER='ubuntu-24.04',OPERATION_TIMEOUT='20',
  OPERATION_ENVIRONMENT='',OPERATION_REPORT_TIMEOUT='5',OPERATION_STEP_TIMEOUTS='{"checks":3}')

@@ -86,7 +86,7 @@ class OperationalAuthority(unittest.TestCase):
         self.event.write_text(json.dumps({'inputs': {'model_smoke': False}}))
         self.environment = dict(os.environ, GITHUB_REPOSITORY='owner/demo', GITHUB_SHA=self.revision,
             GITHUB_WORKFLOW_SHA=self.revision, GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
-            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/security-scan.yml@refs/heads/main',
+            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/audit-security.yml@refs/heads/main',
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_PATH=str(self.event),
             TOOLS_REF=tools_sha, KOMIZO_REF=actions_sha, DECLARATION='deploy/operations.toml',
             OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='', OPERATION_REPORT_TIMEOUT='5',
@@ -106,7 +106,7 @@ class OperationalAuthority(unittest.TestCase):
                                     environment or self.environment, lookup or self.lookup)
 
     def paid_environment(self):
-        return self.environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/production-verification.yml@refs/heads/main',
+        return self.environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/verify-production.yml@refs/heads/main',
             OPERATION_TIMEOUT='20', OPERATION_ENVIRONMENT='Production',
             OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('paid',self.data['paid'][0])))
 
@@ -114,6 +114,15 @@ class OperationalAuthority(unittest.TestCase):
         _, data, record = self.admit()
         self.assertEqual(data['project'], 'demo')
         self.assertEqual(record['report_timeout'], 5)
+
+    def test_retired_operational_caller_paths_refuse_before_any_effect(self):
+        for operation, filename in [('security', 'security-scan.yml'), ('recovery', 'recovery.yml'),
+                                    ('production', 'production-verification.yml'),
+                                    ('paid', 'production-verification.yml')]:
+            environment = self.environment | {
+                'GITHUB_WORKFLOW_REF': 'owner/demo/.github/workflows/' + filename + '@refs/heads/main'}
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, 'exact trusted-main workflow'):
+                self.admit(environment, operation=operation)
 
     def test_source_workflow_runner_budget_and_report_identity_refusals(self):
         for changes in [dict(GITHUB_REF='refs/heads/feature'), dict(GITHUB_SHA='f' * 40),
@@ -143,7 +152,7 @@ class OperationalAuthority(unittest.TestCase):
     def test_nonaccepted_sdk_and_changed_canonical_main_caller_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'accepted on main'):
             self.admit(lookup=lambda path: json.dumps({'status': 'diverged'}))
-        path = self.root / '.github/workflows/security-scan.yml'
+        path = self.root / '.github/workflows/audit-security.yml'
         path.write_text(path.read_text() + '# Changed source caller\n')
         self.git(self.root, 'add', '.')
         self.git(self.root, 'commit', '-qm', 'Change caller without its policy')
