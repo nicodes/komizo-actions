@@ -9,6 +9,7 @@ name: Build and test
   push:
     branches:
     - main
+  merge_group: null
   workflow_dispatch: null
 permissions:
   contents: read
@@ -22,8 +23,9 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
+        fetch-depth: 0
     - name: Set up development tools
-      uses: nicodes/tools/setup@71540eb673ebd47162de3b78bb6ffbf77605d2ab
+      uses: nicodes/tools/setup@48fb94fd811c3594489aa3af34f94903cfdb48f7
       env:
         GH_TOKEN: ${{ github.token }}
       timeout-minutes: 5
@@ -64,7 +66,7 @@ jobs:
       timeout-minutes: 1
       with:
         repository: nicodes/cookbook
-        ref: 0c2b3eae9744bb4d798297cb988ce934d9878086
+        ref: 878c66558effe5e0d6772873a96ed75a147ec525
         path: .artifacts/recipe-task-sdk
         fetch-depth: 1
         persist-credentials: false
@@ -73,7 +75,7 @@ jobs:
       timeout-minutes: 1
       with:
         repository: nicodes/tools
-        ref: 71540eb673ebd47162de3b78bb6ffbf77605d2ab
+        ref: 48fb94fd811c3594489aa3af34f94903cfdb48f7
         path: .artifacts/recipe-task-tools
         fetch-depth: 1
         persist-credentials: false
@@ -96,13 +98,51 @@ jobs:
       attestations: read
     env:
       MISE_GITHUB_TOKEN: ${{ github.token }}
+      REQUIRE_CLEAN_HISTORY: ${{ !github.event.repository.private }}
       RECIPE_LEGACY_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-legacy-test-sdk
       RECIPE_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-test-sdk
       RECIPE_CONTRACT_TEST_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
-      RECIPE_CONTRACT_TEST_SDK_REF: 0c2b3eae9744bb4d798297cb988ce934d9878086
+      RECIPE_CONTRACT_TEST_SDK_REF: 878c66558effe5e0d6772873a96ed75a147ec525
       RECIPE_SOURCE_SDK: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
       RECIPE_SOURCE_SDK_REF: 7873bb0fdae1726295dbf7f9317c58daa374b2a6
       RECIPE_TASK_SDK: ${{ github.workspace }}/.artifacts/recipe-task-sdk
-      RECIPE_TASK_SDK_REF: 0c2b3eae9744bb4d798297cb988ce934d9878086
+      RECIPE_TASK_SDK_REF: 878c66558effe5e0d6772873a96ed75a147ec525
       RECIPE_TASK_TOOLS: ${{ github.workspace }}/.artifacts/recipe-task-tools
       RECOVERY_TEST_TOOLS: ${{ github.workspace }}/.artifacts/recovery-transport-sdk
+
+  build-test:
+    name: Build and test
+    if: always()
+    needs: [ci]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+    - name: Require the complete current source validation
+      timeout-minutes: 1
+      env:
+        RESULTS: ${{ toJSON(needs) }}
+      run: |
+        python3 -I -B - <<'PYTHON'
+        import json
+        import os
+
+        raw = os.environ['RESULTS']
+        if len(raw.encode()) > 32768:
+            raise SystemExit('Source dependency results exceed their finite bound')
+        def unique(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError('Duplicate source dependency result field')
+                result[key] = value
+            return result
+        results = json.loads(raw, object_pairs_hook=unique)
+        if not isinstance(results, dict) or set(results) != {'ci'}:
+            raise SystemExit('Build and test requires the complete canonical dependency set')
+        test = results['ci']
+        if (not isinstance(test, dict) or set(test) != {'result', 'outputs'}
+                or not isinstance(test['outputs'], dict) or test['result'] != 'success'):
+            raise SystemExit('Incomplete current source validation')
+        print('Complete current source validation passed')
+        PYTHON

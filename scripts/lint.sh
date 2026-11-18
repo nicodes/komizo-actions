@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+REQUIRE_CLEAN_HISTORY="${REQUIRE_CLEAN_HISTORY:-true}" python3 "${TOOLS_ROOT:?Select the reviewed Tools source}/helpers/documentation-policy.py"
 actionlint
 mapfile -d '' -t scripts < <(git ls-files -z -- '*.sh')
 shellcheck "${scripts[@]}"

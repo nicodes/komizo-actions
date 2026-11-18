@@ -20,7 +20,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
 import recipe_context
 SHA=re.compile('[a-f0-9]{40}')
-WORKFLOWS={'backup':'backup.yml','recovery':'verify-recovery.yml','security':'audit-security.yml','production':'verify-production.yml','paid':'verify-production.yml'}
+WORKFLOWS={'backup':'backup.yml','recovery':'verify-recovery.yml','security':'maintenance.yml','production':'verify-production.yml','paid':'verify-production.yml'}
 
 
 def capture(arguments,root=None,environment=None,timeout=30):
@@ -122,9 +122,11 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
         raise ValueError('operational runner/deadline differs from native policy')
     if environment.get('OPERATION_ENVIRONMENT','')!=record.get('environment',''):
         raise ValueError('operational approval environment differs from native policy')
-    if operation in {'backup','security'} and environment.get('OPERATION_REPORT_TIMEOUT')!=str(record.get('report_timeout',5)):
+    if operation=='backup' and environment.get('OPERATION_REPORT_TIMEOUT')!=str(record.get('report_timeout',5)):
         raise ValueError('audit report deadline differs from native policy')
-    if json.loads(environment.get('OPERATION_STEP_TIMEOUTS','{}'))!=workflow.step_timeouts(operation,record):
+    expected_timeouts=workflow.step_timeouts(operation,record)
+    if operation=='security':expected_timeouts={name:value for name,value in expected_timeouts.items() if not name.startswith('report')}
+    if json.loads(environment.get('OPERATION_STEP_TIMEOUTS','{}'))!=expected_timeouts:
         raise ValueError('operational step deadlines differ from native policy')
     if operation in {'backup','production','paid'}:
         current=json.loads(lookup(f'repos/{repository}/git/ref/heads/main')).get('object',{}).get('sha')
@@ -232,6 +234,8 @@ def main():
     args=parser.parse_args()
     try:
         root=Path.cwd();environment=dict(os.environ);operation=environment['OPERATION']
+        if args.command=='report' and operation!='backup':
+            raise ValueError('operational reporting belongs only to native backup; audits use the failure reporter')
         if args.cookbook_root is not None or args.cookbook_ref is not None:
             if args.cookbook_root is None or args.cookbook_ref is None or args.tools is not None:
                 raise ValueError('select the complete Cookbook contract or the historical Tools SDK')

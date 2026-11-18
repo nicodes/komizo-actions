@@ -1,4 +1,4 @@
-name: Report
+name: Report failure
 'on':
   workflow_call:
     inputs:
@@ -8,75 +8,54 @@ name: Report
       komizo-ref:
         type: string
         required: true
-      validation:
+      runner:
         type: string
         required: true
-      publication:
-        type: string
-        required: true
-      deployment:
-        type: string
-        required: true
-      deployment-url:
-        type: string
-        required: true
-      revision:
-        type: string
-        default: ''
-      notify:
-        type: boolean
-        default: true
-      environment:
-        type: string
-        default: production
-      report-runner:
-        type: string
-        default: ubuntu-slim
-      report-timeout:
+      timeout-minutes:
         type: number
-        default: 10
-      report-step-timeouts:
+        required: true
+      step-timeouts:
         type: string
-        default: '{"checkout":10,"setup":5,"report":10}'
-      notify-runner:
-        type: string
-        default: ubuntu-slim
-      notify-timeout:
-        type: number
-        default: 2
-      notify-step-timeouts:
-        type: string
-        default: '{"checkout":2,"notify":1}'
-    secrets:
-      DISCORD_WEBHOOK_URL:
-        required: false
+        required: true
 permissions: {}
 jobs:
   report:
-    name: Report
-    if: inputs.validation == 'failure' || inputs.publication == 'failure' || inputs.deployment == 'failure'
-    runs-on: ${{ inputs.report-runner }}
-    timeout-minutes: ${{ inputs.report-timeout }}
+    name: Report failure
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
       contents: read
       issues: write
     steps:
     - name: Require one exact recipe source contract
-      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).setup }}
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup }}
       shell: bash
       env:
         COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+        KOMIZO_REF: ${{ inputs.komizo-ref }}
       run: |
         set -euo pipefail
-        [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ ]]
+        [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ && "$KOMIZO_REF" =~ ^[a-f0-9]{40}$ ]]
+        [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+        [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ && "$GITHUB_WORKFLOW_SHA" == "$GITHUB_SHA" ]]
+        [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+        [[ "$GITHUB_REF" == refs/heads/main ]]
+        [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+        case "$GITHUB_WORKFLOW_REF" in
+          "$GITHUB_REPOSITORY/.github/workflows/maintenance.yml@refs/heads/main")
+            [[ "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]] ;;
+          "$GITHUB_REPOSITORY/.github/workflows/deploy.yml@refs/heads/main")
+            [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == workflow_dispatch ]] ;;
+          *) exit 1 ;;
+        esac
     - name: Check out source
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).checkout }}
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
     - name: Bootstrap Python for protected SDK sources
-      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      if: ${{ runner.os == 'Windows' }}
       id: sdk-private-python
       timeout-minutes: 5
       uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -88,7 +67,7 @@ jobs:
         python-version: 3.13.11
         check-latest: false
     - name: Prepare the private artifact parent with actual pinned Python
-      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      if: ${{ runner.os == 'Windows' }}
       timeout-minutes: 1
       shell: bash
       env:
@@ -103,7 +82,7 @@ jobs:
         printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
     - name: Check out Cookbook
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).checkout }}
       with:
         repository: nicodes/cookbook
         ref: ${{ inputs.cookbook-ref }}
@@ -111,54 +90,22 @@ jobs:
         persist-credentials: false
     - name: Check out deployment actions
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).checkout }}
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).checkout }}
       with:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
         path: _delivery_actions
         persist-credentials: false
     - name: Prepare accepted recipe SDKs
-      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).setup }}
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup }}
       uses: ./_delivery_actions/recipe-setup
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
         tools: python
     - name: Report failure
-      timeout-minutes: ${{ fromJSON(inputs.report-step-timeouts).report }}
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).report }}
       env:
         GH_TOKEN: ${{ github.token }}
         COOKBOOK_REF: ${{ inputs.cookbook-ref }}
       run: |
-        tools=_delivery_cookbook
-        if [[ -n "$COOKBOOK_REF" ]]; then tools=.artifacts/recipe-sdks/_tools; fi
-        python3 -I -B "$tools/helpers/report-failure.py"
-  notify:
-    name: Notify
-    if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
-      || inputs.deployment == 'failure')
-    runs-on: ${{ inputs.notify-runner }}
-    timeout-minutes: ${{ inputs.notify-timeout }}
-    environment:
-      name: ${{ inputs.environment }}
-      deployment: false
-    permissions:
-      contents: read
-    steps:
-    - name: Check out deployment actions
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).checkout }}
-      with:
-        repository: nicodes/komizo-actions
-        ref: ${{ inputs.komizo-ref }}
-        path: _komizo
-        persist-credentials: false
-    - name: Notify
-      uses: ./_komizo/notify-discord
-      continue-on-error: true
-      timeout-minutes: ${{ fromJSON(inputs.notify-step-timeouts).notify }}
-      with:
-        webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        deployment-url: ${{ inputs.deployment-url }}
-        environment: ${{ inputs.environment }}
-        status: ${{ inputs.deployment == 'success' && 'success' || 'failure' }}
-        revision: ${{ inputs.revision || github.sha }}
+        python3 -I -B .artifacts/recipe-sdks/_tools/helpers/report-failure.py

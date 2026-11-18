@@ -24,21 +24,9 @@ name: Notify
       revision:
         type: string
         default: ''
-      notify:
-        type: boolean
-        default: true
       environment:
         type: string
         default: production
-      report-runner:
-        type: string
-        default: ubuntu-slim
-      report-timeout:
-        type: number
-        default: 10
-      report-step-timeouts:
-        type: string
-        default: '{"checkout":10,"setup":5,"report":10}'
       notify-runner:
         type: string
         default: ubuntu-slim
@@ -55,8 +43,8 @@ permissions: {}
 jobs:
   notify:
     name: Notify
-    if: inputs.notify && (inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
-      || inputs.deployment == 'failure')
+    if: inputs.deployment == 'success' || inputs.validation == 'failure' || inputs.publication == 'failure'
+      || inputs.deployment == 'failure'
     runs-on: ${{ inputs.notify-runner }}
     timeout-minutes: ${{ inputs.notify-timeout }}
     environment:

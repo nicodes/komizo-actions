@@ -30,14 +30,17 @@ def source_blocks():
 
 class SourcePreparationOrder(unittest.TestCase):
     def test_all_modern_C_checkouts_prepare_first_parent_before_checkout(self):
-        found=0;scripts=set()
+        found=set();scripts=set()
         for path,job,block in source_blocks():
             steps=block.get('steps',[])
             for index,checkout in enumerate(steps):
                 if '.artifacts/recipe-sdks/_cookbook' not in checkout.get('with',{}).get('path',''):
                     continue
                 with self.subTest(path=path.name,job=job):
-                    found+=1
+                    found.add((path.relative_to(ROOT).as_posix(),job))
+                    document=yaml.safe_load(path.read_text())
+                    inputs=document['inputs'] if job=='action' else document['on']['workflow_call']['inputs']
+                    self.assertTrue(inputs['cookbook-ref']['required'])
                     setup,parent=steps[index-2:index]
                     self.assertEqual([setup['name'],parent['name']],[BOOTSTRAP,PRIVATE])
                     self.assertEqual(setup['uses'],'actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405')
@@ -45,7 +48,6 @@ class SourcePreparationOrder(unittest.TestCase):
                     self.assertEqual(parent['env']['PRIVATE_PYTHON'],'${{ steps.sdk-private-python.outputs.python-path }}')
                     for step in [setup,parent]:
                         self.assertIn("runner.os == 'Windows'",step['if'])
-                        self.assertIn("inputs.cookbook-ref != ''",step['if'])
                         if checkout.get('if'):
                             condition=checkout['if'].removeprefix('${{').removesuffix('}}').strip()
                             self.assertIn(condition,step['if'])
@@ -65,7 +67,22 @@ class SourcePreparationOrder(unittest.TestCase):
                     script=ast.literal_eval(program.args[0])
                     self.assertEqual(hashlib.sha256(script.encode()).hexdigest(),SCRIPT_SHA256)
                     scripts.add(parent['run'])
-        self.assertGreaterEqual(found,15)
+        self.assertEqual(found, {
+            ('.github/workflows/audit-source.yml','verify'),
+            ('.github/workflows/audit-security.yml','verify'),
+            ('.github/workflows/backup.yml','backup'),
+            ('.github/workflows/backup.yml','report'),
+            ('.github/workflows/deploy.yml','deliver'),
+            ('.github/workflows/pr-preview.yml','effects'),
+            ('.github/workflows/publish-preview.yml','publish'),
+            ('.github/workflows/readiness.yml','verify'),
+            ('.github/workflows/report-failure.yml','report'),
+            ('.github/workflows/request-preview.yml','request'),
+            ('.github/workflows/verify-production.yml','verify'),
+            ('.github/workflows/verify-public-production.yml','verify'),
+            ('.github/workflows/verify-recovery.yml','verify'),
+            ('godot-production/action.yml','action'),
+        })
         self.assertEqual(len(scripts),1)
 
     def private_command(self):

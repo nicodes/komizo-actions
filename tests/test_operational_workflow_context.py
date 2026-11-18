@@ -1,5 +1,9 @@
 """Every public effect workflow selects the real Cookbook and its derived helpers."""
 from pathlib import Path
+import os
+import subprocess
+import json
+import tempfile
 import unittest
 import yaml
 
@@ -7,6 +11,84 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NativeWorkflowContext(unittest.TestCase):
+    def test_complete_result_refuses_failed_skipped_cancelled_or_missing_test(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/build-and-test.yml').read_text())
+        aggregate = workflow['jobs']['build-test']
+        self.assertEqual(aggregate['needs'], ['ci'])
+        self.assertEqual(aggregate['if'], 'always()')
+        guard = aggregate['steps'][0]['run']
+        def result(value):
+            # The aggregate runs without checking out the project or setting up Mise.
+            with tempfile.TemporaryDirectory() as directory:
+                return subprocess.run(['bash', '-euo', 'pipefail', '-c', guard], cwd=directory,
+                    env=dict(os.environ, RESULTS=json.dumps(value)), capture_output=True).returncode
+        passed = {'ci': {'result': 'success', 'outputs': {}}}
+        self.assertEqual(result(passed), 0)
+        for status in ['failure', 'skipped', 'cancelled', 'in_progress', '']:
+            with self.subTest(status=status):
+                self.assertNotEqual(result({'ci': {'result': status, 'outputs': {}}}), 0)
+        for value in [{}, {'other': passed['ci']}, passed | {'other': passed['ci']},
+                      {'ci': {'result': 'success'}}, {'ci': {'result': 'success', 'outputs': []}}]:
+            with self.subTest(value=value):
+                self.assertNotEqual(result(value), 0)
+
+    def test_provider_security_remains_manual_without_issue_or_host_authority(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/maintenance.yml').read_text())
+        self.assertEqual(set(workflow['on']), {'workflow_dispatch'})
+        self.assertEqual(workflow['jobs']['security']['permissions'],
+                         {'contents': 'read', 'attestations': 'read'})
+        self.assertEqual(workflow['jobs']['dependencies']['permissions'],
+                         {'contents': 'read', 'issues': 'write', 'attestations': 'read'})
+        self.assertNotIn('id-token', str(workflow['jobs']))
+
+    def test_audit_reporting_and_notification_keep_disjoint_authority(self):
+        workflows = ROOT / '.github/workflows'
+        for name in ['audit-source.yml', 'audit-security.yml']:
+            data = yaml.safe_load((workflows / name).read_text())
+            self.assertEqual(set(data['jobs']), {'verify'})
+            self.assertNotIn('issues', data['jobs']['verify']['permissions'])
+            self.assertNotIn('id-token', data['jobs']['verify']['permissions'])
+            self.assertNotIn('report-timeout', data['on']['workflow_call']['inputs'])
+            self.assertNotIn('DISCORD_WEBHOOK_URL', str(data))
+        report = yaml.safe_load((workflows / 'report-failure.yml').read_text())
+        self.assertEqual(set(report['jobs']), {'report'})
+        self.assertEqual(report['jobs']['report']['permissions'], {'contents': 'read', 'issues': 'write'})
+        self.assertNotIn('environment', report['jobs']['report'])
+        self.assertNotIn('secrets', report['on']['workflow_call'])
+        self.assertNotIn('OPERATION', str(report))
+        notify = yaml.safe_load((workflows / 'notify.yml').read_text())
+        self.assertEqual(notify['jobs']['notify']['permissions'], {'contents': 'read'})
+        self.assertFalse(set(notify['on']['workflow_call']['inputs']) &
+                         {'report-runner', 'report-timeout', 'report-step-timeouts', 'notify'})
+        for name in ['report.yml', 'audit-source-and-report.yml', 'audit-security-and-report.yml']:
+            self.assertFalse((workflows / name).exists())
+
+    def test_failure_report_refuses_foreign_source_and_untrusted_event_before_setup(self):
+        report = yaml.safe_load((ROOT / '.github/workflows/report-failure.yml').read_text())
+        guard = report['jobs']['report']['steps'][0]['run']
+        source = 'a' * 40
+        environment = dict(os.environ, COOKBOOK_REF='b' * 40, KOMIZO_REF='c' * 40,
+            GITHUB_REPOSITORY='owner/application', GITHUB_SHA=source, GITHUB_WORKFLOW_SHA=source,
+            GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_REF='refs/heads/main',
+            GITHUB_EVENT_NAME='schedule',
+            GITHUB_WORKFLOW_REF='owner/application/.github/workflows/maintenance.yml@refs/heads/main')
+        def run(changes):
+            return subprocess.run(['bash', '-euo', 'pipefail', '-c', guard],
+                                  env=environment | changes, capture_output=True).returncode
+        self.assertEqual(run({}), 0)
+        self.assertEqual(run({'GITHUB_EVENT_NAME': 'push',
+            'GITHUB_WORKFLOW_REF': 'owner/application/.github/workflows/deploy.yml@refs/heads/main'}), 0)
+        for changes in [{'COOKBOOK_REF': 'main'}, {'KOMIZO_REF': 'main'},
+            {'GITHUB_REPOSITORY': 'other'}, {'GITHUB_WORKFLOW_SHA': 'd' * 40},
+            {'GITHUB_RUN_ID': '0'}, {'GITHUB_RUN_ATTEMPT': '0'},
+            {'GITHUB_REF': 'refs/heads/feature'}, {'GITHUB_EVENT_NAME': 'push'}, {'GITHUB_EVENT_NAME': 'pull_request'},
+            {'GITHUB_EVENT_NAME': 'pull_request_target'},
+            {'GITHUB_WORKFLOW_REF': 'owner/application/.github/workflows/deploy.yml@refs/heads/main'},
+            {'GITHUB_WORKFLOW_REF': 'other/application/.github/workflows/maintenance.yml@refs/heads/main'},
+            {'GITHUB_WORKFLOW_REF': 'owner/application/.github/workflows/build-and-test.yml@refs/heads/main'}]:
+            with self.subTest(changes=changes):
+                self.assertNotEqual(run(changes), 0)
+
     def assert_environment_scope(self, workflow, name, job):
         effects = {('deploy.yml', 'deliver'): '${{ inputs.environment }}',
                    ('pr-preview.yml', 'effects'): 'Preview'}
@@ -38,8 +120,7 @@ class NativeWorkflowContext(unittest.TestCase):
             ('deploy.yml', 'deliver'), ('pr-preview.yml', 'effects'),
             ('backup.yml', 'backup'),
             ('notify.yml', 'notify'), ('request-preview.yml', 'request'),
-            ('verify-production.yml', 'verify'), ('verify-recovery.yml', 'verify'),
-            ('report.yml', 'notify')})
+            ('verify-production.yml', 'verify'), ('verify-recovery.yml', 'verify')})
 
     def test_operational_environment_contract_refuses_tracking_or_changed_secret_scope(self):
         for value in ['${{ inputs.environment }}',

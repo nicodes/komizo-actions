@@ -29,7 +29,10 @@ class WorkflowNames(unittest.TestCase):
         self.assertEqual(dependency['on']['workflow_run']['workflows'], [build['name']])
         self.assertEqual(policy['ci_workflow'], 'build-and-test.yml')
         self.assertEqual(policy['dispatch_workflow'], 'build-and-test.yml')
-        self.assertEqual(policy['required_checks'], [build['jobs'][policy['integration_job']]['name']])
+        aggregate = build['jobs']['build-test']
+        self.assertEqual(policy['required_checks'], [aggregate['name']])
+        self.assertIn(policy['integration_job'], aggregate['needs'])
+        self.assertEqual(build['jobs'][policy['integration_job']]['name'], 'Test')
 
 
 if __name__ == '__main__': unittest.main()

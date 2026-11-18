@@ -74,22 +74,20 @@ class RegistryReadAuthority(unittest.TestCase):
                         self.fail('invalid authority admitted')
                 temporary.assert_not_called()
 
-    def test_both_audit_workflows_prepare_podman_and_keep_credentials_in_the_deployed_step(self):
+    def test_deployed_audit_prepares_podman_and_keeps_credentials_in_the_deployed_step(self):
         workflows = Path(__file__).parents[1] / '.github/workflows'
-        for name in ['audit-security-and-report.yml', 'audit-security.yml']:
-            text = (workflows / name).read_text()
-            with self.subTest(workflow=name):
-                self.assertNotIn('docker/login-action', text)
-                self.assertIn('run: bash "$TOOLS_ROOT/helpers/ci-container-runtime.sh"', text)
-                before, deployed = text.split('    - name: Audit actual deployed runtime dependencies\n')
-                deployed = deployed.split('    - uses: actions/upload-artifact@')[0]
-                self.assertNotIn('REGISTRY_PASSWORD:', before)
-                self.assertIn('REGISTRY_USERNAME: ${{ github.repository_owner }}', deployed)
-                self.assertIn('REGISTRY_PASSWORD: ${{ github.token }}', deployed)
-                self.assertIn("timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).deployed }}", deployed)
-                self.assertIn('path: .artifacts/security-reader-tools', before)
-                self.assertIn('ref: ${{ steps.activation-reader.outputs.revision }}', before)
-                self.assertIn('--activation-reader-root .artifacts/security-reader-tools', deployed)
+        text = (workflows / 'audit-security.yml').read_text()
+        self.assertNotIn('docker/login-action', text)
+        self.assertIn('run: bash "$TOOLS_ROOT/helpers/ci-container-runtime.sh"', text)
+        before, deployed = text.split('    - name: Audit actual deployed runtime dependencies\n')
+        deployed = deployed.split('    - uses: actions/upload-artifact@')[0]
+        self.assertNotIn('REGISTRY_PASSWORD:', before)
+        self.assertIn('REGISTRY_USERNAME: ${{ github.repository_owner }}', deployed)
+        self.assertIn('REGISTRY_PASSWORD: ${{ github.token }}', deployed)
+        self.assertIn("timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).deployed }}", deployed)
+        self.assertIn('path: .artifacts/security-reader-tools', before)
+        self.assertIn('ref: ${{ steps.activation-reader.outputs.revision }}', before)
+        self.assertIn('--activation-reader-root .artifacts/security-reader-tools', deployed)
 
 
 class DeployedDependencies(unittest.TestCase):

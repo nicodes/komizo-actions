@@ -30,9 +30,6 @@ name: Audit security
       check:
         type: string
         required: true
-      report-timeout:
-        type: number
-        required: true
 permissions: {}
 jobs:
   verify:
@@ -55,7 +52,6 @@ jobs:
       OPERATION_TIMEOUT: ${{ inputs['timeout-minutes'] }}
       OPERATION_STEP_TIMEOUTS: ${{ inputs['step-timeouts'] }}
       OPERATION_ENVIRONMENT: ${{ inputs.environment }}
-      OPERATION_REPORT_TIMEOUT: ${{ inputs['report-timeout'] }}
       GH_TOKEN: ${{ github.token }}
       PYTHONDONTWRITEBYTECODE: '1'
       MISE_AUTO_INSTALL: 'false'

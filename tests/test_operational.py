@@ -86,11 +86,11 @@ class OperationalAuthority(unittest.TestCase):
         self.event.write_text(json.dumps({'inputs': {'model_smoke': False}}))
         self.environment = dict(os.environ, GITHUB_REPOSITORY='owner/demo', GITHUB_SHA=self.revision,
             GITHUB_WORKFLOW_SHA=self.revision, GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
-            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/audit-security.yml@refs/heads/main',
+            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/maintenance.yml@refs/heads/main',
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_PATH=str(self.event),
             TOOLS_REF=tools_sha, KOMIZO_REF=actions_sha, DECLARATION='deploy/operations.toml',
-            OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='', OPERATION_REPORT_TIMEOUT='5',
-            OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('security',self.data['security'])))
+            OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='',
+            OPERATION_STEP_TIMEOUTS=json.dumps({key:value for key,value in workflows.step_timeouts('security',self.data['security']).items() if not key.startswith('report')}))
 
     def lookup(self, path):
         if '/compare/' in path:
@@ -116,7 +116,7 @@ class OperationalAuthority(unittest.TestCase):
         self.assertEqual(record['report_timeout'], 5)
 
     def test_retired_operational_caller_paths_refuse_before_any_effect(self):
-        for operation, filename in [('security', 'security-scan.yml'), ('recovery', 'recovery.yml'),
+        for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'), ('recovery', 'recovery.yml'),
                                     ('production', 'production-verification.yml'),
                                     ('paid', 'production-verification.yml')]:
             environment = self.environment | {
@@ -124,12 +124,12 @@ class OperationalAuthority(unittest.TestCase):
             with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, 'exact trusted-main workflow'):
                 self.admit(environment, operation=operation)
 
-    def test_source_workflow_runner_budget_and_report_identity_refusals(self):
+    def test_source_workflow_runner_budget_and_policy_identity_refusals(self):
         for changes in [dict(GITHUB_REF='refs/heads/feature'), dict(GITHUB_SHA='f' * 40),
                         dict(GITHUB_WORKFLOW_SHA='f' * 40), dict(GITHUB_EVENT_NAME='pull_request'),
                         dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/build-and-test.yml@refs/heads/main'),
                         dict(GITHUB_RUN_ATTEMPT='0'), dict(OPERATION_RUNNER='ubuntu-22.04'),
-                        dict(OPERATION_TIMEOUT='111'), dict(OPERATION_REPORT_TIMEOUT='11'), dict(OPERATION_STEP_TIMEOUTS='{}'),
+                        dict(OPERATION_TIMEOUT='111'), dict(OPERATION_STEP_TIMEOUTS='{}'),
                         dict(OPERATION_ENVIRONMENT='Production'), dict(DECLARATION='deploy/other.json'),
                         dict(TOOLS_REF='main')]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
@@ -152,7 +152,7 @@ class OperationalAuthority(unittest.TestCase):
     def test_nonaccepted_sdk_and_changed_canonical_main_caller_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'accepted on main'):
             self.admit(lookup=lambda path: json.dumps({'status': 'diverged'}))
-        path = self.root / '.github/workflows/audit-security.yml'
+        path = self.root / '.github/workflows/maintenance.yml'
         path.write_text(path.read_text() + '# Changed source caller\n')
         self.git(self.root, 'add', '.')
         self.git(self.root, 'commit', '-qm', 'Change caller without its policy')
@@ -226,7 +226,7 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_every_leaf_prepares_its_parser_before_admission_and_keeps_credentials_late(self):
         root = Path(__file__).parents[1] / '.github/workflows'
-        for name in ['backup', 'verify-recovery', 'audit-security-and-report', 'verify-production', 'verify-public-production']:
+        for name in ['backup', 'verify-recovery', 'audit-security', 'verify-production', 'verify-public-production']:
             text = (root / (name + '.yml')).read_text()
             with self.subTest(workflow=name):
                 self.assertLess(text.index('Prepare accepted recipe SDKs'), text.index('Admit exact trusted main'))
@@ -266,6 +266,15 @@ class OperationalAuthority(unittest.TestCase):
             driver.prepare(self.root, self.tools, config, record, 'production', self.environment)
             self.assertIn('--only-shell', calls[-1])
 
+    def test_retired_operational_audit_report_refuses_before_any_sdk_or_issue_effect(self):
+        with patch.dict(os.environ, {'OPERATION':'security'}, clear=True), \
+                patch.object(driver,'authority') as authority, patch.object(driver,'execute') as execute, \
+                patch.object(sys,'argv',['operational.py','report']):
+            with self.assertRaises(SystemExit):
+                driver.main()
+            authority.assert_not_called()
+            execute.assert_not_called()
+
     def test_source_and_deployed_audits_have_separate_explicit_execution_phases(self):
         effects=[]
         deployed=SimpleNamespace(scan=lambda *args,**kwargs:effects.append('deployed'),
@@ -290,7 +299,7 @@ class OperationalAuthority(unittest.TestCase):
                     '--activation-reader-root',str(self.root/'reader-tools')]):
                 driver.main()
             self.assertEqual(effects,['deployed'])
-        text=(Path(__file__).parents[1]/'.github/workflows/audit-security-and-report.yml').read_text()
+        text=(Path(__file__).parents[1]/'.github/workflows/audit-security.yml').read_text()
         self.assertIn("fromJSON(inputs['step-timeouts']).source",text)
         self.assertIn("fromJSON(inputs['step-timeouts']).deployed",text)
 
