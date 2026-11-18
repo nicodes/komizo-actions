@@ -11,6 +11,9 @@ name: Request preview
       declaration:
         type: string
         required: true
+      runner:
+        type: string
+        default: ubuntu-24.04
     secrets:
       deploy-key:
         required: true
@@ -38,7 +41,7 @@ jobs:
     environment:
       name: Preview
       deployment: false
-    runs-on: ubuntu-slim
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 3
     permissions:
       contents: read
