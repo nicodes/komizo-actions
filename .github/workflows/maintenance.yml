@@ -1,0 +1,62 @@
+name: Maintenance
+'on':
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Maintenance task to run
+        type: choice
+        required: true
+        default: dependencies
+        options: [dependencies, security]
+permissions: {}
+concurrency:
+  group: maintenance-${{ inputs.task }}
+  cancel-in-progress: false
+jobs:
+  security:
+    name: Scan dependencies
+    if: github.ref == 'refs/heads/main' && inputs.task == 'security'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Set up development tools
+      uses: nicodes/tools/setup@48fb94fd811c3594489aa3af34f94903cfdb48f7
+      env:
+        GH_TOKEN: ${{ github.token }}
+      timeout-minutes: 5
+    - name: Security scan
+      run: mise run security-scan
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      MISE_GITHUB_TOKEN: ${{ github.token }}
+  dependencies:
+    name: Check dependencies
+    if: github.ref == 'refs/heads/main' && inputs.task == 'dependencies'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Set up development tools
+      uses: nicodes/tools/setup@48fb94fd811c3594489aa3af34f94903cfdb48f7
+      env:
+        GH_TOKEN: ${{ github.token }}
+      timeout-minutes: 5
+    - name: Dependency maintenance
+      run: mise run dependency-maintenance
+      env:
+        GH_TOKEN: ${{ github.token }}
+    permissions:
+      contents: read
+      issues: write
+      attestations: read
+    env:
+      MISE_GITHUB_TOKEN: ${{ github.token }}
