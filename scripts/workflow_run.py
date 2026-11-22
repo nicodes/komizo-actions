@@ -8,14 +8,14 @@ import submission
 SHA = re.compile(r'[a-f0-9]{40}\Z')
 
 
-def read_event(environment):
-    path = Path(environment['GITHUB_EVENT_PATH'])
+def read_event(environment, maximum=4 << 20):
+    path = Path(environment.get('GITHUB_EVENT_PATH', ''))
     if path.is_symlink() or not path.is_file():
         raise ValueError('workflow event must be bounded runner metadata')
     with path.open('rb') as stream:
-        raw = stream.read((4 << 20) + 1)
-    if len(raw) > 4 << 20:
-        raise ValueError('workflow event exceeds its bound')
+        raw = stream.read(maximum + 1)
+    if len(raw) > maximum:
+        raise ValueError('workflow event must be bounded runner metadata')
     return json.loads(raw)
 
 

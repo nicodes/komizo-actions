@@ -157,18 +157,20 @@ jobs:
         KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
         KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
     - name: Capture encrypted backup
-      uses: ./_delivery_actions/application-backup-export
+      uses: ./_delivery_actions/backup-transfer
       id: backup
       if: steps.plan.outputs.backup != ''
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).capture }}
       with:
+        mode: export
         project: ${{ inputs.project }}
         config: ${{ steps.plan.outputs.backup }}
     - name: Upload encrypted backup
-      uses: ./_delivery_actions/application-backup-upload
+      uses: ./_delivery_actions/backup-transfer
       if: steps.backup.outputs.has-export == 'true' && steps.plan.outputs.upload == 'true'
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).upload }}
       with:
+        mode: upload
         project: ${{ inputs.project }}
       env:
         BACKUP_ALLOWED_SLUGS: ${{ steps.plan.outputs.allowed-products }}

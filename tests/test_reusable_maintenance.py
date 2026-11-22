@@ -33,8 +33,8 @@ class NativeMaintenance(unittest.TestCase):
         self.assertEqual(len(connect), 1); self.assertNotIn('user', connect[0].get('with', {}))
         for step in job['steps']:
             if any(key.startswith('BACKUP_S3_') for key in step.get('env', {})):
-                self.assertIn('backup.py upload', step.get('run', ''))
-                self.assertNotIn('backup.py export', step.get('run', ''))
+                self.assertTrue(step.get('uses', '').endswith('/backup-transfer'))
+                self.assertEqual(step['with']['mode'], 'upload')
 
     def test_delivery_retains_runner_storage_scope_and_immutable_ciphertext_artifact(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/deploy.yml').read_text())
@@ -42,7 +42,8 @@ class NativeMaintenance(unittest.TestCase):
         for step in job['steps']:
             values = step.get('env', {})
             if any(key.startswith('BACKUP_S3_') for key in values):
-                self.assertTrue(step.get('uses', '').endswith('/application-backup-upload'))
+                self.assertTrue(step.get('uses', '').endswith('/backup-transfer'))
+                self.assertEqual(step['with']['mode'], 'upload')
                 self.assertEqual(values['BACKUP_ALLOWED_SLUGS'], '${{ steps.plan.outputs.allowed-products }}')
         retained = [step for step in job['steps'] if step.get('uses', '').startswith('actions/upload-artifact@')]
         self.assertEqual(len(retained), 3)

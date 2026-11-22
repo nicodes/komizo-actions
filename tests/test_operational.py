@@ -79,11 +79,13 @@ class OperationalAuthority(unittest.TestCase):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
+        self.deploy = 'name: Deploy\n'
+        (self.root / '.github/workflows/deploy.yml').write_text(self.deploy)
         self.git(self.root, 'add', '.')
         self.git(self.root, 'commit', '-qm', 'Native operational policy')
         self.revision = self.git(self.root, 'rev-parse', 'HEAD')
         self.event = self.directory / 'event.json'
-        self.event.write_text(json.dumps({'inputs': {'model_smoke': False}}))
+        self.event.write_text(json.dumps({'inputs': {'mode': 'verify', 'model_smoke': False}}))
         self.environment = dict(os.environ, GITHUB_REPOSITORY='owner/demo', GITHUB_SHA=self.revision,
             GITHUB_WORKFLOW_SHA=self.revision, GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
             GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/maintenance.yml@refs/heads/main',
@@ -97,16 +99,28 @@ class OperationalAuthority(unittest.TestCase):
             return json.dumps({'status': 'identical'})
         if '/git/ref/heads/main' in path:
             return json.dumps({'object': {'sha': self.revision}})
-        return json.dumps({'workflow_runs': [dict(head_sha=self.revision, head_branch='main', conclusion='success',
+        if '/attempts/1/jobs' in path:
+            return json.dumps({'total_count': 1, 'jobs': [dict(name='Deploy / Deploy', status='completed', conclusion='success',
+                run_id=1234, run_attempt=1, head_sha=self.revision)]})
+        return json.dumps({'workflow_runs': [dict(id=1234, head_sha=self.revision, head_branch='main', conclusion='success',
             path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=1)]})
 
     def admit(self, environment=None, operation='security', selected='', lookup=None):
-        with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(workflows, None, None)):
+        def module(name):
+            if name == 'operational_workflows':
+                return workflows
+            if name == 'generate':
+                return SimpleNamespace(workflow_files=lambda *_: {'.github/workflows/deploy.yml': self.deploy})
+            return SimpleNamespace()
+        context = SimpleNamespace(tools_revision=self.environment['TOOLS_REF'], module=module)
+        with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(workflows, None, None)), \
+                patch.object(driver.recipe_context, 'accepted_context', return_value=context):
             return driver.authority(self.root, self.tools, operation, selected,
                                     environment or self.environment, lookup or self.lookup)
 
     def paid_environment(self):
-        return self.environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/verify-production.yml@refs/heads/main',
+        return self.environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main',
+            COOKBOOK_REF='a' * 40,
             OPERATION_TIMEOUT='20', OPERATION_ENVIRONMENT='Production',
             OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('paid',self.data['paid'][0])))
 
@@ -116,9 +130,9 @@ class OperationalAuthority(unittest.TestCase):
         self.assertEqual(record['report_timeout'], 5)
 
     def test_retired_operational_caller_paths_refuse_before_any_effect(self):
-        for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'), ('recovery', 'recovery.yml'),
-                                    ('production', 'production-verification.yml'),
-                                    ('paid', 'production-verification.yml')]:
+        for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'),
+                                    ('recovery', 'verify-recovery.yml'), ('production', 'verify-production.yml'),
+                                    ('paid', 'verify-production.yml')]:
             environment = self.environment | {
                 'GITHUB_WORKFLOW_REF': 'owner/demo/.github/workflows/' + filename + '@refs/heads/main'}
             with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, 'exact trusted-main workflow'):
@@ -165,7 +179,10 @@ class OperationalAuthority(unittest.TestCase):
         environment = self.paid_environment()
         with self.assertRaisesRegex(ValueError, 'explicitly requested'):
             self.admit(environment, 'paid', 'model_smoke')
-        self.event.write_text(json.dumps({'inputs': {'model_smoke': True}}))
+        self.event.write_text(json.dumps({'inputs': {'mode': 'deploy', 'model_smoke': True}}))
+        with self.assertRaisesRegex(ValueError, 'explicit Deploy verify mode'):
+            self.admit(environment, 'paid', 'model_smoke')
+        self.event.write_text(json.dumps({'inputs': {'mode': 'verify', 'model_smoke': True}}))
         self.admit(environment, 'paid', 'model_smoke')
         with self.assertRaisesRegex(ValueError, 'manual dispatch'):
             self.admit(environment | dict(GITHUB_EVENT_NAME='schedule'), 'paid', 'model_smoke')
@@ -179,6 +196,14 @@ class OperationalAuthority(unittest.TestCase):
                 return json.dumps(value)
             with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'successful deployment'):
                 self.admit(environment, 'paid', 'model_smoke', lookup)
+        for changes in [dict(conclusion='skipped'), dict(run_attempt=2), dict(head_sha='f' * 40)]:
+            def lookup(path):
+                value = json.loads(self.lookup(path))
+                if 'jobs' in value:
+                    value['jobs'][0].update(changes)
+                return json.dumps(value)
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'successful deployment'):
+                self.admit(environment, 'paid', 'model_smoke', lookup)
 
     def test_oversized_or_linked_event_metadata_and_old_main_refuse_paid_effects(self):
         environment = self.paid_environment()
@@ -187,7 +212,7 @@ class OperationalAuthority(unittest.TestCase):
             self.admit(environment, 'paid', 'model_smoke')
         self.event.unlink()
         target = self.directory / 'actual-event.json'
-        target.write_text(json.dumps({'inputs': {'model_smoke': True}}))
+        target.write_text(json.dumps({'inputs': {'mode': 'verify', 'model_smoke': True}}))
         self.event.symlink_to(target)
         with self.assertRaisesRegex(ValueError, 'bounded'):
             self.admit(environment, 'paid', 'model_smoke')

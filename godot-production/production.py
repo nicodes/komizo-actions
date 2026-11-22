@@ -12,6 +12,7 @@ import tempfile
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import recipe_context
+from workflow_run import read_event
 
 
 def literal_sha(value):
@@ -22,16 +23,25 @@ def literal_sha(value):
 
 def manual_context(environment, source):
     repository=environment.get('GITHUB_REPOSITORY','')
-    return (re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repository) is not None
+    if (re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repository) is not None
         and environment.get('GITHUB_EVENT_NAME')=='workflow_dispatch'
         and environment.get('GITHUB_WORKFLOW_SHA')==source
-        and environment.get('GITHUB_WORKFLOW_REF')==repository+'/.github/workflows/verify-production.yml@refs/heads/main')
+        and environment.get('GITHUB_WORKFLOW_REF')==repository+'/.github/workflows/deploy.yml@refs/heads/main'):
+        event=read_event(environment, maximum=1 << 20)
+        inputs=event.get('inputs') if isinstance(event,dict) else None
+        if isinstance(inputs,dict) and inputs.get('mode')=='verify':
+            return inputs
+    return None
 
 
 def select(config, plan, source, release, environment, runner, timeout, expected_source=None):
     literal_sha(source)
-    expected_source=literal_sha(expected_source or source)
-    if expected_source!=source and not manual_context(environment,source):
+    manual=manual_context(environment,source)
+    if manual is not None:
+        if expected_source!=manual.get('source_commit') or release!=manual.get('release_id'):
+            raise ValueError('manual verification requires the exact dispatched source and release')
+        literal_sha(expected_source)
+    elif literal_sha(expected_source or source)!=source:
         raise ValueError('this native public workflow requires the current main payload')
     if (environment.get('GITHUB_REF')!='refs/heads/main' or source!=environment.get('GITHUB_SHA')
             or environment.get('GITHUB_EVENT_NAME') not in {'push','workflow_dispatch'}):
