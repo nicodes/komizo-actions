@@ -11,7 +11,7 @@ inputs:
     description: Exact verified ordinary payload identity
     required: true
   expected-source:
-    description: Expected deployed source for the read-only verify-production.yml manual workflow
+    description: Expected deployed source for the read-only Deploy verify mode
     required: false
     default: ''
   runner:

@@ -19,8 +19,9 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
 import recipe_context
+from workflow_run import read_event
 SHA=re.compile('[a-f0-9]{40}')
-WORKFLOWS={'backup':'backup.yml','recovery':'verify-recovery.yml','security':'maintenance.yml','production':'verify-production.yml','paid':'verify-production.yml'}
+WORKFLOWS={'backup':'backup.yml','recovery':'recovery.yml','security':'maintenance.yml','production':'deploy.yml','paid':'deploy.yml'}
 
 
 def capture(arguments,root=None,environment=None,timeout=30):
@@ -66,6 +67,30 @@ def runtime_environment(root,tools,environment,context=None):
     return values
 
 
+def successful_deployment(repository, revision, lookup):
+    endpoint = f'repos/{repository}/actions'
+    runs = json.loads(lookup(f'{endpoint}/workflows/deploy.yml/runs?head_sha={revision}&status=success&per_page=100'))
+    for run in runs['workflow_runs']:
+        run_id, attempt = run.get('id'), run.get('run_attempt')
+        if (type(run_id) is not int or run_id <= 0 or type(attempt) is not int or attempt <= 0
+                or run.get('head_sha') != revision or run.get('head_branch') != 'main'
+                or run.get('conclusion') != 'success' or run.get('path') != '.github/workflows/deploy.yml'
+                or run.get('event') not in {'push', 'workflow_dispatch'}):
+            continue
+        jobs = json.loads(lookup(f'{endpoint}/runs/{run_id}/attempts/{attempt}/jobs?per_page=100'))
+        rows = jobs.get('jobs')
+        if not isinstance(rows, list) or type(jobs.get('total_count')) is not int or jobs['total_count'] != len(rows):
+            raise ValueError('complete deployment job records are required')
+        deployment = [job for job in rows if job.get('name') == 'Deploy / Deploy']
+        if len(deployment) != 1:
+            continue
+        job = deployment[0]
+        if (job.get('status') == 'completed' and job.get('conclusion') == 'success'
+                and job.get('run_id') == run_id and job.get('run_attempt') == attempt and job.get('head_sha') == revision):
+            return True
+    return False
+
+
 def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_tools=None,return_context=False):
     lookup=lookup or (lambda path:capture(['gh','api',path]))
     repository=environment.get('GITHUB_REPOSITORY','')
@@ -109,13 +134,21 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
     if record is None:raise ValueError('this operational role has no actual native implementation')
     if operation=='production' and selected and not any(item['id']==selected and item.get('inline') for item in data.get('paid',[])):
         raise ValueError('ordinary production may select only its original inline paid assertion')
-    if operation=='paid':
-        path=Path(environment['GITHUB_EVENT_PATH'])
-        if path.is_symlink() or not path.is_file() or path.stat().st_size>1048576:raise ValueError('paid dispatch metadata must be bounded')
-        event=json.loads(path.read_text())
-        if not isinstance(event,dict) or not isinstance(event.get('inputs',{}),dict):raise ValueError('paid dispatch metadata is invalid')
-        if event.get('inputs',{}).get(selected) not in (True,'true'):raise ValueError('paid native check was not explicitly requested')
-    expected=workflow.workflow_files(root,cookbook_ref if context else revisions['tools'],config)
+    if operation in {'production','paid'}:
+        if context is None:
+            raise ValueError('Deploy verification requires the accepted Cookbook source')
+        event=read_event(environment, maximum=1 << 20)
+        if not isinstance(event,dict) or not isinstance(event.get('inputs',{}),dict):raise ValueError('verify dispatch metadata is invalid')
+        inputs=event.get('inputs',{})
+        if environment['GITHUB_EVENT_NAME']=='workflow_dispatch' and inputs.get('mode')!='verify':
+            raise ValueError('production assertions require explicit Deploy verify mode')
+        if environment['GITHUB_EVENT_NAME']=='schedule' and event.get('schedule') not in record.get('schedule',[]):
+            raise ValueError('production assertion schedule differs from its native policy')
+        if operation=='paid' and inputs.get(selected) not in (True,'true'):
+            raise ValueError('paid native check was not explicitly requested')
+        expected=context.module('generate').workflow_files(root,cookbook_ref,config)
+    else:
+        expected=workflow.workflow_files(root,cookbook_ref if context else revisions['tools'],config)
     path='.github/workflows/'+WORKFLOWS[operation]
     if (root/path).read_text()!=expected[path]:raise ValueError('operational caller differs from its canonical authority contract')
     if environment.get('OPERATION_RUNNER')!=record['runner'] or environment.get('OPERATION_TIMEOUT')!=str(record['timeout_minutes']):
@@ -131,12 +164,8 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
     if operation in {'backup','production','paid'}:
         current=json.loads(lookup(f'repos/{repository}/git/ref/heads/main')).get('object',{}).get('sha')
         if current!=revision:raise ValueError('operational source is no longer current main')
-    if operation=='paid' and record.get('deployment_required'):
-        runs=json.loads(lookup(f'repos/{repository}/actions/workflows/deploy.yml/runs?head_sha={revision}&status=success&per_page=100'))
-        if not any(value.get('head_sha')==revision and value.get('head_branch')=='main' and value.get('conclusion')=='success'
-                and value.get('path')=='.github/workflows/deploy.yml' and value.get('event') in {'push','workflow_dispatch'}
-                and type(value.get('run_attempt')) is int and value['run_attempt']>0 for value in runs.get('workflow_runs',[])):
-            raise ValueError('paid production check requires a successful deployment of this exact revision')
+    if operation=='paid' and record.get('deployment_required') and not successful_deployment(repository,revision,lookup):
+        raise ValueError('paid production check requires a successful deployment of this exact revision')
     result=(config,data,record)
     return (*result,context) if return_context else result
 

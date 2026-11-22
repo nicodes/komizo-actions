@@ -2,6 +2,7 @@
 import copy
 from contextlib import chdir
 import importlib.util
+import json
 import os
 from pathlib import Path
 import socket
@@ -38,16 +39,26 @@ class PublicVerification(unittest.TestCase):
         older='c'*40
         with self.assertRaisesRegex(ValueError,'current main payload'):
             public.select(self.config,self.plan,SOURCE,RELEASE,self.env,self.entry['runner'],15,older)
+        temporary=tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        event=Path(temporary.name)/'event.json'
+        inputs={'mode':'verify','source_commit':older,'release_id':RELEASE}
+        event.write_text(json.dumps({'inputs':inputs}))
         manual={**self.env,'GITHUB_REPOSITORY':'example/game','GITHUB_WORKFLOW_SHA':SOURCE,
-            'GITHUB_WORKFLOW_REF':'example/game/.github/workflows/verify-production.yml@refs/heads/main'}
+            'GITHUB_EVENT_PATH':str(event),'GITHUB_WORKFLOW_REF':'example/game/.github/workflows/deploy.yml@refs/heads/main'}
         self.assertEqual(public.select(self.config,self.plan,SOURCE,RELEASE,manual,self.entry['runner'],15,older),self.entry)
         with self.assertRaises(ValueError):public.select(self.config,self.plan,older,RELEASE,manual,self.entry['runner'],15,older)
+        with self.assertRaisesRegex(ValueError,'exact dispatched source and release'):
+            public.select(self.config,self.plan,SOURCE,'d'*64,manual,self.entry['runner'],15,older)
         for key,value in [('GITHUB_EVENT_NAME','push'),('GITHUB_WORKFLOW_SHA',older),
-            ('GITHUB_WORKFLOW_REF','example/game/.github/workflows/deploy.yml@refs/heads/main'),
+            ('GITHUB_WORKFLOW_REF','example/game/.github/workflows/verify-production.yml@refs/heads/main'),
             ('GITHUB_WORKFLOW_REF','example/game/.github/workflows/production-verification.yml@refs/heads/main'),
             ('GITHUB_REPOSITORY','foreign/game')]:
             with self.subTest(key=key),self.assertRaisesRegex(ValueError,'current main payload'):
                 public.select(self.config,self.plan,SOURCE,RELEASE,{**manual,key:value},self.entry['runner'],15,older)
+        event.write_text(json.dumps({'inputs':inputs|{'mode':'deploy'}}))
+        with self.assertRaisesRegex(ValueError,'current main payload'):
+            public.select(self.config,self.plan,SOURCE,RELEASE,manual,self.entry['runner'],15,older)
 
     def test_coverage_cannot_invent_browsers_unknown_programs_or_generic_commands(self):
         for change in ['matrix','display','program','arguments','role','packages','duplicate']:
