@@ -158,7 +158,8 @@ class NativeWorkflowContext(unittest.TestCase):
         steps = delivery['steps']
         authorizer = next(i for i, step in enumerate(steps) if 'scripts/authorize.py' in step.get('run', ''))
         deploy = next(i for i, step in enumerate(steps) if step.get('uses', '').endswith('/deploy'))
-        backup = next(i for i, step in enumerate(steps) if step.get('uses', '').endswith('/application-backup-export'))
+        backup = next(i for i, step in enumerate(steps) if step.get('uses', '').endswith('/backup-transfer')
+                      and step['with']['mode'] == 'export')
         self.assertLess(backup, authorizer); self.assertLess(authorizer, deploy)
         self.assertNotIn('KOMIZO_SECRET_', str(delivery))
         self.assertFalse(any(step.get('uses', '').endswith('/application-readiness') for step in steps))

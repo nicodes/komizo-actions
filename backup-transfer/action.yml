@@ -1,0 +1,38 @@
+name: Transfer backup
+description: Capture or transfer the verified encrypted backup under the caller's operation budget
+inputs:
+  mode:
+    description: Export the host snapshot or upload the verified encrypted pair
+    required: true
+  project:
+    description: Native project owning the encrypted backup
+    required: true
+  config:
+    description: Admitted tracked backup declaration for export
+    default: ''
+outputs:
+  has-export:
+    description: Verified encrypted pair is available for runner transport
+    value: ${{ steps.transfer.outputs.has-export }}
+  capture-status:
+    description: Ready encrypted pair, proven absent instance, or observed stopped intent
+    value: ${{ steps.transfer.outputs.capture-status }}
+runs:
+  using: composite
+  steps:
+    - id: transfer
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        PROJECT: ${{ inputs.project }}
+        BACKUP_CONFIG: ${{ inputs.config }}
+        TOOLS_ROOT: ${{ env.TOOLS_ROOT }}
+      run: |
+        set -euo pipefail
+        args=()
+        case "$MODE" in
+          export) [[ -n "$BACKUP_CONFIG" ]]; args=(--config "$BACKUP_CONFIG") ;;
+          upload) [[ -z "$BACKUP_CONFIG" ]] ;;
+          *) echo 'Select export or upload for backup transfer' >&2; exit 1 ;;
+        esac
+        exec python3 -I -B "$GITHUB_ACTION_PATH/../scripts/backup.py" "$MODE" --project "$PROJECT" "${args[@]}"
