@@ -88,7 +88,7 @@ class OperationalAuthority(unittest.TestCase):
         self.event.write_text(json.dumps({'inputs': {'mode': 'verify', 'model_smoke': False}}))
         self.environment = dict(os.environ, GITHUB_REPOSITORY='owner/demo', GITHUB_SHA=self.revision,
             GITHUB_WORKFLOW_SHA=self.revision, GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
-            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/maintenance.yml@refs/heads/main',
+            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/security.yml@refs/heads/main',
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_PATH=str(self.event),
             TOOLS_REF=tools_sha, KOMIZO_REF=actions_sha, DECLARATION='deploy/operations.toml',
             OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='',
@@ -166,7 +166,7 @@ class OperationalAuthority(unittest.TestCase):
     def test_nonaccepted_sdk_and_changed_canonical_main_caller_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'accepted on main'):
             self.admit(lookup=lambda path: json.dumps({'status': 'diverged'}))
-        path = self.root / '.github/workflows/maintenance.yml'
+        path = self.root / '.github/workflows/security.yml'
         path.write_text(path.read_text() + '# Changed source caller\n')
         self.git(self.root, 'add', '.')
         self.git(self.root, 'commit', '-qm', 'Change caller without its policy')

@@ -21,7 +21,7 @@ import recipe_data
 import recipe_context
 from workflow_run import read_event
 SHA=re.compile('[a-f0-9]{40}')
-WORKFLOWS={'backup':'backup.yml','security':'maintenance.yml','production':'deploy.yml','paid':'deploy.yml'}
+WORKFLOWS={'backup':'backup.yml','security':'security.yml','production':'deploy.yml','paid':'deploy.yml'}
 
 
 def capture(arguments,root=None,environment=None,timeout=30):

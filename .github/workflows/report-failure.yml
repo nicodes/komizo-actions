@@ -42,7 +42,7 @@ jobs:
         [[ "$GITHUB_REF" == refs/heads/main ]]
         [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
         case "$GITHUB_WORKFLOW_REF" in
-          "$GITHUB_REPOSITORY/.github/workflows/maintenance.yml@refs/heads/main")
+          "$GITHUB_REPOSITORY/.github/workflows/security.yml@refs/heads/main")
             [[ "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]] ;;
           "$GITHUB_REPOSITORY/.github/workflows/deploy.yml@refs/heads/main")
             [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == workflow_dispatch ]] ;;

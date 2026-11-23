@@ -71,7 +71,7 @@ class NativeWorkflowContext(unittest.TestCase):
             GITHUB_REPOSITORY='owner/application', GITHUB_SHA=source, GITHUB_WORKFLOW_SHA=source,
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_REF='refs/heads/main',
             GITHUB_EVENT_NAME='schedule',
-            GITHUB_WORKFLOW_REF='owner/application/.github/workflows/maintenance.yml@refs/heads/main')
+            GITHUB_WORKFLOW_REF='owner/application/.github/workflows/security.yml@refs/heads/main')
         def run(changes):
             return subprocess.run(['bash', '-euo', 'pipefail', '-c', guard],
                                   env=environment | changes, capture_output=True).returncode
@@ -84,7 +84,7 @@ class NativeWorkflowContext(unittest.TestCase):
             {'GITHUB_REF': 'refs/heads/feature'}, {'GITHUB_EVENT_NAME': 'push'}, {'GITHUB_EVENT_NAME': 'pull_request'},
             {'GITHUB_EVENT_NAME': 'pull_request_target'},
             {'GITHUB_WORKFLOW_REF': 'owner/application/.github/workflows/deploy.yml@refs/heads/main'},
-            {'GITHUB_WORKFLOW_REF': 'other/application/.github/workflows/maintenance.yml@refs/heads/main'},
+            {'GITHUB_WORKFLOW_REF': 'other/application/.github/workflows/security.yml@refs/heads/main'},
             {'GITHUB_WORKFLOW_REF': 'owner/application/.github/workflows/build-and-test.yml@refs/heads/main'}]:
             with self.subTest(changes=changes):
                 self.assertNotEqual(run(changes), 0)
