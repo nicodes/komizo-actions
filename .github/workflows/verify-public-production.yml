@@ -71,7 +71,9 @@ jobs:
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
+        # History needed: Caller-owned production assertions may read git history of the verified commit.
         fetch-depth: 0
+        filter: blob:none
     - name: Bootstrap Python for protected SDK sources
       if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
       id: sdk-private-python
@@ -105,7 +107,7 @@ jobs:
         repository: nicodes/cookbook
         ref: ${{ inputs.cookbook-ref }}
         persist-credentials: false
-        fetch-depth: 0
+        fetch-depth: 1
         path: .artifacts/recipe-sdks/_cookbook
     - name: Check out deployment actions
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -114,7 +116,7 @@ jobs:
         repository: nicodes/komizo-actions
         ref: ${{ inputs.komizo-ref }}
         persist-credentials: false
-        fetch-depth: 0
+        fetch-depth: 1
         path: _operation_actions
     - name: Prepare accepted recipe SDKs
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}

@@ -34,7 +34,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          # History needed: Release publication reads remote main and tags and creates a tag; keep history and tags intact.
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
       - name: Authenticate exact release transport
         run: |

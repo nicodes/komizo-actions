@@ -41,7 +41,9 @@ jobs:
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ inputs.source }}
+        # History needed: Caller-owned readiness assertions may read git history of the delivered commit.
         fetch-depth: 0
+        filter: blob:none
         persist-credentials: false
     - name: Check out deployment actions
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
