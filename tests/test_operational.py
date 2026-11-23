@@ -49,6 +49,8 @@ class OperationalAuthority(unittest.TestCase):
         self.tools, tools_sha = self.repository('tools')
         self.actions, actions_sha = self.repository('komizo-actions')
         self.root, _ = self.repository('product')
+        self.operations = SimpleNamespace(declaration=workflows.declaration, workflow_files=self.workflow_files,
+                                          step_timeouts=workflows.step_timeouts)
         # Git-authority controls use inert workflow fixtures. Their source
         # declarations still pass through the actual current native reader.
         decoder = patch.object(driver.recipe_data, 'load', side_effect=lambda root, tools, configuration=None: native_recipe_fixture.load(root))
@@ -112,16 +114,14 @@ class OperationalAuthority(unittest.TestCase):
             path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=1)]})
 
     def admit(self, environment=None, operation='security', selected='', lookup=None):
-        operations = SimpleNamespace(declaration=workflows.declaration, workflow_files=self.workflow_files,
-                                     step_timeouts=workflows.step_timeouts)
         def module(name):
             if name == 'operational_workflows':
-                return operations
+                return self.operations
             if name == 'generate':
                 return SimpleNamespace(workflow_files=lambda *_: {'.github/workflows/deploy.yml': self.deploy})
             return SimpleNamespace()
         context = SimpleNamespace(tools_revision=self.environment['TOOLS_REF'], module=module)
-        with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(operations, None, None)), \
+        with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(self.operations, None, None)), \
                 patch.object(driver.recipe_context, 'accepted_context', return_value=context):
             return driver.authority(self.root, self.tools, operation, selected,
                                     environment or self.environment, lookup or self.lookup)
@@ -138,7 +138,7 @@ class OperationalAuthority(unittest.TestCase):
         self.assertEqual(record['report_timeout'], 5)
 
     def test_retired_operational_caller_paths_refuse_before_any_effect(self):
-        for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'),
+        for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'), ('security', 'maintenance.yml'),
                                     ('recovery', 'recovery.yml'), ('production', 'verify-production.yml'),
                                     ('paid', 'verify-production.yml')]:
             environment = self.environment | {
@@ -317,7 +317,7 @@ class OperationalAuthority(unittest.TestCase):
                 patch.object(driver,'ROOT',self.actions), \
                 patch.object(driver,'authority',side_effect=lambda root,tools,operation,selected,environment,**kwargs:
                     original_authority(root,tools,operation,selected,environment,self.lookup,**kwargs)), \
-                patch.object(driver,'tools_modules',return_value=(workflows,None,None)), \
+                patch.object(driver,'tools_modules',return_value=(self.operations,None,None)), \
                 patch.object(driver,'prepare',side_effect=lambda *args,**kwargs:effects.append('prepare')), \
                 patch.object(driver,'source_security',side_effect=lambda *args,**kwargs:effects.append('source')), \
                 patch.object(driver,'module',return_value=deployed):
