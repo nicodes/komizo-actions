@@ -20,6 +20,12 @@ spec.loader.exec_module(driver)
 
 
 class OperationalAuthority(unittest.TestCase):
+    def workflow_files(self, root, pin, config):
+        files = workflows.workflow_files(root, pin, config)
+        fixture = files.pop('.github/workflows/maintenance.yml')
+        files['.github/workflows/security.yml'] = fixture
+        return files
+
     def git(self, root, *arguments):
         return subprocess.check_output(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
             '-c', 'commit.gpgsign=false', '-C', str(root), *arguments], text=True,
@@ -43,6 +49,8 @@ class OperationalAuthority(unittest.TestCase):
         self.tools, tools_sha = self.repository('tools')
         self.actions, actions_sha = self.repository('komizo-actions')
         self.root, _ = self.repository('product')
+        self.operations = SimpleNamespace(declaration=workflows.declaration, workflow_files=self.workflow_files,
+                                          step_timeouts=workflows.step_timeouts)
         # Git-authority controls use inert workflow fixtures. Their source
         # declarations still pass through the actual current native reader.
         decoder = patch.object(driver.recipe_data, 'load', side_effect=lambda root, tools, configuration=None: native_recipe_fixture.load(root))
@@ -75,7 +83,7 @@ class OperationalAuthority(unittest.TestCase):
             deployment='deploy/scan.json',rust={},go={'gate':dict(forbidden=[])})))
         native_recipe_fixture.write(self.root / 'deploy/operations.toml', self.data)
         (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.toml"\n[operations]\ndefinition="deploy/operations.toml"\n')
-        for name, text in workflows.workflow_files(self.root, tools_sha, self.config).items():
+        for name, text in self.workflow_files(self.root, tools_sha, self.config).items():
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
@@ -88,7 +96,7 @@ class OperationalAuthority(unittest.TestCase):
         self.event.write_text(json.dumps({'inputs': {'mode': 'verify', 'model_smoke': False}}))
         self.environment = dict(os.environ, GITHUB_REPOSITORY='owner/demo', GITHUB_SHA=self.revision,
             GITHUB_WORKFLOW_SHA=self.revision, GITHUB_REF='refs/heads/main', GITHUB_EVENT_NAME='workflow_dispatch',
-            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/maintenance.yml@refs/heads/main',
+            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/security.yml@refs/heads/main',
             GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_EVENT_PATH=str(self.event),
             TOOLS_REF=tools_sha, KOMIZO_REF=actions_sha, DECLARATION='deploy/operations.toml',
             OPERATION_RUNNER='ubuntu-24.04', OPERATION_TIMEOUT='110', OPERATION_ENVIRONMENT='',
@@ -108,12 +116,12 @@ class OperationalAuthority(unittest.TestCase):
     def admit(self, environment=None, operation='security', selected='', lookup=None):
         def module(name):
             if name == 'operational_workflows':
-                return workflows
+                return self.operations
             if name == 'generate':
                 return SimpleNamespace(workflow_files=lambda *_: {'.github/workflows/deploy.yml': self.deploy})
             return SimpleNamespace()
         context = SimpleNamespace(tools_revision=self.environment['TOOLS_REF'], module=module)
-        with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(workflows, None, None)), \
+        with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(self.operations, None, None)), \
                 patch.object(driver.recipe_context, 'accepted_context', return_value=context):
             return driver.authority(self.root, self.tools, operation, selected,
                                     environment or self.environment, lookup or self.lookup)
@@ -130,7 +138,7 @@ class OperationalAuthority(unittest.TestCase):
         self.assertEqual(record['report_timeout'], 5)
 
     def test_retired_operational_caller_paths_refuse_before_any_effect(self):
-        for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'),
+        for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'), ('security', 'maintenance.yml'),
                                     ('recovery', 'recovery.yml'), ('production', 'verify-production.yml'),
                                     ('paid', 'verify-production.yml')]:
             environment = self.environment | {
@@ -166,7 +174,7 @@ class OperationalAuthority(unittest.TestCase):
     def test_nonaccepted_sdk_and_changed_canonical_main_caller_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'accepted on main'):
             self.admit(lookup=lambda path: json.dumps({'status': 'diverged'}))
-        path = self.root / '.github/workflows/maintenance.yml'
+        path = self.root / '.github/workflows/security.yml'
         path.write_text(path.read_text() + '# Changed source caller\n')
         self.git(self.root, 'add', '.')
         self.git(self.root, 'commit', '-qm', 'Change caller without its policy')
@@ -309,7 +317,7 @@ class OperationalAuthority(unittest.TestCase):
                 patch.object(driver,'ROOT',self.actions), \
                 patch.object(driver,'authority',side_effect=lambda root,tools,operation,selected,environment,**kwargs:
                     original_authority(root,tools,operation,selected,environment,self.lookup,**kwargs)), \
-                patch.object(driver,'tools_modules',return_value=(workflows,None,None)), \
+                patch.object(driver,'tools_modules',return_value=(self.operations,None,None)), \
                 patch.object(driver,'prepare',side_effect=lambda *args,**kwargs:effects.append('prepare')), \
                 patch.object(driver,'source_security',side_effect=lambda *args,**kwargs:effects.append('source')), \
                 patch.object(driver,'module',return_value=deployed):
