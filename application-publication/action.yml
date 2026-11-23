@@ -46,7 +46,7 @@ runs:
     if: inputs.source-prepared != 'true'
     with:
       ref: ${{ inputs.source }}
-      fetch-depth: 0
+      fetch-depth: 1
       persist-credentials: false
   - name: Verify prepared product source before publication
     shell: bash

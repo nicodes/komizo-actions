@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 5e1fbadaafdefbb97ceb465eb295daccb2cb07367fa173dbe1b088b97d1f3c9f -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: a59496a9e92a8220ef0f6297af3dd2119e9936eaae6d99edbb055d6b8484b546 -->
 
 # Komizo Actions
 
@@ -6,7 +6,7 @@ GitHub adapters for immutable application releases, protected host submission, p
 
 ## Source and release preparation
 
-Recipe-aware adapters require an exact `cookbook-ref`, native TOML declarations and the provider's generated Mise entrypoint and task APIs. Obsolete Make and JSON recipe protocols are rejected. Cookbook selects its reviewed Tools dependency; callers cannot substitute another helper revision. Trusted preparation verifies repository origin, source identity and provider ancestry before preparing the caller's SDKs.
+Recipe-aware adapters require an exact `cookbook-ref`, native TOML declarations and the provider's generated Mise entrypoint and task APIs. Obsolete Make and JSON recipe protocols are rejected. Cookbook selects its reviewed Tools dependency; callers cannot substitute another helper revision. Trusted preparation verifies repository origin, source identity and provider ancestry before preparing the caller's SDKs. Jobs fetch only the commit they build or deploy; a checkout that needs history, tags or other refs must say why and use a blobless filter.
 
 Applications declare native workloads in `deploy/application.toml`. Complete source validation freezes a closed release packet containing `release.json`, `inventory.json`, selected image OCI archives, selected static archives and explicitly inventoried metadata. Static applications need no image. Publication uploads exact accepted OCI manifests and blobs without rebuilding artifacts or changing the descriptor.
 

@@ -68,7 +68,7 @@ else:
         # checkout's default clean operation removes untracked action files.
         self.assertNotEqual(step.get('with', {}).get('clean'), False)
         self.assertEqual(step['with']['ref'], '${{ inputs.source }}')
-        self.assertEqual(step['with']['fetch-depth'], 0)
+        self.assertEqual(step['with']['fetch-depth'], 1)
         self.git('clean', '-ffdx')
         self.git('reset', '--hard', self.source)
 
