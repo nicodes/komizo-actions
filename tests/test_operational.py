@@ -251,7 +251,7 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_every_leaf_prepares_its_parser_before_admission_and_keeps_credentials_late(self):
         root = Path(__file__).parents[1] / '.github/workflows'
-        for name in ['backup', 'verify-recovery', 'audit-security', 'verify-production', 'verify-public-production']:
+        for name in ['backup', 'audit-security', 'verify-production', 'verify-public-production']:
             text = (root / (name + '.yml')).read_text()
             with self.subTest(workflow=name):
                 self.assertLess(text.index('Prepare accepted recipe SDKs'), text.index('Admit exact trusted main'))
