@@ -131,7 +131,7 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_retired_operational_caller_paths_refuse_before_any_effect(self):
         for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'),
-                                    ('recovery', 'verify-recovery.yml'), ('production', 'verify-production.yml'),
+                                    ('recovery', 'recovery.yml'), ('production', 'verify-production.yml'),
                                     ('paid', 'verify-production.yml')]:
             environment = self.environment | {
                 'GITHUB_WORKFLOW_REF': 'owner/demo/.github/workflows/' + filename + '@refs/heads/main'}

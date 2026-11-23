@@ -21,7 +21,7 @@ import recipe_data
 import recipe_context
 from workflow_run import read_event
 SHA=re.compile('[a-f0-9]{40}')
-WORKFLOWS={'backup':'backup.yml','recovery':'recovery.yml','security':'maintenance.yml','production':'deploy.yml','paid':'deploy.yml'}
+WORKFLOWS={'backup':'backup.yml','security':'maintenance.yml','production':'deploy.yml','paid':'deploy.yml'}
 
 
 def capture(arguments,root=None,environment=None,timeout=30):
@@ -288,7 +288,7 @@ def main():
                 'deployed':str(bool(record.get('deployed_policy'))).lower(),
                 'artifact-validation':str(record.get('artifact_validation',False)).lower(),
                 'artifact-name':workflow.artifact_name(operation,record,environment),
-                'evidence-missing':record.get('evidence_missing','error' if operation in {'backup','recovery'} else 'ignore')},environment)
+                'evidence-missing':record.get('evidence_missing','error' if operation=='backup' else 'ignore')},environment)
         elif args.command=='prepare':prepare(root,cookbook,config,record,operation,environment,helpers=tools,context=context)
         elif args.command=='report':
             execute([sys.executable,str(tools/'helpers/report-failure.py')],root,environment)
@@ -328,7 +328,7 @@ def main():
             # Native bootstrap and assertion share the original paid deadline.
             for check in record.get('prepare',[]):native(root,check,environment)
             native(root,record['check'],environment)
-        else:raise ValueError('backup/recovery effects use only their pinned dedicated helpers')
+        else:raise ValueError('backup effects use only their pinned dedicated helpers')
     except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as error:
         parser.exit(1,str(error)+'\n')
 
