@@ -20,6 +20,12 @@ spec.loader.exec_module(driver)
 
 
 class OperationalAuthority(unittest.TestCase):
+    def workflow_files(self, root, pin, config):
+        files = workflows.workflow_files(root, pin, config)
+        fixture = files.pop('.github/workflows/maintenance.yml')
+        files['.github/workflows/security.yml'] = fixture
+        return files
+
     def git(self, root, *arguments):
         return subprocess.check_output(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
             '-c', 'commit.gpgsign=false', '-C', str(root), *arguments], text=True,
@@ -75,7 +81,7 @@ class OperationalAuthority(unittest.TestCase):
             deployment='deploy/scan.json',rust={},go={'gate':dict(forbidden=[])})))
         native_recipe_fixture.write(self.root / 'deploy/operations.toml', self.data)
         (self.root / 'cookbook.toml').write_text('version=1\nrecipe="react-native"\n[delivery]\ndefinition="deploy/delivery.toml"\n[operations]\ndefinition="deploy/operations.toml"\n')
-        for name, text in workflows.workflow_files(self.root, tools_sha, self.config).items():
+        for name, text in self.workflow_files(self.root, tools_sha, self.config).items():
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
@@ -106,14 +112,16 @@ class OperationalAuthority(unittest.TestCase):
             path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=1)]})
 
     def admit(self, environment=None, operation='security', selected='', lookup=None):
+        operations = SimpleNamespace(declaration=workflows.declaration, workflow_files=self.workflow_files,
+                                     step_timeouts=workflows.step_timeouts)
         def module(name):
             if name == 'operational_workflows':
-                return workflows
+                return operations
             if name == 'generate':
                 return SimpleNamespace(workflow_files=lambda *_: {'.github/workflows/deploy.yml': self.deploy})
             return SimpleNamespace()
         context = SimpleNamespace(tools_revision=self.environment['TOOLS_REF'], module=module)
-        with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(workflows, None, None)), \
+        with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(operations, None, None)), \
                 patch.object(driver.recipe_context, 'accepted_context', return_value=context):
             return driver.authority(self.root, self.tools, operation, selected,
                                     environment or self.environment, lookup or self.lookup)
