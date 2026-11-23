@@ -120,7 +120,7 @@ class NativeWorkflowContext(unittest.TestCase):
             ('deploy.yml', 'deliver'), ('pr-preview.yml', 'effects'),
             ('backup.yml', 'backup'),
             ('notify.yml', 'notify'), ('request-preview.yml', 'request'),
-            ('verify-production.yml', 'verify'), ('verify-recovery.yml', 'verify')})
+            ('verify-production.yml', 'verify')})
 
     def test_operational_environment_contract_refuses_tracking_or_changed_secret_scope(self):
         for value in ['${{ inputs.environment }}',

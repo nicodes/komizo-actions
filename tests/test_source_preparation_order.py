@@ -80,7 +80,6 @@ class SourcePreparationOrder(unittest.TestCase):
             ('.github/workflows/request-preview.yml','request'),
             ('.github/workflows/verify-production.yml','verify'),
             ('.github/workflows/verify-public-production.yml','verify'),
-            ('.github/workflows/verify-recovery.yml','verify'),
             ('godot-production/action.yml','action'),
         })
         self.assertEqual(len(scripts),1)

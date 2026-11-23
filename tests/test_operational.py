@@ -131,7 +131,7 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_retired_operational_caller_paths_refuse_before_any_effect(self):
         for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'),
-                                    ('recovery', 'verify-recovery.yml'), ('production', 'verify-production.yml'),
+                                    ('recovery', 'recovery.yml'), ('production', 'verify-production.yml'),
                                     ('paid', 'verify-production.yml')]:
             environment = self.environment | {
                 'GITHUB_WORKFLOW_REF': 'owner/demo/.github/workflows/' + filename + '@refs/heads/main'}
@@ -251,7 +251,7 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_every_leaf_prepares_its_parser_before_admission_and_keeps_credentials_late(self):
         root = Path(__file__).parents[1] / '.github/workflows'
-        for name in ['backup', 'verify-recovery', 'audit-security', 'verify-production', 'verify-public-production']:
+        for name in ['backup', 'audit-security', 'verify-production', 'verify-public-production']:
             text = (root / (name + '.yml')).read_text()
             with self.subTest(workflow=name):
                 self.assertLess(text.index('Prepare accepted recipe SDKs'), text.index('Admit exact trusted main'))

@@ -1,4 +1,4 @@
-<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 62662dcf01b5a2e0035f2d68184b82ac637fd3abe6e62cd30bc2a8cf335088c0 -->
+<!-- Generated from private documentation source. Do not edit directly. Source SHA256: 5e1fbadaafdefbb97ceb465eb295daccb2cb07367fa173dbe1b088b97d1f3c9f -->
 
 # Komizo Actions
 
@@ -40,7 +40,7 @@ For `pull_request_target`, job records identify the triggering PR head separatel
 
 `backup-transfer` uses separate `export` and `upload` steps. Export submits the protected backup operation and receives only encrypted `snapshot.cms` and `receipt.json`. Ready backup metadata identifies the captured installed release separately from the operation target. Routine backup requires that captured identity to equal its requested installed release. Routine export requires a format-2 receipt. Export metadata, exact byte counts and hashes are checked before the pair is retained atomically. Upload transports that immutable pair with runner-side object storage credentials. Absence evidence requires the host to check retained records and actual instance resources.
 
-`recovery-evidence` verifies exact completed run and artifact identities. Routine transport receives no application runtime values or private decryption key. Source restore tests use synthetic data and exact release fixtures. An explicit owner restore uses its private local `BACKUP_RECOVERY_KEY_FILE`, the snapshot's installed release identities and the application's database, media, API and frontend assertions. Installed snapshot acceptance does not issue a current-source validation receipt. Production recovery remains a separately authorized owner operation.
+Operators can run `recovery-evidence/evidence.py` locally to verify an encrypted backup artifact from a completed Main run. Source restore tests use synthetic data and exact release fixtures. An explicit owner restore uses its private local `BACKUP_RECOVERY_KEY_FILE`, the snapshot's installed release identities and the application's database, media, API and frontend assertions.
 
 ## Contribution
 

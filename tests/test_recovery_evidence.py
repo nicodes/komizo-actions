@@ -335,23 +335,14 @@ sys.stdout.buffer.write((root/paths[command[1]]).read_bytes())
             self.assertFalse((root/'decryption-attempt').exists())
             self.assertEqual(len((root/'requests.jsonl').read_text().splitlines()),3)
 
-    def test_exact_action_and_ci_wiring_select_the_accepted_reader(self):
-        action = yaml.safe_load((ROOT/'recovery-evidence/action.yml').read_text())
-        checkout,verify = action['runs']['steps']
-        self.assertEqual(checkout['uses'],'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1')
-        self.assertEqual(checkout['with']['repository'],'nicodes/tools')
-        self.assertEqual(checkout['with']['ref'],evidence.TOOLS_REVISION)
-        self.assertFalse(checkout['with']['persist-credentials'])
-        self.assertEqual(verify['env']['TRANSPORT_TOOLS_DIRECTORY'],
-            '${{ github.workspace }}/'+checkout['with']['path'])
-        self.assertIn('python3 -I -B ',verify['run'])
-        self.assertIn('--tools-root "$TRANSPORT_TOOLS_DIRECTORY"',verify['run'])
-        self.assertNotIn('TOOLS_ROOT',str(action))
+    def test_local_reader_ci_uses_the_accepted_tools_pin(self):
         job = yaml.safe_load((ROOT/'.github/workflows/build-and-test.yml').read_text())['jobs']['ci']
-        prepared = next(step for step in job['steps']
-            if step.get('with',{}).get('path')==checkout['with']['path'])
-        self.assertEqual(prepared['with']['ref'],evidence.TOOLS_REVISION)
-        self.assertEqual(job['env']['RECOVERY_TEST_TOOLS'],'${{ github.workspace }}/'+prepared['with']['path'])
+        path = '.artifacts/recovery-transport-sdk'
+        prepared = next(step for step in job['steps'] if step.get('with', {}).get('path') == path)
+        self.assertEqual(prepared['with']['repository'], 'nicodes/tools')
+        self.assertEqual(prepared['with']['ref'], evidence.TOOLS_REVISION)
+        self.assertFalse(prepared['with']['persist-credentials'])
+        self.assertEqual(job['env']['RECOVERY_TEST_TOOLS'], '${{ github.workspace }}/' + path)
 
     def test_mutated_reader_refuses_before_github_or_module_execution(self):
         with tempfile.TemporaryDirectory() as directory:
