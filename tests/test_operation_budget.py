@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 import unittest
+import unittest.mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import operation_budget
 import submission
@@ -34,6 +35,39 @@ class OriginalOperationBudget(unittest.TestCase):
         for jobs in [self.jobs | {'total_count': 2}, {'total_count': 2, 'jobs': [self.job, self.job]},
                      {'total_count': 1, 'jobs': [self.job | {'head_sha': 'b'*40}]}]:
             with self.assertRaises(ValueError): operation_budget.deadline(jobs, 'a'*40, 30, 'deliver', now=self.now)
+
+    def test_single_job_clock_starts_now_without_jobs_metadata_and_never_extends(self):
+        absolute, seconds = operation_budget.from_now(30, now=self.now)
+        self.assertEqual(seconds, 1800); self.assertEqual(absolute, int((self.now + timedelta(minutes=30)).timestamp()))
+        self.assertEqual(operation_budget.from_now(30, now=self.now, phase_seconds=120)[1], 120)
+        later = self.now + timedelta(minutes=10)
+        self.assertEqual(operation_budget.from_now(30, now=later, existing=absolute)[1], 1200)
+        self.assertEqual(operation_budget.from_now(30, now=later, existing=absolute, phase_seconds=60)[1], 60)
+        for total in [0, 181, '30']:
+            with self.assertRaises(ValueError): operation_budget.from_now(total, now=self.now)
+        with self.assertRaises(ValueError): operation_budget.from_now(30, now=self.now, phase_seconds=0)
+        with self.assertRaises(ValueError): operation_budget.from_now(30, now=self.now + timedelta(minutes=31), existing=absolute)
+
+    def test_command_line_from_now_uses_no_api_and_roles_still_work(self):
+        import contextlib, io, os, tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            files = {name: os.path.join(temporary, name) for name in ['env', 'out']}
+            for path in files.values(): open(path, 'w').close()
+            environment = ENV | {'GITHUB_ENV': files['env'], 'GITHUB_OUTPUT': files['out']}
+            def run(*arguments):
+                with unittest.mock.patch.dict(os.environ, environment, clear=True), \
+                        unittest.mock.patch.object(sys, 'argv', ['operation_budget.py', *arguments]), \
+                        unittest.mock.patch.object(operation_budget.workflow_run, 'current', side_effect=AssertionError('API used')):
+                    operation_budget.main()
+            run('--from-now', '--total-minutes', '25')
+            self.assertIn('KOMIZO_OPERATION_DEADLINE=', Path(files['env']).read_text())
+            self.assertIn('minutes=25', Path(files['out']).read_text())
+            for arguments in [['--from-now', '--job', 'deliver', '--total-minutes', '25'], ['--total-minutes', '25']]:
+                with self.assertRaises(SystemExit) as error, contextlib.redirect_stderr(io.StringIO()):
+                    run(*arguments)
+                self.assertEqual(error.exception.code, 2)
+            with self.assertRaises(AssertionError):
+                run('--job', 'deliver', '--total-minutes', '25')
 
     def test_request_admits_timeout_before_proof_and_keeps_jwt_lifetime_independent(self):
         seen = []

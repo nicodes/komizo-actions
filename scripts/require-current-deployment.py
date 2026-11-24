@@ -12,6 +12,13 @@ def require_current(expected, current):
         raise ValueError('Main has advanced; refusing obsolete deployment before host effects')
 
 
+def mark_stale():
+    """Tell later steps this run is obsolete rather than broken."""
+    if os.environ.get('GITHUB_OUTPUT'):
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write('stale=true\n')
+
+
 def main():
     if os.environ.get('GITHUB_REF') != 'refs/heads/main':
         raise ValueError('Production deployment requires main')
@@ -21,7 +28,13 @@ def main():
         raise ValueError('Invalid deployment repository')
     result = subprocess.run(['gh', 'api', f'repos/{repository}/commits/main', '--jq', '.sha'],
                             check=True, capture_output=True, text=True, timeout=30)
-    require_current(os.environ['GITHUB_SHA'], result.stdout.strip())
+    expected, current = os.environ['GITHUB_SHA'], result.stdout.strip()
+    try:
+        require_current(expected, current)
+    except ValueError:
+        if expected != current and all(re.fullmatch(r'[a-f0-9]{40}', value) for value in (expected, current)):
+            mark_stale()
+        raise
     print('Current main admitted to the serialized host phase')
 
 
