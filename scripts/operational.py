@@ -21,7 +21,8 @@ import recipe_data
 import recipe_context
 from workflow_run import read_event
 SHA=re.compile('[a-f0-9]{40}')
-WORKFLOWS={'backup':'backup.yml','security':'security.yml','production':'deploy.yml','paid':'deploy.yml'}
+WORKFLOWS={'backup':('backup.yml',),'security':('security.yml',),'production':('deploy.yml','verify-production.yml'),
+    'paid':('deploy.yml','verify-production.yml')}
 
 
 def capture(arguments,root=None,environment=None,timeout=30):
@@ -99,7 +100,7 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
             or not SHA.fullmatch(revision) or environment.get('GITHUB_REF')!='refs/heads/main'
             or environment.get('GITHUB_EVENT_NAME') not in {'workflow_dispatch','schedule'}
             or environment.get('GITHUB_WORKFLOW_SHA')!=revision
-            or environment.get('GITHUB_WORKFLOW_REF')!=repository+'/.github/workflows/'+WORKFLOWS[operation]+'@refs/heads/main'
+            or environment.get('GITHUB_WORKFLOW_REF') not in [repository+'/.github/workflows/'+name+'@refs/heads/main' for name in WORKFLOWS[operation]]
             or capture(['git','rev-parse','HEAD'],root,environment)!=revision):
         raise ValueError('operational effects require their exact trusted-main workflow source')
     if any(not re.fullmatch('[1-9][0-9]{0,19}',environment.get(key,'')) for key in ['GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT']):
@@ -149,7 +150,7 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
         expected=context.module('generate').workflow_files(root,cookbook_ref,config)
     else:
         expected=workflow.workflow_files(root,cookbook_ref if context else revisions['tools'],config)
-    path='.github/workflows/'+WORKFLOWS[operation]
+    path='.github/workflows/'+environment['GITHUB_WORKFLOW_REF'].split('@',1)[0].rsplit('/',1)[1]
     if (root/path).read_text()!=expected[path]:raise ValueError('operational caller differs from its canonical authority contract')
     if environment.get('OPERATION_RUNNER')!=record['runner'] or environment.get('OPERATION_TIMEOUT')!=str(record['timeout_minutes']):
         raise ValueError('operational runner/deadline differs from native policy')

@@ -118,7 +118,8 @@ class OperationalAuthority(unittest.TestCase):
             if name == 'operational_workflows':
                 return self.operations
             if name == 'generate':
-                return SimpleNamespace(workflow_files=lambda *_: {'.github/workflows/deploy.yml': self.deploy})
+                return SimpleNamespace(workflow_files=lambda *_: {'.github/workflows/deploy.yml': self.deploy,
+                                                                      '.github/workflows/verify-production.yml': self.deploy})
             return SimpleNamespace()
         context = SimpleNamespace(tools_revision=self.environment['TOOLS_REF'], module=module)
         with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(self.operations, None, None)), \
@@ -139,12 +140,27 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_retired_operational_caller_paths_refuse_before_any_effect(self):
         for operation, filename in [('security', 'security-scan.yml'), ('security', 'audit-security.yml'), ('security', 'maintenance.yml'),
-                                    ('recovery', 'recovery.yml'), ('production', 'verify-production.yml'),
-                                    ('paid', 'verify-production.yml')]:
+                                    ('recovery', 'recovery.yml'), ('backup', 'verify-production.yml'),
+                                    ('security', 'verify-production.yml'), ('production', 'security.yml'),
+                                    ('paid', 'backup.yml')]:
             environment = self.environment | {
                 'GITHUB_WORKFLOW_REF': 'owner/demo/.github/workflows/' + filename + '@refs/heads/main'}
             with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, 'exact trusted-main workflow'):
                 self.admit(environment, operation=operation)
+
+    def test_production_and_paid_accept_deploy_or_verify_production_callers(self):
+        self.assertEqual({operation: set(driver.WORKFLOWS[operation]) for operation in ['production', 'paid']},
+                         {operation: {'deploy.yml', 'verify-production.yml'} for operation in ['production', 'paid']})
+        self.event.write_text(json.dumps({'inputs': {'mode': 'verify', 'model_smoke': True}}))
+        for filename in ['deploy.yml', 'verify-production.yml']:
+            (self.root / '.github/workflows' / filename).write_text(self.deploy)
+            self.git(self.root, 'add', '.')
+            self.git(self.root, 'commit', '-qm', 'Caller ' + filename, '--allow-empty')
+            self.revision = self.git(self.root, 'rev-parse', 'HEAD')
+            environment = self.paid_environment() | dict(GITHUB_SHA=self.revision, GITHUB_WORKFLOW_SHA=self.revision,
+                GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/' + filename + '@refs/heads/main')
+            with self.subTest(filename=filename):
+                self.admit(environment, 'paid', 'model_smoke')
 
     def test_source_workflow_runner_budget_and_policy_identity_refusals(self):
         for changes in [dict(GITHUB_REF='refs/heads/feature'), dict(GITHUB_SHA='f' * 40),

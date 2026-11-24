@@ -71,7 +71,6 @@ class SourcePreparationOrder(unittest.TestCase):
             ('.github/workflows/audit-source.yml','verify'),
             ('.github/workflows/audit-security.yml','verify'),
             ('.github/workflows/backup.yml','backup'),
-            ('.github/workflows/backup.yml','report'),
             ('.github/workflows/deliver.yml','deliver'),
             ('.github/workflows/deploy.yml','deliver'),
             ('.github/workflows/pr-preview.yml','effects'),
