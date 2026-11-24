@@ -126,6 +126,7 @@ jobs:
         fetch-depth: 1
         path: _operation_actions
     - name: Prepare accepted recipe SDKs
+      id: sdks
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
       uses: ./_operation_actions/recipe-sources
       with:
@@ -199,8 +200,8 @@ jobs:
         if-no-files-found: error
         retention-days: 30
     - name: Report bounded backup failure
-      if: failure()
-      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report }}
+      if: failure() && steps.sdks.outcome == 'success'
+      timeout-minutes: ${{ inputs['report-timeout'] }}
       shell: bash
       run: python3 -I -B .artifacts/recipe-sdks/_tools/helpers/report-failure.py
     name: Backup
