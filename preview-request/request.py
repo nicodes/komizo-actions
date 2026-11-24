@@ -34,6 +34,11 @@ THE RULE, event by event:
     The PR is fetched (the comment payload carries no head sha) and the
     same guards as below apply.
 
+  workflow_dispatch (manual, by a user with write access)
+    inputs.action `up` or `down` and inputs.pr a positive integer; any
+    other value is an error, not a quiet no-op, because a person asked.
+    The PR is fetched and the same guards as below apply.
+
   anything else -> nothing.
 
 GUARDS on every up: the PR's head lives in this repository (never a fork),
@@ -53,6 +58,7 @@ after down; this script only reads it.
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -114,6 +120,16 @@ def resolve(event, event_name, repository, label, fetch=None):
         pr = fetch(repository, number)
         action = COMMANDS[body]
         why = f"comment {body} by {association}"
+    elif event_name == "workflow_dispatch":
+        inputs = event.get("inputs") or {}
+        action = inputs.get("action")
+        if action not in {"up", "down"}:
+            raise ValueError("the action input must be up or down")
+        raw = inputs.get("pr")
+        if not isinstance(raw, str) or not re.fullmatch("[1-9][0-9]{0,9}", raw):
+            raise ValueError("the pr input must be a positive integer")
+        pr = fetch(repository, int(raw))
+        why = f"manual dispatch {action}"
     else:
         raise Refused(f"{event_name or 'unknown'} is not a preview event")
 

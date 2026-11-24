@@ -272,7 +272,7 @@ class Validation(unittest.TestCase):
                     resolve(event, "pull_request")
 
     def test_other_events_are_not_requests(self):
-        for name in ["push", "workflow_dispatch", "pull_request_target", ""]:
+        for name in ["push", "schedule", "pull_request_target", ""]:
             with self.subTest(event=name):
                 with self.assertRaises(request.Refused):
                     resolve({"action": "x"}, name)

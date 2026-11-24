@@ -72,7 +72,7 @@ def controller(environment):
             or environment.get('GITHUB_REF')!='refs/heads/main'
             or environment.get('GITHUB_WORKFLOW_SHA')!=source
             or environment.get('GITHUB_WORKFLOW_REF')!=repository+'/.github/workflows/pr-preview.yml@refs/heads/main'
-            or environment.get('GITHUB_EVENT_NAME') not in {'pull_request_target','issue_comment'}):
+            or environment.get('GITHUB_EVENT_NAME') not in {'pull_request_target','issue_comment','workflow_dispatch'}):
         raise ValueError('Preview requires its trusted-main controller')
     return repository,source
 
@@ -179,6 +179,9 @@ def request_plan(root,tools,declaration,environment,lookup=api,*,context=None):
     try:
         decision=resolver.resolve(event,event_name,repository,'preview',lambda repo,number:current_pr(repo,number,lookup))
     except resolver.Refused as error:
+        if environment['GITHUB_EVENT_NAME']=='workflow_dispatch':
+            # A person asked for this preview by hand: say why not instead of a quiet no-op.
+            raise ValueError('Preview request refused: '+str(error)) from None
         return {'enabled':'false','reason':str(error)}
     number=int(decision['pr'])
     current=current_pr(repository,number,lookup)
@@ -223,7 +226,10 @@ def validate_plan(raw,root,tools,environment,lookup=api,*,fresh=True,context=Non
     event=read_event(environment)
     resolver=module('komizo_preview_request',ROOT/'preview-request/request.py')
     normalized='pull_request' if environment['GITHUB_EVENT_NAME']=='pull_request_target' else environment['GITHUB_EVENT_NAME']
-    decision=resolver.resolve(event,normalized,repository,'preview',lambda repo,number:current_pr(repo,number,lookup))
+    try:
+        decision=resolver.resolve(event,normalized,repository,'preview',lambda repo,number:current_pr(repo,number,lookup))
+    except resolver.Refused as error:
+        raise ValueError('Preview request is no longer eligible: '+str(error)) from None
     if decision['action']!=plan['action'] or int(decision['pr'])!=plan['pr']:
         raise ValueError('Preview plan differs from its authorized event')
     if plan['action']=='up':
@@ -465,15 +471,20 @@ def verify_health(plan,urls,opener=urllib.request.urlopen):
 
 def report(plan,urls,lookup=api):
     repository,number=plan['repository'],plan['pr']
+    manual=plan['trigger']=='workflow_dispatch'
+    # The label means "pushes redeploy"; a manual preview never redeploys by itself, so it carries no label.
     if plan['action']=='up':
-        lookup(f'repos/{repository}/issues/{number}/labels','POST',{'labels':['preview']})
+        if not manual:lookup(f'repos/{repository}/issues/{number}/labels','POST',{'labels':['preview']})
         body='<!-- preview -->\n### Preview — '+plan['head']+'\n\nApp: '+urls['app']['url']
         if 'api' in urls:body+='\nAPI: '+urls['api']['url']
-        body+='\n\nHealth gate: up. Pushes redeploy while the preview label is on. Comment /preview down to remove it.'
+        body+=('\n\nHealth gate: up. Started by hand; run the Preview workflow again to redeploy, or with action down to remove it.' if manual
+               else '\n\nHealth gate: up. Pushes redeploy while the preview label is on. Comment /preview down to remove it.')
     else:
-        try:lookup(f'repos/{repository}/issues/{number}/labels/preview','DELETE')
-        except subprocess.CalledProcessError:print('::warning::Could not remove the Preview label')
-        body='<!-- preview --> ~~Preview~~ — torn down. Comment /preview to bring it back.'
+        if not manual:
+            try:lookup(f'repos/{repository}/issues/{number}/labels/preview','DELETE')
+            except subprocess.CalledProcessError:print('::warning::Could not remove the Preview label')
+        body=('<!-- preview --> ~~Preview~~ — torn down. Run the Preview workflow with action up to bring it back.' if manual
+              else '<!-- preview --> ~~Preview~~ — torn down. Comment /preview to bring it back.')
     found=None
     for page in range(1,101):
         comments=lookup(f'repos/{repository}/issues/{number}/comments?per_page=100&page={page}')
@@ -484,7 +495,21 @@ def report(plan,urls,lookup=api):
         if found is not None or len(comments)<100:break
     else:raise ValueError('Preview comment pagination exceeded its bound')
     if found is not None:lookup(f'repos/{repository}/issues/comments/{found}','PATCH',{'body':body})
-    elif plan['action']=='up':lookup(f'repos/{repository}/issues/{number}/comments','POST',{'body':body})
+    elif plan['action']=='up' or manual:lookup(f'repos/{repository}/issues/{number}/comments','POST',{'body':body})
+
+
+def build_environment(plan,app_origin,api_origin,timeout,environment):
+    """Hand the build the planned public origins of this manual preview through the job environment."""
+    if plan['action']!='up' or plan['trigger']!='workflow_dispatch':
+        raise ValueError('only a manual preview request plans build origins')
+    urls=targets(plan,app_origin,api_origin)
+    if not isinstance(timeout,str) or not re.fullmatch('[1-9][0-9]{0,2}',timeout):
+        raise ValueError('preview validation requires a bounded job deadline in minutes')
+    values={'COOKBOOK_PREVIEW_NUMBER':str(plan['pr']),'COOKBOOK_PREVIEW_APP_ORIGIN':urls['app']['origin'],
+            'COOKBOOK_CANDIDATE_COMMIT':plan['head'],'COOKBOOK_VALIDATION_TIMEOUT':timeout}
+    if 'api' in urls:values['COOKBOOK_PREVIEW_API_ORIGIN']=urls['api']['origin']
+    with open(environment['GITHUB_ENV'],'a') as stream:
+        for name,value in values.items():stream.write(name+'='+value+'\n')
 
 
 def output(values,environment):
@@ -497,19 +522,23 @@ def output(values,environment):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation',choices=['request','plan','publish','evidence','routes','apply','health','report'])
+    parser.add_argument('operation',choices=['request','plan','publish','evidence','routes','environment','apply','health','report'])
     sdk_arguments(parser)
     parser.add_argument('--declaration',default='')
+    parser.add_argument('--controller-root',type=Path,help='Trusted main checkout when the workspace root is the pull request head')
     parser.add_argument('--source-root',type=Path,default=Path('_preview_source'))
     parser.add_argument('--incoming',type=Path,default=Path('.artifacts/preview-input'))
     args=parser.parse_args()
     try:
-        environment=dict(os.environ);root=Path.cwd()
+        environment=dict(os.environ);root=args.controller_root or Path.cwd()
         cookbook,tools,revision,context,environment=automation(args,environment,'_preview_cookbook')
         if args.operation=='request':
             output(request_plan(root,cookbook,args.declaration,environment,context=context),environment)
             return
         plan=validate_plan(environment['PLAN'],root,cookbook,environment,context=context)
+        manual=plan['trigger']=='workflow_dispatch'
+        if manual and args.operation in {'publish','evidence'}:
+            raise ValueError('a manual preview publishes inside its own job; use the single-job delivery publisher')
         if args.operation=='plan':
             policy=plan['policy']
             output({'project':policy['project'],'pr':plan['pr'],'head':plan['head'],'base':plan['base'],
@@ -524,10 +553,12 @@ def main():
             body = submission.request(plan['policy']['project'], 'pr-' + str(plan['pr']), 'inspect', environment, release_digest='current', timeout_seconds=60)
             planned = submission.submit(environment['KOMIZO_SSH_CONFIG'], body, timeout=60)['plan']
             output({'app-origin': planned['app_origin'], 'api-origin': planned['api_origin']}, environment)
+        elif args.operation == 'environment':
+            build_environment(plan,environment.get('APP_ORIGIN',''),environment.get('API_ORIGIN',''),environment.get('VALIDATION_TIMEOUT',''),environment)
         elif args.operation == 'apply':
             apply(plan, environment)
         else:
-            if plan['action']=='up':
+            if plan['action']=='up' and not manual:
                 publication_evidence(plan,root/'.artifacts/preview-publication.json',environment,context=context)
             urls=targets(plan,environment.get('PREVIEW_URL',''),environment.get('API_URL','')) if plan['action']=='up' else {}
             if args.operation=='health':verify_health(plan,urls)

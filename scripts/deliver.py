@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Publish and authorize one release inside the single job that built and tested it."""
+"""Publish and authorize one release inside the single job that built and tested it.
+
+The same job logic serves a production delivery of the exact main source and, with --preview, a manual
+pull request preview of its exact current head, whose trusted main controller is checked out separately.
+"""
 import argparse
 import hashlib
 import importlib.util
@@ -65,13 +69,33 @@ def accept_local(proof, config, source, tools, tree, groups, environment):
         raise ValueError('delivery evidence must come from this same job')
 
 
+def admit_preview(args, environment, context, lookup):
+    """Revalidate the manual preview request against trusted main and the current pull request; return its plan."""
+    import preview
+    if args.controller_root is None or environment.get('GITHUB_EVENT_NAME') != 'workflow_dispatch':
+        raise ValueError('a preview requires its trusted main controller checkout and a manual dispatch')
+    plan = preview.validate_plan(environment.get('PLAN', ''), args.controller_root, context.cookbook, environment, lookup, context=context)
+    if (plan['action'] != 'up' or plan['head'] != args.source or plan['policy']['project'] != args.project
+            or git('rev-parse', 'HEAD') != args.source):
+        raise ValueError('preview delivery differs from its authorized request or checked-out head')
+    preview.source_policy(plan, Path.cwd(), context.cookbook)
+    return plan
+
+
+def require_current_preview(plan, lookup):
+    import preview
+    preview.require_current(plan, preview.current_pr(plan['repository'], plan['pr'], lookup))
+
+
 def run_publish(args, environment, lookup=api):
-    require_main_source(args.source, environment)
+    if not args.preview:
+        require_main_source(args.source, environment)
     context = recipe_context.accepted_context(args.cookbook_root, args.cookbook_ref, lookup, args.tools_root)
     cookbook, helpers, revision = context.cookbook, context.tools, context.cookbook_revision
     os.environ.update(COOKBOOK_ROOT=str(cookbook), COOKBOOK_REF=revision,
                       TOOLS_ROOT=str(helpers), TOOLS_REF=context.tools_revision)
     environment = {**environment, **{key: os.environ[key] for key in ['COOKBOOK_ROOT', 'COOKBOOK_REF', 'TOOLS_ROOT', 'TOOLS_REF']}}
+    plan = admit_preview(args, environment, context, lookup) if args.preview else None
     if subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--'], timeout=30).returncode:
         raise ValueError('publisher checkout must be clean')
     config = recipe_data.load(Path.cwd(), cookbook)
@@ -93,7 +117,11 @@ def run_publish(args, environment, lookup=api):
     if packet.descriptor['source'] != {'repository': environment['GITHUB_REPOSITORY'],
                                        'repository_id': environment['GITHUB_REPOSITORY_ID'], 'revision': args.source}:
         raise ValueError('accepted release differs from its exact workflow source')
+    if plan:
+        require_current_preview(plan, lookup)
     published = publication.publish(packet, helpers, environment)
+    if plan:
+        require_current_preview(plan, lookup)
     publication.write_evidence(packet, proof, published, environment, EVIDENCE, receipts=receipts)
 
 
@@ -103,16 +131,18 @@ def require_current_main(environment, source, lookup):
 
 
 def run_authorize(args, environment, lookup=api):
-    if environment.get('GITHUB_WORKFLOW_REF') != environment['GITHUB_REPOSITORY'] + '/.github/workflows/deploy.yml@refs/heads/main':
-        raise ValueError('production authority requires its exact trusted main caller')
-    if args.source != environment['GITHUB_SHA'] or git('rev-parse', 'HEAD') != args.source:
-        raise ValueError('fresh authority requires its actual trusted main controller checkout')
-    require_current_main(environment, args.source, lookup)
+    if not args.preview:
+        if environment.get('GITHUB_WORKFLOW_REF') != environment['GITHUB_REPOSITORY'] + '/.github/workflows/deploy.yml@refs/heads/main':
+            raise ValueError('production authority requires its exact trusted main caller')
+        if args.source != environment['GITHUB_SHA'] or git('rev-parse', 'HEAD') != args.source:
+            raise ValueError('fresh authority requires its actual trusted main controller checkout')
+        require_current_main(environment, args.source, lookup)
     context = recipe_context.accepted_context(args.cookbook_root, args.cookbook_ref, lookup, args.tools_root)
+    plan = admit_preview(args, environment, context, lookup) if args.preview else None
     proof = read(PROOF)
     context.require_proof(proof)
     accept_local(proof, {'recipe': proof.get('recipe')}, args.source, args.cookbook_ref, git('rev-parse', 'HEAD^{tree}'),
-                 proof.get('test_groups', []), environment)
+                 plan['policy']['test_groups'] if plan else proof.get('test_groups', []), environment)
     if proof.get('source_tree') != git('rev-parse', 'HEAD^{tree}'):
         raise ValueError('publication source tree differs from the checked-out Git source')
     if hashlib.sha256(Path('cookbook.toml').read_bytes()).hexdigest() != proof.get('configuration_sha256'):
@@ -130,7 +160,10 @@ def run_authorize(args, environment, lookup=api):
             or published.get('validation_sha256') != hashlib.sha256(registry.canonical(proof)).hexdigest()
             or published.get('execution_context', {}).get('GITHUB_JOB') != environment['GITHUB_JOB']):
         raise ValueError('publication evidence differs from this job release')
-    require_current_main(environment, args.source, lookup)
+    if plan:
+        admit_preview(args, environment, context, lookup)
+    else:
+        require_current_main(environment, args.source, lookup)
     admitted = SimpleNamespace(descriptor=packet.descriptor, release_digest=packet.release_digest,
                                release_bytes=packet.release_bytes)
     value = publication.release_proof(admitted, environment)
@@ -149,6 +182,8 @@ def main():
         command.add_argument('--cookbook-ref', required=True)
         command.add_argument('--tools-root', type=Path, required=True)
         command.add_argument('--project', required=True)
+        command.add_argument('--preview', action='store_true', help='deliver a manual pull request preview of --source')
+        command.add_argument('--controller-root', type=Path, help='trusted main checkout holding the preview policy')
     args = parser.parse_args()
     try:
         (run_publish if args.command == 'publish' else run_authorize)(args, dict(os.environ))

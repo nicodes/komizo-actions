@@ -60,8 +60,11 @@ def workflow(environment):
             or environment.get('GITHUB_REF') != 'refs/heads/main'
             or environment.get('GITHUB_EVENT_NAME') not in {'push', 'workflow_dispatch', 'schedule', 'pull_request_target', 'issue_comment'}):
         raise ValueError('submission requires a trusted main workflow')
-    if environment.get('GITHUB_EVENT_NAME') in {'pull_request_target', 'issue_comment'}:
-        if (environment.get('GITHUB_WORKFLOW_REF') != environment.get('GITHUB_REPOSITORY', '') + '/.github/workflows/pr-preview.yml@refs/heads/main'
+    preview_controller = environment.get('GITHUB_REPOSITORY', '') + '/.github/workflows/pr-preview.yml@refs/heads/main'
+    # A manual dispatch is a preview request only from the preview controller; any other dispatched workflow keeps its own rules.
+    if (environment.get('GITHUB_EVENT_NAME') in {'pull_request_target', 'issue_comment'}
+            or environment.get('GITHUB_EVENT_NAME') == 'workflow_dispatch' and environment.get('GITHUB_WORKFLOW_REF') == preview_controller):
+        if (environment.get('GITHUB_WORKFLOW_REF') != preview_controller
                 or environment.get('GITHUB_WORKFLOW_SHA') != environment.get('GITHUB_SHA')):
             raise ValueError('preview submission requires its exact trusted main controller')
     for variable, pattern in [('GITHUB_REPOSITORY', r'[A-Za-z0-9-]+/[A-Za-z0-9_.-]+'),
