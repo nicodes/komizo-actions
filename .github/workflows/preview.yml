@@ -200,9 +200,16 @@ jobs:
         # The host is asked before the pull request is built, so its key lives and dies inside this one step.
         scratch="$(mktemp -d)"
         cleanup() {
+          status=$?
+          trap - EXIT
           directory="$(sed -n 's/^directory=//p' "$scratch/state")"
-          if [[ -n "$directory" ]]; then STATE_directory="$directory" node _preview_actions/connect/cleanup.cjs; fi
-          rm -rf "$scratch"
+          if [[ -n "$directory" ]]; then
+            STATE_directory="$directory" node _preview_actions/connect/cleanup.cjs || status=1
+            rm -rf "$directory" || status=1
+            [[ ! -e "$directory" ]] || status=1
+          fi
+          rm -rf "$scratch" || status=1
+          exit "$status"
         }
         trap cleanup EXIT
         touch "$scratch/state" "$scratch/env" "$scratch/output"
