@@ -46,10 +46,17 @@ class NativeWorkflowContext(unittest.TestCase):
         for name in ['audit-source.yml', 'audit-security.yml']:
             data = yaml.safe_load((workflows / name).read_text())
             self.assertEqual(set(data['jobs']), {'verify'})
-            self.assertNotIn('issues', data['jobs']['verify']['permissions'])
+            self.assertEqual(data['jobs']['verify']['permissions']['issues'], 'write')
             self.assertNotIn('id-token', data['jobs']['verify']['permissions'])
             self.assertNotIn('report-timeout', data['on']['workflow_call']['inputs'])
-            self.assertNotIn('report', data['on']['workflow_call']['inputs'])
+            report = data['on']['workflow_call']['inputs']['report']
+            self.assertEqual((report['type'], report['default']), ('boolean', False))
+            sdks = [step for step in data['jobs']['verify']['steps'] if step.get('id') == 'sdks']
+            self.assertEqual(len(sdks), 1)
+            final = data['jobs']['verify']['steps'][-1]
+            self.assertEqual(final['name'], 'Report failure')
+            self.assertEqual(final['if'], "failure() && inputs.report && steps.sdks.outcome == 'success'")
+            self.assertIn('report-failure.py', final['run'])
             self.assertNotIn('DISCORD_WEBHOOK_URL', str(data))
         backup = yaml.safe_load((workflows / 'backup.yml').read_text())
         self.assertEqual(set(backup['jobs']), {'backup'})

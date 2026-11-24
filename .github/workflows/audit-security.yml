@@ -30,6 +30,10 @@ name: Audit security
       check:
         type: string
         required: true
+      report:
+        description: File the failure report from the final step; callers must grant issues write
+        type: boolean
+        default: false
 permissions: {}
 jobs:
   verify:
@@ -40,6 +44,7 @@ jobs:
       contents: read
       actions: read
       attestations: read
+      issues: write
       packages: read
       deployments: read
     env:
@@ -121,6 +126,7 @@ jobs:
         fetch-depth: 1
         path: _operation_actions
     - name: Prepare accepted recipe SDKs
+      id: sdks
       timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).setup }}
       uses: ./_operation_actions/recipe-setup
       with:
@@ -216,3 +222,8 @@ jobs:
         include-hidden-files: true
         if-no-files-found: ${{ steps.plan.outputs['evidence-missing'] || 'error' }}
         retention-days: 7
+    - name: Report failure
+      if: failure() && inputs.report && steps.sdks.outcome == 'success'
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report || 5 }}
+      shell: bash
+      run: python3 -I -B .artifacts/recipe-sdks/_tools/helpers/report-failure.py
