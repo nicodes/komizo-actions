@@ -69,7 +69,10 @@ def runtime_environment(root,tools,environment,context=None):
 
 
 def deployment_run(event, repository, revision):
-    """Identify the one Deploy run whose completion triggered a separate verification workflow."""
+    """Identify the one Deploy run whose completion triggered a separate verification workflow.
+
+    The run is identified by its workflow file path: a run's name is its run-name (for example "Deploy · main").
+    """
     run = event.get('workflow_run')
     if not isinstance(run, dict):
         raise ValueError('workflow_run verification requires its triggering Deploy run')
@@ -79,7 +82,7 @@ def deployment_run(event, repository, revision):
             raise ValueError('workflow_run verification accepts only this repository\'s own Deploy run')
     run_id, attempt = run.get('id'), run.get('run_attempt')
     if (type(run_id) is not int or run_id <= 0 or type(attempt) is not int or attempt <= 0
-            or run.get('name') != 'Deploy' or run.get('path') != '.github/workflows/deploy.yml'
+            or run.get('path') != '.github/workflows/deploy.yml'
             or run.get('head_branch') != 'main' or run.get('event') not in {'push', 'workflow_dispatch'}
             or run.get('status') != 'completed' or run.get('conclusion') != 'success'):
         raise ValueError('workflow_run verification requires a successful main Deploy run')
