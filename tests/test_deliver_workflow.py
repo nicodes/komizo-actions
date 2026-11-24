@@ -126,9 +126,18 @@ class DeliverWorkflow(unittest.TestCase):
         self.assertIn("steps.plan.outputs.godot-production == 'true'", STEPS[index('Read the accepted public payload identity for independent browser acceptance')]['if'])
         uploads = {step['with']['name'].split('-${{')[0]: step for step in STEPS
                    if str(step.get('uses', '')).startswith('actions/upload-artifact@')}
-        self.assertEqual(set(uploads), {'activation', 'host-release', 'backup', 'backup-status'})
-        for step in uploads.values():
-            self.assertIn('always()', step['if'])
+        self.assertEqual(set(uploads), {'activation', 'host-release', 'backup', 'backup-status', 'public-release'})
+        for name, step in uploads.items():
+            if name != 'public-release':
+                self.assertIn('always()', step['if'])
+        # The separate public verification that follows reads this record by run id; it exists only for a ready release.
+        public = uploads['public-release']
+        self.assertEqual(public['if'], "steps.public.outputs.release-id != ''")
+        self.assertEqual(public['with']['name'], 'public-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}')
+        self.assertEqual(public['with']['path'], '.artifacts/public-release/public-release.json')
+        self.assertEqual(public['with']['if-no-files-found'], 'error')
+        self.assertLess(index('Read the accepted public payload identity for independent browser acceptance'),
+                        NAMES.index(public['name']))
         self.assertIn('!.artifacts/komizo-release/proof.json', uploads['host-release']['with']['path'])
         self.assertEqual(uploads['host-release']['with']['name'], 'host-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}')
         self.assertEqual(uploads['activation']['with']['name'], 'activation-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}')

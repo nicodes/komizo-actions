@@ -6,6 +6,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import oci_registry
@@ -39,6 +40,25 @@ class PublicIdentityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             packet,evidence=fixture(Path(directory))
             self.assertEqual(public_identity.identity(packet,evidence),'b'*64)
+
+    def test_the_identity_is_retained_with_its_source_for_the_separate_verification_that_follows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            packet,evidence=fixture(root)
+            self.assertEqual(public_identity.accepted(packet,evidence),('b'*64,'a'*40))
+            (root/'.artifacts').mkdir()
+            packet.rename(root/'.artifacts/release');evidence.rename(root/'.artifacts/komizo-release')
+            output=root/'output'
+            environment={'KOMIZO_OPERATION_DEADLINE':str(__import__('time').time()+300),'GITHUB_OUTPUT':str(output)}
+            old=Path.cwd()
+            with unittest.mock.patch.dict('os.environ',environment):
+                try:
+                    __import__('os').chdir(root);public_identity.main()
+                finally:
+                    __import__('os').chdir(old)
+            self.assertEqual(output.read_text(),'release-id='+'b'*64+'\n')
+            self.assertEqual(json.loads((root/'.artifacts/public-release/public-release.json').read_text()),
+                {'kind':'komizo.public-release','version':1,'source_commit':'a'*40,'release_id':'b'*64})
 
     def test_rejects_wrong_source_duplicate_manifest_and_links(self):
         for options in [{'source':'c'*40},{'duplicate':True},{'link':True}]:
