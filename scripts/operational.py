@@ -68,11 +68,33 @@ def runtime_environment(root,tools,environment,context=None):
     return values
 
 
-def successful_deployment(repository, revision, lookup):
+def deployment_run(event, repository, revision):
+    """Identify the one Deploy run whose completion triggered a separate verification workflow."""
+    run = event.get('workflow_run')
+    if not isinstance(run, dict):
+        raise ValueError('workflow_run verification requires its triggering Deploy run')
+    for key in ['repository', 'head_repository']:
+        value = run.get(key)
+        if not isinstance(value, dict) or value.get('full_name') != repository:
+            raise ValueError('workflow_run verification accepts only this repository\'s own Deploy run')
+    run_id, attempt = run.get('id'), run.get('run_attempt')
+    if (type(run_id) is not int or run_id <= 0 or type(attempt) is not int or attempt <= 0
+            or run.get('name') != 'Deploy' or run.get('path') != '.github/workflows/deploy.yml'
+            or run.get('head_branch') != 'main' or run.get('event') not in {'push', 'workflow_dispatch'}
+            or run.get('status') != 'completed' or run.get('conclusion') != 'success'):
+        raise ValueError('workflow_run verification requires a successful main Deploy run')
+    if run.get('head_sha') != revision:
+        raise ValueError('workflow_run verification applies only while its deployed revision is current main')
+    return run_id, attempt
+
+
+def successful_deployment(repository, revision, lookup, exact=None):
     endpoint = f'repos/{repository}/actions'
     runs = json.loads(lookup(f'{endpoint}/workflows/deploy.yml/runs?head_sha={revision}&status=success&per_page=100'))
     for run in runs['workflow_runs']:
         run_id, attempt = run.get('id'), run.get('run_attempt')
+        if exact is not None and (run_id, attempt) != exact:
+            continue
         if (type(run_id) is not int or run_id <= 0 or type(attempt) is not int or attempt <= 0
                 or run.get('head_sha') != revision or run.get('head_branch') != 'main'
                 or run.get('conclusion') != 'success' or run.get('path') != '.github/workflows/deploy.yml'
@@ -98,7 +120,7 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
     revision=environment.get('GITHUB_SHA','')
     if (operation not in WORKFLOWS or not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*',repository)
             or not SHA.fullmatch(revision) or environment.get('GITHUB_REF')!='refs/heads/main'
-            or environment.get('GITHUB_EVENT_NAME') not in {'workflow_dispatch','schedule'}
+            or environment.get('GITHUB_EVENT_NAME') not in {'workflow_dispatch','schedule','workflow_run'}
             or environment.get('GITHUB_WORKFLOW_SHA')!=revision
             or environment.get('GITHUB_WORKFLOW_REF') not in [repository+'/.github/workflows/'+name+'@refs/heads/main' for name in WORKFLOWS[operation]]
             or capture(['git','rev-parse','HEAD'],root,environment)!=revision):
@@ -107,7 +129,7 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
         raise ValueError('operational effects require an identified Actions execution')
     if operation=='paid' and environment['GITHUB_EVENT_NAME']!='workflow_dispatch':raise ValueError('paid checks require explicit manual dispatch')
     if capture(['git','status','--porcelain','--untracked-files=no'],root,environment):raise ValueError('operational native source was modified')
-    context=None
+    context=None;triggering=None
     cookbook_ref=environment.get('COOKBOOK_REF','')
     if not cookbook_ref and supplied_tools is not None:
         raise ValueError('an independent helper location requires the Cookbook source contract')
@@ -141,8 +163,15 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
         event=read_event(environment, maximum=1 << 20)
         if not isinstance(event,dict) or not isinstance(event.get('inputs',{}),dict):raise ValueError('verify dispatch metadata is invalid')
         inputs=event.get('inputs',{})
-        if environment['GITHUB_EVENT_NAME']=='workflow_dispatch' and inputs.get('mode')!='verify':
+        caller=environment['GITHUB_WORKFLOW_REF'].split('@',1)[0].rsplit('/',1)[1]
+        # Deploy's manual dispatch selects verification with mode; the separate verification workflow has no mode.
+        mode=inputs.get('mode') if caller=='deploy.yml' else inputs.get('mode','verify')
+        if environment['GITHUB_EVENT_NAME']=='workflow_dispatch' and mode!='verify':
             raise ValueError('production assertions require explicit Deploy verify mode')
+        if environment['GITHUB_EVENT_NAME']=='workflow_run':
+            if operation!='production' or caller!='verify-production.yml':
+                raise ValueError('only the separate production verification caller may follow a Deploy run')
+            triggering=deployment_run(event,repository,revision)
         if environment['GITHUB_EVENT_NAME']=='schedule' and event.get('schedule') not in record.get('schedule',[]):
             raise ValueError('production assertion schedule differs from its native policy')
         if operation=='paid' and inputs.get(selected) not in (True,'true'):
@@ -165,6 +194,8 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
     if operation in {'backup','production','paid'}:
         current=json.loads(lookup(f'repos/{repository}/git/ref/heads/main')).get('object',{}).get('sha')
         if current!=revision:raise ValueError('operational source is no longer current main')
+    if triggering is not None and not successful_deployment(repository,revision,lookup,triggering):
+        raise ValueError('production verification requires a successful deployment of this exact Deploy run')
     if operation=='paid' and record.get('deployment_required') and not successful_deployment(repository,revision,lookup):
         raise ValueError('paid production check requires a successful deployment of this exact revision')
     result=(config,data,record)

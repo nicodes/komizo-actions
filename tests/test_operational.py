@@ -162,6 +162,84 @@ class OperationalAuthority(unittest.TestCase):
             with self.subTest(filename=filename):
                 self.admit(environment, 'paid', 'model_smoke')
 
+    def workflow_run_environment(self, **changes):
+        """The separate verify-production.yml caller triggered by a completed Deploy run on main."""
+        (self.root / '.github/workflows/verify-production.yml').write_text(self.deploy)
+        self.git(self.root, 'add', '.')
+        self.git(self.root, 'commit', '-qm', 'Verification caller', '--allow-empty')
+        self.revision = self.git(self.root, 'rev-parse', 'HEAD')
+        run = dict(id=1234, run_attempt=1, name='Deploy', path='.github/workflows/deploy.yml', head_branch='main',
+                   head_sha=self.revision, event='push', status='completed', conclusion='success',
+                   repository={'full_name': 'owner/demo'}, head_repository={'full_name': 'owner/demo'})
+        self.event.write_text(json.dumps({'workflow_run': run | changes}))
+        return self.environment | dict(GITHUB_SHA=self.revision, GITHUB_WORKFLOW_SHA=self.revision,
+            GITHUB_EVENT_NAME='workflow_run', COOKBOOK_REF='a' * 40,
+            GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/verify-production.yml@refs/heads/main',
+            OPERATION_TIMEOUT='45', OPERATION_ENVIRONMENT='Production',
+            OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('production', self.data['production'])))
+
+    def test_workflow_run_verifies_the_deploy_run_that_triggered_it(self):
+        _, _, record = self.admit(self.workflow_run_environment(), 'production')
+        self.assertEqual(record['environment'], 'Production')
+        # A manual dispatch of the separate workflow has no mode input; Deploy's own dispatch still needs mode=verify.
+        environment = self.workflow_run_environment() | dict(GITHUB_EVENT_NAME='workflow_dispatch')
+        self.event.write_text(json.dumps({'inputs': {}}))
+        self.admit(environment, 'production')
+        self.event.write_text(json.dumps({'inputs': {'mode': 'deploy'}}))
+        with self.assertRaisesRegex(ValueError, 'verify mode'):
+            self.admit(environment, 'production')
+        self.event.write_text(json.dumps({'inputs': {}}))
+        with self.assertRaisesRegex(ValueError, 'verify mode'):
+            self.admit(environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main'), 'production')
+
+    def test_workflow_run_refuses_other_workflows_branches_failures_forks_and_superseded_revisions(self):
+        for changes, message in [
+                (dict(name='Build and test'), 'successful main Deploy'),
+                (dict(path='.github/workflows/build-and-test.yml'), 'successful main Deploy'),
+                (dict(head_branch='feature'), 'successful main Deploy'),
+                (dict(event='pull_request'), 'successful main Deploy'),
+                (dict(event='schedule'), 'successful main Deploy'),
+                (dict(conclusion='failure'), 'successful main Deploy'),
+                (dict(conclusion='cancelled'), 'successful main Deploy'),
+                (dict(status='in_progress'), 'successful main Deploy'),
+                (dict(run_attempt=0), 'successful main Deploy'),
+                (dict(head_repository={'full_name': 'fork/demo'}), 'own Deploy run'),
+                (dict(repository={'full_name': 'fork/demo'}), 'own Deploy run'),
+                (dict(head_repository=None), 'own Deploy run'),
+                (dict(head_sha='f' * 40), 'current main')]:
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, message):
+                self.admit(self.workflow_run_environment(**changes), 'production')
+        environment = self.workflow_run_environment()
+        self.event.write_text(json.dumps({}))
+        with self.assertRaisesRegex(ValueError, 'triggering Deploy run'):
+            self.admit(environment, 'production')
+
+    def test_workflow_run_requires_the_triggering_run_to_hold_a_successful_deploy_job(self):
+        for changes in [dict(id=999), dict(run_attempt=2)]:
+            environment = self.workflow_run_environment(**changes)
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'exact Deploy run'):
+                self.admit(environment, 'production')
+        environment = self.workflow_run_environment()
+        def lookup(path):
+            value = json.loads(self.lookup(path))
+            if 'jobs' in value:
+                value['jobs'][0]['name'] = 'Deploy'
+            return json.dumps(value)
+        with self.assertRaisesRegex(ValueError, 'exact Deploy run'):
+            self.admit(environment, 'production', lookup=lookup)
+
+    def test_workflow_run_is_only_the_ordinary_production_check_from_the_separate_caller(self):
+        environment = self.workflow_run_environment()
+        with self.assertRaisesRegex(ValueError, 'manual dispatch'):
+            self.admit(environment | dict(OPERATION_TIMEOUT='20', OPERATION_ENVIRONMENT='Production',
+                OPERATION_STEP_TIMEOUTS=json.dumps(workflows.step_timeouts('paid', self.data['paid'][0]))), 'paid', 'model_smoke')
+        with self.assertRaisesRegex(ValueError, 'exact trusted-main workflow'):
+            self.admit(environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main'), 'backup')
+        with self.assertRaisesRegex(ValueError, 'separate production verification caller'):
+            self.admit(environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main'), 'production')
+        with self.assertRaisesRegex(ValueError, 'exact trusted-main workflow'):
+            self.admit(environment | dict(GITHUB_REF='refs/heads/feature'), 'production')
+
     def test_source_workflow_runner_budget_and_policy_identity_refusals(self):
         for changes in [dict(GITHUB_REF='refs/heads/feature'), dict(GITHUB_SHA='f' * 40),
                         dict(GITHUB_WORKFLOW_SHA='f' * 40), dict(GITHUB_EVENT_NAME='pull_request'),
