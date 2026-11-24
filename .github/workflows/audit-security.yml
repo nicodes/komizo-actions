@@ -30,6 +30,9 @@ name: Audit security
       check:
         type: string
         required: true
+      report:
+        type: boolean
+        default: false
 permissions: {}
 jobs:
   verify:
@@ -40,6 +43,7 @@ jobs:
       contents: read
       actions: read
       attestations: read
+      issues: write
       packages: read
       deployments: read
     env:
@@ -216,3 +220,8 @@ jobs:
         include-hidden-files: true
         if-no-files-found: ${{ steps.plan.outputs['evidence-missing'] || 'error' }}
         retention-days: 7
+    - name: Report failure
+      if: failure() && inputs.report
+      timeout-minutes: ${{ fromJSON(inputs['step-timeouts']).report || 5 }}
+      shell: bash
+      run: python3 -I -B .artifacts/recipe-sdks/_tools/helpers/report-failure.py

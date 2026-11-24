@@ -11,7 +11,7 @@ class NativeMaintenance(unittest.TestCase):
         job = workflow['jobs']['backup']
         self.assertEqual(workflow['permissions'], {})
         self.assertEqual(job['permissions'], {'contents': 'read', 'actions': 'read',
-                         'id-token': 'write', 'attestations': 'read'})
+                         'id-token': 'write', 'attestations': 'read', 'issues': 'write'})
         self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
         budgets = [index for index, step in enumerate(job['steps'])
                    if 'scripts/operation_budget.py --job backup' in step.get('run', '')]
