@@ -168,7 +168,7 @@ class OperationalAuthority(unittest.TestCase):
         self.git(self.root, 'add', '.')
         self.git(self.root, 'commit', '-qm', 'Verification caller', '--allow-empty')
         self.revision = self.git(self.root, 'rev-parse', 'HEAD')
-        run = dict(id=1234, run_attempt=1, name='Deploy', path='.github/workflows/deploy.yml', head_branch='main',
+        run = dict(id=1234, run_attempt=1, name='Deploy · main', display_title='Deploy · main', path='.github/workflows/deploy.yml', head_branch='main',
                    head_sha=self.revision, event='push', status='completed', conclusion='success',
                    repository={'full_name': 'owner/demo'}, head_repository={'full_name': 'owner/demo'})
         self.event.write_text(json.dumps({'workflow_run': run | changes}))
@@ -194,7 +194,7 @@ class OperationalAuthority(unittest.TestCase):
 
     def test_workflow_run_refuses_other_workflows_branches_failures_forks_and_superseded_revisions(self):
         for changes, message in [
-                (dict(name='Build and test'), 'successful main Deploy'),
+                (dict(name='Build and test', path='.github/workflows/build-and-test.yml'), 'successful main Deploy'),
                 (dict(path='.github/workflows/build-and-test.yml'), 'successful main Deploy'),
                 (dict(head_branch='feature'), 'successful main Deploy'),
                 (dict(event='pull_request'), 'successful main Deploy'),
@@ -213,6 +213,11 @@ class OperationalAuthority(unittest.TestCase):
         self.event.write_text(json.dumps({}))
         with self.assertRaisesRegex(ValueError, 'triggering Deploy run'):
             self.admit(environment, 'production')
+
+    def test_workflow_run_identity_is_the_workflow_path_not_the_run_name(self):
+        for name in ['Deploy', 'Deploy · main', 'Deploy · abc123', 'Anything']:
+            with self.subTest(name=name):
+                self.admit(self.workflow_run_environment(name=name), 'production')
 
     def test_workflow_run_requires_the_triggering_run_to_hold_a_successful_deploy_job(self):
         for changes in [dict(id=999), dict(run_attempt=2)]:
