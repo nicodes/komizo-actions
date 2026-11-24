@@ -70,12 +70,14 @@ class DeliverWorkflow(unittest.TestCase):
         self.assertEqual(STEPS[capture]['with']['mode'], 'export'); self.assertEqual(STEPS[upload]['with']['mode'], 'upload')
 
     def test_source_gates_precede_everything_and_main_staleness_is_an_output_gate(self):
-        self.assertEqual(NAMES[:5], ['Require exact protected main source', 'Check out source', 'Check out deployment actions',
-                                     'Check out Cookbook', 'Stop when main has advanced'])
-        self.assertEqual(STEPS[4]['id'], 'current')
-        self.assertEqual(NAMES[5:8], ['Prepare recipe sources and dependencies', 'Build', 'Test'])
-        self.assertEqual(STEPS[5]['with']['checkout'], 'false'); self.assertEqual(STEPS[5]['with']['advisories'], 'skip')
-        self.assertEqual(STEPS[5]['with']['source'], '${{ github.sha }}')
+        windows = ['Bootstrap Python for protected SDK sources', 'Prepare the private artifact parent with actual pinned Python']
+        self.assertEqual(NAMES[:7], ['Require exact protected main source', 'Check out source', 'Check out deployment actions',
+                                     *windows, 'Check out Cookbook', 'Stop when main has advanced'])
+        self.assertEqual(STEPS[index('Stop when main has advanced')]['id'], 'current')
+        prepare = index('Prepare recipe sources and dependencies')
+        self.assertEqual(NAMES[prepare:prepare + 3], ['Prepare recipe sources and dependencies', 'Build', 'Test'])
+        self.assertEqual(STEPS[prepare]['with']['checkout'], 'false'); self.assertEqual(STEPS[prepare]['with']['advisories'], 'skip')
+        self.assertEqual(STEPS[prepare]['with']['source'], '${{ github.sha }}')
         for path in ['/prepare', '/build', '/test', '/finish']:
             self.assertEqual(len(using('.artifacts/recipe-sdks/_cookbook' + path)), 1)
         self.assertIn('--from-now', STEPS[index('Start delivery budget')]['run'])
