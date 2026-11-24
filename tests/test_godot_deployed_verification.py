@@ -268,5 +268,31 @@ class Workflows(unittest.TestCase):
         self.assertTrue(download['with']['name'].endswith('outputs.artifact }}'))
 
 
+class DispatchInputs(unittest.TestCase):
+    def manual(self, payload, caller='deploy.yml'):
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / 'event.json'
+            event.write_text(json.dumps(payload))
+            return public.manual_context({'GITHUB_REPOSITORY': REPOSITORY, 'GITHUB_EVENT_NAME': 'workflow_dispatch',
+                'GITHUB_WORKFLOW_SHA': REVISION, 'GITHUB_EVENT_PATH': str(event),
+                'GITHUB_WORKFLOW_REF': REPOSITORY + '/.github/workflows/' + caller + '@refs/heads/main'}, REVISION)
+
+    def test_a_dispatch_with_null_inputs_is_not_a_manual_verification_and_does_not_fail(self):
+        self.assertIsNone(self.manual({'inputs': None, 'ref': 'refs/heads/main'}))
+        self.assertIsNone(self.manual({'ref': 'refs/heads/main'}))
+        self.assertIsNone(self.manual({'inputs': None}, 'verify-public-release.yml'))
+        self.assertIsNone(self.manual({'inputs': ['mode']}))
+        self.assertEqual(self.manual({'inputs': {'mode': 'verify'}}), {'mode': 'verify'})
+
+    def test_shared_reader_treats_null_as_empty_and_refuses_other_shapes(self):
+        from workflow_run import dispatch_inputs
+        self.assertEqual(dispatch_inputs({'inputs': None}), {})
+        self.assertEqual(dispatch_inputs({}), {})
+        self.assertEqual(dispatch_inputs({'inputs': {'a': 'b'}}), {'a': 'b'})
+        for bad in [[], {'inputs': []}, {'inputs': 'x'}, {'inputs': 0}]:
+            with self.assertRaises(ValueError):
+                dispatch_inputs(bad)
+
+
 if __name__ == '__main__':
     unittest.main()

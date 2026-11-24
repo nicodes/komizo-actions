@@ -75,7 +75,7 @@ class PreviewWorkflow(unittest.TestCase):
         self.assertEqual(head['if'], "github.event.inputs.action == 'up'")
         self.assertLess(index('Resolve the requested pull request head'), index('Check out source'))
         controller = STEPS[index('Check out the trusted main controller')]
-        self.assertEqual((controller['with']['ref'], controller['with']['path']), ('${{ github.sha }}', '_preview_controller'))
+        self.assertEqual((controller['with']['ref'], controller['with']['path']), ('${{ github.sha }}', '.artifacts/preview-controller'))
         self.assertLess(index('Check out source'), index('Check out the trusted main controller'))
         self.assertLess(index('Check out the trusted main controller'), index('Plan the preview request from trusted main'))
 
@@ -93,11 +93,11 @@ class PreviewWorkflow(unittest.TestCase):
         publish, authorize = running('deliver.py publish'), running('deliver.py authorize')
         self.assertEqual((publish, authorize), ([index('Publish')], [index('Authorize')]))
         for step in publish + authorize:
-            self.assertIn('--preview', STEPS[step]['run']); self.assertIn('--controller-root _preview_controller', STEPS[step]['run'])
+            self.assertIn('--preview', STEPS[step]['run']); self.assertIn('--controller-root .artifacts/preview-controller', STEPS[step]['run'])
         self.assertEqual(using('_cookbook/build'), [index('Build')]); self.assertEqual(using('_cookbook/test'), [index('Test')])
 
     def test_the_host_key_never_exists_while_pull_request_code_runs(self):
-        connect = using('_preview_actions/connect')
+        connect = using('.artifacts/preview-actions/connect')
         self.assertEqual(connect, [index('Prepare host connection')])
         self.assertGreater(connect[0], index('Test'))
         routes = STEPS[index('Resolve public routes from protected host policy')]

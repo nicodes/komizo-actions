@@ -12,7 +12,7 @@ import tempfile
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 import recipe_context
-from workflow_run import read_event
+from workflow_run import read_event, dispatch_inputs
 
 
 def literal_sha(value):
@@ -28,8 +28,9 @@ def manual_context(environment, source):
         and environment.get('GITHUB_WORKFLOW_SHA')==source
         and environment.get('GITHUB_WORKFLOW_REF')==repository+'/.github/workflows/deploy.yml@refs/heads/main'):
         event=read_event(environment, maximum=1 << 20)
-        inputs=event.get('inputs') if isinstance(event,dict) else None
-        if isinstance(inputs,dict) and inputs.get('mode')=='verify':
+        try:inputs=dispatch_inputs(event)
+        except ValueError:return None
+        if inputs.get('mode')=='verify':
             return inputs
     return None
 

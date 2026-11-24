@@ -71,11 +71,11 @@ class DeliverWorkflow(unittest.TestCase):
 
     def test_source_gates_precede_everything_and_main_staleness_is_an_output_gate(self):
         windows = ['Bootstrap Python for protected SDK sources', 'Prepare the private artifact parent with actual pinned Python']
-        self.assertEqual(NAMES[:7], ['Require exact protected main source', 'Check out source', 'Check out deployment actions',
-                                     *windows, 'Check out Cookbook', 'Stop when main has advanced'])
+        self.assertEqual(NAMES[:7], ['Require exact protected main source', 'Check out source',
+                                     *windows, 'Check out Cookbook', 'Check out deployment actions', 'Stop when main has advanced'])
         self.assertEqual(STEPS[index('Stop when main has advanced')]['id'], 'current')
         prepare = index('Prepare recipe sources and dependencies')
-        self.assertEqual(NAMES[prepare:prepare + 3], ['Prepare recipe sources and dependencies', 'Build', 'Test'])
+        self.assertEqual(NAMES[prepare:prepare + 4], ['Prepare recipe sources and dependencies', 'Require an unmodified source tree before Build', 'Build', 'Test'])
         self.assertEqual(STEPS[prepare]['with']['checkout'], 'false'); self.assertEqual(STEPS[prepare]['with']['advisories'], 'skip')
         self.assertEqual(STEPS[prepare]['with']['source'], '${{ github.sha }}')
         for path in ['/prepare', '/build', '/test', '/finish']:
@@ -109,7 +109,7 @@ class DeliverWorkflow(unittest.TestCase):
         self.assertIn('report-failure.py', report['run'])
         self.assertEqual(notify['if'], "always() && !cancelled() && inputs.notify && steps.current.outputs.stale != 'true'")
         self.assertIs(notify['continue-on-error'], True)
-        self.assertEqual(notify['uses'], './_delivery_actions/notify-discord')
+        self.assertEqual(notify['uses'], './.artifacts/delivery-actions/notify-discord')
         status = notify['with']['status']
         self.assertIn("job.status == 'success'", status)
         for phase in ['ready', 'prepared_stopped']:

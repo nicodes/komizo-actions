@@ -19,7 +19,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import recipe_data
 import recipe_context
-from workflow_run import read_event
+from workflow_run import read_event,dispatch_inputs
 SHA=re.compile('[a-f0-9]{40}')
 WORKFLOWS={'backup':('backup.yml',),'security':('security.yml',),'production':('deploy.yml','verify-production.yml'),
     'paid':('deploy.yml','verify-production.yml')}
@@ -164,8 +164,8 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
         if context is None:
             raise ValueError('Deploy verification requires the accepted Cookbook source')
         event=read_event(environment, maximum=1 << 20)
-        if not isinstance(event,dict) or not isinstance(event.get('inputs',{}),dict):raise ValueError('verify dispatch metadata is invalid')
-        inputs=event.get('inputs',{})
+        try:inputs=dispatch_inputs(event)
+        except ValueError:raise ValueError('verify dispatch metadata is invalid') from None
         caller=environment['GITHUB_WORKFLOW_REF'].split('@',1)[0].rsplit('/',1)[1]
         # Deploy's manual dispatch selects verification with mode; the separate verification workflow has no mode.
         mode=inputs.get('mode') if caller=='deploy.yml' else inputs.get('mode','verify')
