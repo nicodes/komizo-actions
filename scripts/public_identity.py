@@ -14,6 +14,11 @@ from release_packet import Packet, document, read, regular
 
 
 def identity(packet_root, evidence_root, *, deadline=None):
+    return accepted(packet_root, evidence_root, deadline=deadline)[0]
+
+
+def accepted(packet_root, evidence_root, *, deadline=None):
+    """The accepted payload identity and the source it belongs to."""
     deadline = time.monotonic() + 120 if deadline is None else deadline
     packet = Packet(packet_root, timeout=120)
     evidence_root = Path(evidence_root)
@@ -63,7 +68,7 @@ def identity(packet_root, evidence_root, *, deadline=None):
             or not isinstance(found.get('release_id'), str) or not re.fullmatch('[a-f0-9]{64}', found['release_id'])):
         raise ValueError('public manifest does not name the accepted source and immutable payload')
     packet.unchanged()
-    return found['release_id']
+    return found['release_id'], found['source_commit']
 
 
 def main():
@@ -71,8 +76,13 @@ def main():
         remaining = float(os.environ['KOMIZO_OPERATION_DEADLINE']) - time.time()
         if remaining <= 0:
             raise ValueError('original delivery deadline expired')
-        value = identity(Path('.artifacts/release'), Path('.artifacts/komizo-release'),
-                         deadline=time.monotonic() + min(remaining, 120))
+        value, source = accepted(Path('.artifacts/release'), Path('.artifacts/komizo-release'),
+                                 deadline=time.monotonic() + min(remaining, 120))
+        # A separate workflow that follows this run reads the identity from this retained record.
+        directory = Path('.artifacts/public-release')
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / 'public-release.json').write_text(json.dumps(
+            {'kind': 'komizo.public-release', 'version': 1, 'source_commit': source, 'release_id': value}) + '\n')
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             output.write('release-id=' + value + '\n')
     except (OSError, ValueError, KeyError, TypeError, tarfile.TarError):

@@ -44,8 +44,17 @@ def select(config, plan, source, release, environment, runner, timeout, expected
     elif literal_sha(expected_source or source)!=source:
         raise ValueError('this native public workflow requires the current main payload')
     if (environment.get('GITHUB_REF')!='refs/heads/main' or source!=environment.get('GITHUB_SHA')
-            or environment.get('GITHUB_EVENT_NAME') not in {'push','workflow_dispatch'}):
+            or environment.get('GITHUB_EVENT_NAME') not in {'push','workflow_dispatch','workflow_run'}):
         raise ValueError('production verification requires the exact trusted main source')
+    if environment.get('GITHUB_EVENT_NAME')=='workflow_run':
+        # Only the separate public-release caller may follow a Deploy run, and only this repository's own successful one
+        # for the current main revision (the same admission as the other workflow_run verification).
+        repository=environment.get('GITHUB_REPOSITORY','')
+        if (not repository or environment.get('GITHUB_WORKFLOW_SHA')!=source
+                or environment.get('GITHUB_WORKFLOW_REF')!=repository+'/.github/workflows/verify-public-release.yml@refs/heads/main'):
+            raise ValueError('only the separate public verification caller may follow a Deploy run')
+        from operational import deployment_run
+        deployment_run(read_event(environment, maximum=1 << 20),repository,source)
     if not isinstance(release,str) or not re.fullmatch('[a-f0-9]{64}',release):
         raise ValueError('production verification requires the exact verified payload identity')
     if config.get('recipe')!='godot-game':raise ValueError('production browser assertions require a Godot recipe')
