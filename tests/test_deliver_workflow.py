@@ -40,7 +40,7 @@ class DeliverWorkflow(unittest.TestCase):
     def test_interface(self):
         call = WORKFLOW['on']['workflow_call']
         self.assertEqual(set(call['inputs']), {'cookbook-ref', 'komizo-ref', 'project', 'declaration', 'runner',
-            'timeout-minutes', 'environment', 'step-timeouts', 'deployment-url', 'notify', 'report', 'preview-clerk-key'})
+            'timeout-minutes', 'deploy-timeout-minutes', 'environment', 'step-timeouts', 'deployment-url', 'notify', 'report', 'preview-clerk-key'})
         self.assertIs(call['inputs']['notify']['default'], True); self.assertIs(call['inputs']['report']['default'], True)
         self.assertEqual(call['inputs']['preview-clerk-key']['default'], '')
         self.assertTrue(call['secrets']['KOMIZO_DEPLOY_KEY']['required'])
@@ -90,6 +90,18 @@ class DeliverWorkflow(unittest.TestCase):
                           ('Authorize', 'download'), ('Deploy', 'deploy'), ('Capture encrypted backup', 'capture'),
                           ('Upload encrypted backup', 'upload'), ('Check readiness', 'readiness'), ('Check health', 'readiness')]:
             self.assertEqual(STEPS[index(name)]['timeout-minutes'], '${{ fromJSON(inputs.step-timeouts).%s }}' % key)
+
+    def test_budget_uses_the_delivery_phase_not_the_whole_job(self):
+        self.assertTrue(WORKFLOW['on']['workflow_call']['inputs']['deploy-timeout-minutes']['required'])
+        for name in ['Start delivery budget', 'Bound deployment to its remaining native phase budget']:
+            self.assertEqual(STEPS[index(name)]['env']['TOTAL_MINUTES'], '${{ inputs.deploy-timeout-minutes }}')
+
+    def test_step_timeout_keys_are_known_or_have_fallbacks(self):
+        import re
+        known = {'artifact', 'build', 'capture', 'checkout', 'connect', 'deploy', 'download', 'plan', 'prepare',
+                 'publish', 'readiness', 'setup', 'test', 'upload'}
+        for key, fallback in re.findall(r'step-timeouts\)\.([a-z_]+)( \|\| \d+)?', TEXT):
+            self.assertTrue(key in known or fallback, key)
 
     def test_report_and_notify_conditions(self):
         report, notify = STEPS[index('Report failure')], STEPS[index('Notify')]

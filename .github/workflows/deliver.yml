@@ -18,6 +18,11 @@ name: Deliver
         type: string
         required: true
       timeout-minutes:
+        description: Whole job deadline, covering build, test and delivery
+        type: number
+        required: true
+      deploy-timeout-minutes:
+        description: Delivery phase budget retained across backup, publication and deployment
         type: number
         required: true
       environment:
@@ -168,7 +173,7 @@ jobs:
     - name: Start delivery budget
       shell: bash
       env:
-        TOTAL_MINUTES: ${{ inputs.timeout-minutes }}
+        TOTAL_MINUTES: ${{ inputs.deploy-timeout-minutes }}
       run: python3 -I -B _delivery_actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES"
     - name: Prepare host connection
       uses: ./_delivery_actions/connect
@@ -216,7 +221,7 @@ jobs:
     - name: Bound deployment to its remaining native phase budget
       shell: bash
       env:
-        TOTAL_MINUTES: ${{ inputs.timeout-minutes }}
+        TOTAL_MINUTES: ${{ inputs.deploy-timeout-minutes }}
         PHASE_MINUTES: ${{ fromJSON(inputs.step-timeouts).deploy }}
       run: python3 -I -B _delivery_actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES" --phase-seconds "$((PHASE_MINUTES * 60))"
     - name: Deploy
@@ -298,7 +303,7 @@ jobs:
         status: ${{ job.status }}
     - name: Report failure
       if: failure() && inputs.report && steps.current.outputs.stale != 'true'
-      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).report }}
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).report || 5 }}
       shell: bash
       run: python3 -I -B "${TOOLS_ROOT:-.artifacts/recipe-sdks/_tools}/helpers/report-failure.py"
     - name: Notify
