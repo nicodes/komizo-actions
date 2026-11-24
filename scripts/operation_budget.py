@@ -38,23 +38,47 @@ def deadline(jobs, source, total_minutes, role, *, now=None, completed=False, ph
     return math.floor(result.timestamp()), max(1, math.floor((result - now).total_seconds()))
 
 
+def from_now(total_minutes, *, now=None, phase_seconds=None, existing=None):
+    """Budget a single job that is already running: its clock starts now, and never extends an earlier deadline."""
+    now = now or datetime.now(timezone.utc)
+    if type(total_minutes) is not int or not 1 <= total_minutes <= 180:
+        raise ValueError('operation budget requires a finite original timeout')
+    result = now + timedelta(minutes=total_minutes)
+    if existing is not None:
+        result = min(result, datetime.fromtimestamp(existing, timezone.utc))
+    if phase_seconds is not None:
+        if type(phase_seconds) is not int or not 1 <= phase_seconds <= 10800:
+            raise ValueError('operation phase budget is invalid')
+        result = min(result, now + timedelta(seconds=phase_seconds))
+    if result <= now: raise ValueError('original operation deadline expired')
+    return math.floor(result.timestamp()), max(1, math.floor((result - now).total_seconds()))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--job', choices=sorted(LABELS), required=True)
+    parser.add_argument('--job', choices=sorted(LABELS))
+    parser.add_argument('--from-now', action='store_true', help='start the clock now instead of reading the jobs API')
     parser.add_argument('--total-minutes', type=int, required=True)
     parser.add_argument('--completed', action='store_true')
     parser.add_argument('--phase-seconds', type=int)
     args = parser.parse_args()
+    if args.from_now == (args.job is not None) or args.from_now and args.completed:
+        parser.error('select either --from-now or a --job role (with optional --completed)')
     try:
         submission.workflow(os.environ)
-        _, jobs, job_source = workflow_run.current(os.environ, api)
-        absolute, seconds = deadline(jobs, job_source, args.total_minutes, args.job,
-                                     completed=args.completed, phase_seconds=args.phase_seconds)
+        if args.from_now:
+            existing = os.environ.get('KOMIZO_OPERATION_DEADLINE')
+            absolute, seconds = from_now(args.total_minutes, phase_seconds=args.phase_seconds,
+                                         existing=int(existing) if existing else None)
+        else:
+            _, jobs, job_source = workflow_run.current(os.environ, api)
+            absolute, seconds = deadline(jobs, job_source, args.total_minutes, args.job,
+                                         completed=args.completed, phase_seconds=args.phase_seconds)
         with open(os.environ['GITHUB_ENV'], 'a') as output:
             output.write('KOMIZO_OPERATION_DEADLINE=' + str(absolute) + '\n')
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             output.write('seconds=' + str(seconds) + '\nminutes=' + str(math.ceil(seconds / 60)) + '\n')
-    except (KeyError, OSError, ValueError, TypeError):
+    except (KeyError, OSError, ValueError, TypeError, OverflowError):
         parser.exit(1, 'Original source operation budget unavailable or expired; no mutation submitted.\n')
 
 
