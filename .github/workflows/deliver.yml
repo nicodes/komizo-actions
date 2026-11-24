@@ -99,15 +99,6 @@ jobs:
         ref: ${{ github.sha }}
         fetch-depth: 1
         persist-credentials: false
-    - name: Check out deployment actions
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup }}
-      with:
-        repository: nicodes/komizo-actions
-        ref: ${{ inputs.komizo-ref }}
-        path: _delivery_actions
-        fetch-depth: 1
-        persist-credentials: false
     - name: Bootstrap Python for protected SDK sources
       if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
       id: sdk-private-python
@@ -143,10 +134,19 @@ jobs:
         path: .artifacts/recipe-sdks/_cookbook
         fetch-depth: 1
         persist-credentials: false
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: .artifacts/delivery-actions
+        fetch-depth: 1
+        persist-credentials: false
     - name: Stop when main has advanced
       id: current
       shell: bash
-      run: python3 -I -B _delivery_actions/scripts/require-current-deployment.py
+      run: python3 -I -B .artifacts/delivery-actions/scripts/require-current-deployment.py
     - name: Prepare recipe sources and dependencies
       uses: ./.artifacts/recipe-sdks/_cookbook/prepare
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).prepare }}
@@ -156,6 +156,15 @@ jobs:
         checkout: 'false'
         advisories: skip
         preview-clerk-key: ${{ inputs.preview-clerk-key }}
+    - name: Require an unmodified source tree before Build
+      shell: bash
+      run: |
+        set -euo pipefail
+        status="$(git status --porcelain --untracked-files=normal)"
+        if [[ -n "$status" ]]; then
+          printf '::error::The source tree is modified before Build, so the build would be stamped as modified. Only .artifacts/ may be written into the workspace:\n%s\n' "$status"
+          exit 1
+        fi
     - name: Build
       uses: ./.artifacts/recipe-sdks/_cookbook/build
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).build }}
@@ -163,7 +172,7 @@ jobs:
       uses: ./.artifacts/recipe-sdks/_cookbook/test
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).test }}
     - name: Plan deployment
-      uses: ./_delivery_actions/application-delivery
+      uses: ./.artifacts/delivery-actions/application-delivery
       id: plan
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan }}
       with:
@@ -174,16 +183,16 @@ jobs:
       shell: bash
       env:
         TOTAL_MINUTES: ${{ inputs.deploy-timeout-minutes }}
-      run: python3 -I -B _delivery_actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES"
+      run: python3 -I -B .artifacts/delivery-actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES"
     - name: Prepare host connection
-      uses: ./_delivery_actions/connect
+      uses: ./.artifacts/delivery-actions/connect
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).connect }}
       env:
         KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
         KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
         KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
     - name: Capture encrypted backup
-      uses: ./_delivery_actions/backup-transfer
+      uses: ./.artifacts/delivery-actions/backup-transfer
       id: backup
       if: steps.plan.outputs.backup != ''
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).capture }}
@@ -192,7 +201,7 @@ jobs:
         project: ${{ inputs.project }}
         config: ${{ steps.plan.outputs.backup }}
     - name: Upload encrypted backup
-      uses: ./_delivery_actions/backup-transfer
+      uses: ./.artifacts/delivery-actions/backup-transfer
       if: steps.backup.outputs.has-export == 'true' && steps.plan.outputs.upload == 'true'
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).upload }}
       with:
@@ -211,21 +220,21 @@ jobs:
         PROJECT: ${{ inputs.project }}
         KOMIZO_REGISTRY_USER: ${{ github.repository_owner }}
         KOMIZO_REGISTRY_TOKEN: ${{ github.token }}
-      run: python3 -I -B _delivery_actions/scripts/deliver.py publish --source "$GITHUB_SHA" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
+      run: python3 -I -B .artifacts/delivery-actions/scripts/deliver.py publish --source "$GITHUB_SHA" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
     - name: Authorize
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).download }}
       shell: bash
       env:
         PROJECT: ${{ inputs.project }}
-      run: python3 -I -B _delivery_actions/scripts/deliver.py authorize --source "$GITHUB_SHA" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
+      run: python3 -I -B .artifacts/delivery-actions/scripts/deliver.py authorize --source "$GITHUB_SHA" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
     - name: Bound deployment to its remaining native phase budget
       shell: bash
       env:
         TOTAL_MINUTES: ${{ inputs.deploy-timeout-minutes }}
         PHASE_MINUTES: ${{ fromJSON(inputs.step-timeouts).deploy }}
-      run: python3 -I -B _delivery_actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES" --phase-seconds "$((PHASE_MINUTES * 60))"
+      run: python3 -I -B .artifacts/delivery-actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES" --phase-seconds "$((PHASE_MINUTES * 60))"
     - name: Deploy
-      uses: ./_delivery_actions/deploy
+      uses: ./.artifacts/delivery-actions/deploy
       id: deploy
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).deploy }}
       with:
@@ -238,7 +247,7 @@ jobs:
       if: steps.deploy.outputs.phase == 'ready' && steps.plan.outputs.godot-production == 'true'
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness }}
       shell: bash
-      run: python3 -I -B _delivery_actions/scripts/public_identity.py
+      run: python3 -I -B .artifacts/delivery-actions/scripts/public_identity.py
     - name: Retain the accepted public payload identity for the separate verification that follows
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: steps.public.outputs.release-id != ''
@@ -250,13 +259,13 @@ jobs:
         if-no-files-found: error
         retention-days: 14
     - name: Check health
-      uses: ./_delivery_actions/health-check
+      uses: ./.artifacts/delivery-actions/health-check
       if: steps.deploy.outputs.phase == 'ready' && steps.plan.outputs.health-urls != ''
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness }}
       with:
         urls: ${{ steps.plan.outputs.health-urls }}
     - name: Check readiness
-      uses: ./_delivery_actions/application-readiness
+      uses: ./.artifacts/delivery-actions/application-readiness
       if: steps.deploy.outputs.phase == 'ready' && (steps.plan.outputs.readiness != '' || steps.plan.outputs.readiness-operation == 'true')
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness }}
       env:
@@ -319,7 +328,7 @@ jobs:
       shell: bash
       run: python3 -I -B "${TOOLS_ROOT:-.artifacts/recipe-sdks/_tools}/helpers/report-failure.py"
     - name: Notify
-      uses: ./_delivery_actions/notify-discord
+      uses: ./.artifacts/delivery-actions/notify-discord
       if: always() && !cancelled() && inputs.notify && steps.current.outputs.stale != 'true'
       continue-on-error: true
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).notify || 2 }}

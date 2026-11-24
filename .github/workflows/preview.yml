@@ -101,15 +101,6 @@ jobs:
         ref: ${{ steps.head.outputs.sha || github.sha }}
         fetch-depth: 1
         persist-credentials: false
-    - name: Check out deployment actions
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup || 10 }}
-      with:
-        repository: nicodes/komizo-actions
-        ref: ${{ inputs.komizo-ref }}
-        path: _preview_actions
-        fetch-depth: 1
-        persist-credentials: false
     - name: Bootstrap Python for protected SDK sources
       if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
       id: sdk-private-python
@@ -145,16 +136,25 @@ jobs:
         path: .artifacts/recipe-sdks/_cookbook
         fetch-depth: 1
         persist-credentials: false
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup || 10 }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: .artifacts/preview-actions
+        fetch-depth: 1
+        persist-credentials: false
     - name: Check out the trusted main controller
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).checkout || 5 }}
       with:
         ref: ${{ github.sha }}
-        path: _preview_controller
+        path: .artifacts/preview-controller
         fetch-depth: 1
         persist-credentials: false
     - name: Prepare accepted recipe SDKs
-      uses: ./_preview_actions/recipe-sources
+      uses: ./.artifacts/preview-actions/recipe-sources
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup || 10 }}
       with:
         cookbook-ref: ${{ inputs.cookbook-ref }}
@@ -165,7 +165,7 @@ jobs:
       run: |
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        python3 -I -B _preview_actions/scripts/preview.py request --declaration "$DECLARATION" --controller-root _preview_controller "${sdk[@]}"
+        python3 -I -B .artifacts/preview-actions/scripts/preview.py request --declaration "$DECLARATION" --controller-root .artifacts/preview-controller "${sdk[@]}"
     - name: Revalidate the plan before host access
       id: plan
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
@@ -175,7 +175,7 @@ jobs:
       run: |
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        python3 -I -B _preview_actions/scripts/preview.py plan --controller-root _preview_controller "${sdk[@]}"
+        python3 -I -B .artifacts/preview-actions/scripts/preview.py plan --controller-root .artifacts/preview-controller "${sdk[@]}"
     - name: Require the checked-out source to be the planned head
       if: steps.plan.outputs.action == 'up'
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
@@ -204,7 +204,7 @@ jobs:
           trap - EXIT
           directory="$(sed -n 's/^directory=//p' "$scratch/state")"
           if [[ -n "$directory" ]]; then
-            STATE_directory="$directory" node _preview_actions/connect/cleanup.cjs || status=1
+            STATE_directory="$directory" node .artifacts/preview-actions/connect/cleanup.cjs || status=1
             rm -rf "$directory" || status=1
             [[ ! -e "$directory" ]] || status=1
           fi
@@ -213,11 +213,11 @@ jobs:
         }
         trap cleanup EXIT
         touch "$scratch/state" "$scratch/env" "$scratch/output"
-        GITHUB_STATE="$scratch/state" GITHUB_ENV="$scratch/env" GITHUB_OUTPUT="$scratch/output" node _preview_actions/connect/connect.cjs
+        GITHUB_STATE="$scratch/state" GITHUB_ENV="$scratch/env" GITHUB_OUTPUT="$scratch/output" node .artifacts/preview-actions/connect/connect.cjs
         config="$(sed -n 's/^KOMIZO_SSH_CONFIG=//p' "$scratch/env")"
         [[ -n "$config" ]]
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        KOMIZO_SSH_CONFIG="$config" python3 -I -B _preview_actions/scripts/preview.py routes --controller-root _preview_controller "${sdk[@]}"
+        KOMIZO_SSH_CONFIG="$config" python3 -I -B .artifacts/preview-actions/scripts/preview.py routes --controller-root .artifacts/preview-controller "${sdk[@]}"
     - name: Record the planned origins for the build
       if: steps.plan.outputs.action == 'up'
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
@@ -230,7 +230,7 @@ jobs:
       run: |
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        python3 -I -B _preview_actions/scripts/preview.py environment --controller-root _preview_controller "${sdk[@]}"
+        python3 -I -B .artifacts/preview-actions/scripts/preview.py environment --controller-root .artifacts/preview-controller "${sdk[@]}"
     - name: Prepare recipe sources and dependencies
       if: steps.plan.outputs.action == 'up'
       uses: ./.artifacts/recipe-sdks/_cookbook/prepare
@@ -241,6 +241,15 @@ jobs:
         checkout: 'false'
         advisories: skip
         preview-clerk-key: ${{ inputs.preview-clerk-key || vars.CLERK_PUBLISHABLE_KEY }}
+    - name: Require an unmodified source tree before Build
+      shell: bash
+      run: |
+        set -euo pipefail
+        status="$(git status --porcelain --untracked-files=normal)"
+        if [[ -n "$status" ]]; then
+          printf '::error::The source tree is modified before Build, so the build would be stamped as modified. Only .artifacts/ may be written into the workspace:\n%s\n' "$status"
+          exit 1
+        fi
     - name: Build
       if: steps.plan.outputs.action == 'up'
       uses: ./.artifacts/recipe-sdks/_cookbook/build
@@ -253,9 +262,9 @@ jobs:
       shell: bash
       env:
         TOTAL_MINUTES: ${{ inputs.deploy-timeout-minutes }}
-      run: python3 -I -B _preview_actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES"
+      run: python3 -I -B .artifacts/preview-actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES"
     - name: Prepare host connection
-      uses: ./_preview_actions/connect
+      uses: ./.artifacts/preview-actions/connect
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).connect || 5 }}
       env:
         KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
@@ -271,7 +280,7 @@ jobs:
         PLANNED_HEAD: ${{ steps.plan.outputs.head }}
         KOMIZO_REGISTRY_USER: ${{ github.repository_owner }}
         KOMIZO_REGISTRY_TOKEN: ${{ github.token }}
-      run: python3 -I -B _preview_actions/scripts/deliver.py publish --preview --controller-root _preview_controller --source "$PLANNED_HEAD" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
+      run: python3 -I -B .artifacts/preview-actions/scripts/deliver.py publish --preview --controller-root .artifacts/preview-controller --source "$PLANNED_HEAD" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
     - name: Authorize
       if: steps.plan.outputs.action == 'up'
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).download || 10 }}
@@ -280,13 +289,13 @@ jobs:
         PLAN: ${{ steps.request.outputs.plan }}
         PROJECT: ${{ steps.plan.outputs.project }}
         PLANNED_HEAD: ${{ steps.plan.outputs.head }}
-      run: python3 -I -B _preview_actions/scripts/deliver.py authorize --preview --controller-root _preview_controller --source "$PLANNED_HEAD" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
+      run: python3 -I -B .artifacts/preview-actions/scripts/deliver.py authorize --preview --controller-root .artifacts/preview-controller --source "$PLANNED_HEAD" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
     - name: Bound the preview operation to its remaining phase budget
       shell: bash
       env:
         TOTAL_MINUTES: ${{ inputs.deploy-timeout-minutes }}
         PHASE_MINUTES: ${{ fromJSON(inputs.step-timeouts).deploy || 30 }}
-      run: python3 -I -B _preview_actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES" --phase-seconds "$((PHASE_MINUTES * 60))"
+      run: python3 -I -B .artifacts/preview-actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES" --phase-seconds "$((PHASE_MINUTES * 60))"
     - name: Apply the exact preview operation
       id: preview
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).deploy || 30 }}
@@ -298,7 +307,7 @@ jobs:
       run: |
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        python3 -I -B _preview_actions/scripts/preview.py apply --controller-root _preview_controller "${sdk[@]}"
+        python3 -I -B .artifacts/preview-actions/scripts/preview.py apply --controller-root .artifacts/preview-controller "${sdk[@]}"
     - name: Verify exact source readiness on verified routes
       if: steps.plan.outputs.action == 'up'
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness || 10 }}
@@ -310,7 +319,7 @@ jobs:
       run: |
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        python3 -I -B _preview_actions/scripts/preview.py health --controller-root _preview_controller "${sdk[@]}"
+        python3 -I -B .artifacts/preview-actions/scripts/preview.py health --controller-root .artifacts/preview-controller "${sdk[@]}"
     - name: Comment the preview lifecycle on the pull request
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).report || 5 }}
       shell: bash
@@ -321,7 +330,7 @@ jobs:
       run: |
         set -euo pipefail
         sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
-        python3 -I -B _preview_actions/scripts/preview.py report --controller-root _preview_controller "${sdk[@]}"
+        python3 -I -B .artifacts/preview-actions/scripts/preview.py report --controller-root .artifacts/preview-controller "${sdk[@]}"
     - name: Finish
       uses: ./.artifacts/recipe-sdks/_cookbook/finish
       if: always() && steps.plan.outputs.action == 'up'
@@ -330,7 +339,7 @@ jobs:
         status: ${{ job.status }}
     - name: Announce successful Preview
       if: inputs.notify && steps.plan.outputs.action == 'up'
-      uses: ./_preview_actions/notify-discord
+      uses: ./.artifacts/preview-actions/notify-discord
       continue-on-error: true
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).notify || 2 }}
       with:

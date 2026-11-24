@@ -19,6 +19,18 @@ def read_event(environment, maximum=4 << 20):
     return json.loads(raw)
 
 
+def dispatch_inputs(event):
+    """The inputs of a manual dispatch; GitHub sends null when the workflow declares or receives none."""
+    if not isinstance(event, dict):
+        raise ValueError('dispatch metadata is invalid')
+    inputs = event.get('inputs')
+    if inputs is None:
+        return {}
+    if not isinstance(inputs, dict):
+        raise ValueError('dispatch metadata is invalid')
+    return inputs
+
+
 def source(metadata, environment, event=None):
     submission.workflow(environment)
     repository = environment['GITHUB_REPOSITORY']

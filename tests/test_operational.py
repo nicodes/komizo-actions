@@ -192,6 +192,21 @@ class OperationalAuthority(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'verify mode'):
             self.admit(environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main'), 'production')
 
+    def test_manual_dispatch_without_inputs_sends_null_and_is_admitted_for_the_verification_caller(self):
+        environment = self.workflow_run_environment() | dict(GITHUB_EVENT_NAME='workflow_dispatch')
+        realistic = {'inputs': None, 'ref': 'refs/heads/main', 'repository': {'full_name': 'owner/demo'},
+                     'workflow': '.github/workflows/verify-production.yml'}
+        self.event.write_text(json.dumps(realistic))
+        self.admit(environment, 'production')
+        for refused in [[], 'verify', 7]:
+            self.event.write_text(json.dumps(realistic | {'inputs': refused}))
+            with self.assertRaisesRegex(ValueError, 'dispatch metadata'):
+                self.admit(environment, 'production')
+        # Deploy's own dispatch still needs mode=verify, with or without inputs.
+        self.event.write_text(json.dumps(realistic))
+        with self.assertRaisesRegex(ValueError, 'verify mode'):
+            self.admit(environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main'), 'production')
+
     def test_workflow_run_refuses_other_workflows_branches_failures_forks_and_superseded_revisions(self):
         for changes, message in [
                 (dict(name='Build and test', path='.github/workflows/build-and-test.yml'), 'successful main Deploy'),
