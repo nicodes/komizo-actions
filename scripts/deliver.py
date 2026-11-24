@@ -29,7 +29,7 @@ PROOF = Path('.artifacts/cookbook-validation.json')
 
 
 def api(path):
-    raw = submission.transport(['gh', 'api', path], input=b'', timeout=30)
+    raw = submission.lookup(path)
     return json.loads(raw, object_pairs_hook=registry.unique_object)
 
 
@@ -189,7 +189,8 @@ def main():
         (run_publish if args.command == 'publish' else run_authorize)(args, dict(os.environ))
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n' if args.command == 'publish'
-                    else 'Fresh release authorization refused; no host mutation submitted.\n')
+                    else '\n'.join(['Fresh release authorization refused; no host mutation submitted.',
+                                    *submission.refusal_report(error)]) + '\n')
 
 
 if __name__ == '__main__':

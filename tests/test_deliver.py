@@ -311,4 +311,32 @@ class PreviewPublish(PreviewMixin, Publish):
         self.publish.assert_not_called()
 
 
+class AuthorizeMain(unittest.TestCase):
+    """The command line prints the existing line first, then a safe reason or category."""
+    FIRST = 'Fresh release authorization refused; no host mutation submitted.'
+
+    def run_main(self, error):
+        arguments = ['deliver.py', 'authorize', '--source', SOURCE, '--cookbook-root', '.', '--cookbook-ref', COOKBOOK,
+                     '--tools-root', '.', '--project', 'mailroom']
+        stderr = io.StringIO()
+        with patch.object(sys, 'argv', arguments), patch.object(deliver, 'run_authorize', side_effect=error), \
+                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as exit:
+            deliver.main()
+        self.assertEqual(exit.exception.code, 1)
+        return stderr.getvalue().splitlines()
+
+    def test_a_refusal_prints_the_line_then_its_reason(self):
+        self.assertEqual(self.run_main(ValueError('production authority requires its exact trusted main caller')),
+                         [self.FIRST, 'Reason: production authority requires its exact trusted main caller'])
+
+    def test_a_failed_lookup_prints_a_transient_cause(self):
+        lines = self.run_main(deliver.submission.TransientLookupError('GitHub lookup failed after 3 attempts: x'))
+        self.assertEqual(lines[0], self.FIRST); self.assertTrue(lines[1].startswith('Cause looks transient'))
+
+    def test_other_errors_print_only_a_category(self):
+        self.assertEqual(self.run_main(KeyError('secret-token')), [self.FIRST, 'Cause: KeyError'])
+        self.assertEqual(self.run_main(deliver.subprocess.CalledProcessError(128, ['git', 'rev-parse', 'HEAD'], stderr='secret-token')),
+                         [self.FIRST, 'Cause may be transient: CalledProcessError: git rev-parse exited with status 128'])
+
+
 if __name__ == '__main__': unittest.main()

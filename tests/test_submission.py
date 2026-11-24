@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -124,6 +125,52 @@ class FixedSubmission(unittest.TestCase):
         for script in ['import sys; sys.stdout.buffer.write(b"a" * 5000000)',
                        'import sys; sys.stderr.buffer.write(b"a" * 70000)', 'raise SystemExit(1)']:
             with self.assertRaises(ValueError): submission.transport([sys.executable, '-c', script], input=b'{}', timeout=5)
+
+
+class RefusalReports(unittest.TestCase):
+    FIRST = 'Fresh release authorization refused; no host mutation submitted.'
+
+    def test_a_plain_value_error_reports_its_author_written_message(self):
+        self.assertEqual(submission.refusal_report(ValueError('production source advanced\nbefore   release')),
+                         ['Reason: production source advanced before release'])
+
+    def test_value_error_subclasses_report_only_their_class(self):
+        for error in [json.JSONDecodeError('secret-token', 'secret-token', 3), UnicodeDecodeError('utf-8', b'x', 0, 1, 'secret-token')]:
+            report = ' '.join(submission.refusal_report(error))
+            self.assertIn(type(error).__name__, report); self.assertNotIn('secret-token', report)
+
+    def test_other_exceptions_report_a_category_without_their_content(self):
+        for error in [OSError('secret-token'), KeyError('secret-token'), TypeError('secret-token')]:
+            self.assertEqual(submission.refusal_report(error), ['Cause: ' + type(error).__name__])
+
+    def test_subprocess_failures_report_two_command_words_and_status_never_output(self):
+        failed = subprocess.CalledProcessError(4, ['gh', 'api', 'repos/x/y/branches/main', '--token', 'secret-token'],
+                                               output=b'secret-token', stderr=b'secret-token')
+        timed = subprocess.TimeoutExpired(['git', 'rev-parse', 'secret-token'], 30, output=b'secret-token')
+        self.assertEqual(submission.refusal_report(failed), ['Cause may be transient: CalledProcessError: gh api exited with status 4'])
+        self.assertEqual(submission.refusal_report(timed), ['Cause looks transient: TimeoutExpired: git rev-parse timed out after 30s'])
+        self.assertEqual(submission.refusal_report(subprocess.SubprocessError('secret-token')), ['Cause may be transient: SubprocessError'])
+
+    def test_a_failed_lookup_is_reported_as_transient(self):
+        error = submission.TransientLookupError('GitHub lookup failed after 3 attempts: submission exceeded its completion deadline')
+        self.assertTrue(submission.refusal_report(error)[0].startswith('Cause looks transient'))
+
+    def test_a_lookup_is_retried_a_bounded_number_of_times_and_returns_a_later_success(self):
+        calls = []
+        def flaky(arguments, **_):
+            calls.append(arguments)
+            if len(calls) < 3: raise ValueError('submission did not return an authenticated completion')
+            return b'{}'
+        sleeps = []
+        with patch.object(submission, 'transport', flaky):
+            self.assertEqual(submission.lookup('repos/x/y', sleep=sleeps.append), b'{}')
+        self.assertEqual(len(calls), 3); self.assertEqual(sleeps, [2, 2])
+
+    def test_a_lookup_that_keeps_failing_is_refused_after_three_attempts(self):
+        with patch.object(submission, 'transport', side_effect=ValueError('submission exceeded its completion deadline')) as transport:
+            with self.assertRaisesRegex(submission.TransientLookupError, 'after 3 attempts: submission exceeded'):
+                submission.lookup('repos/x/y', sleep=lambda _: None)
+        self.assertEqual(transport.call_count, 3)
 
 
 if __name__ == '__main__': unittest.main()

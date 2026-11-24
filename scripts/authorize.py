@@ -29,7 +29,7 @@ MAX_ARCHIVE = 24 << 20
 
 
 def api(path):
-    raw = submission.transport(['gh', 'api', path], input=b'', timeout=30)
+    raw = submission.lookup(path)
     return json.loads(raw, object_pairs_hook=registry.unique_object)
 
 
@@ -211,8 +211,9 @@ def main():
         target = args.directory / 'proof.json'
         with target.open('xb') as output:
             os.fchmod(output.fileno(), 0o600); output.write(registry.canonical(value))
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, zipfile.BadZipFile):
-        parser.exit(1, 'Fresh release authorization refused; no host mutation submitted.\n')
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, zipfile.BadZipFile) as error:
+        parser.exit(1, '\n'.join(['Fresh release authorization refused; no host mutation submitted.',
+                                 *submission.refusal_report(error)]) + '\n')
 
 
 if __name__ == '__main__': main()

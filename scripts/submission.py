@@ -330,6 +330,49 @@ def transport(arguments, *, input, timeout, max_output=MAX_REQUEST):
             pipe.close()
 
 
+class TransientLookupError(ValueError):
+    """A read-only lookup kept failing; nothing was judged about the release itself."""
+
+
+def lookup(path, *, attempts=3, pause=2, sleep=time.sleep):
+    """Read one GitHub fact through `gh api`, retrying a failed read a bounded number of times.
+
+    Every caller uses the result only to compare a fact and fails closed on any error, so a retry can
+    only ever replace a failed read with a later successful read of the same fact."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return transport(['gh', 'api', path], input=b'', timeout=30)
+        except ValueError as error:
+            if attempt == attempts:
+                raise TransientLookupError(f'GitHub lookup failed after {attempts} attempts: {error}') from None
+            sleep(pause)
+
+
+def refusal_report(error):
+    """Safe lines explaining a refusal: author-written messages and exception categories, never output or values."""
+    kind = type(error)
+    if isinstance(error, TransientLookupError):
+        return ['Cause looks transient (lookup failure or timeout), not a verdict on the release: ' + one_line(error)]
+    if kind is ValueError:
+        return ['Reason: ' + one_line(error)]
+    if isinstance(error, subprocess.TimeoutExpired):
+        return [f'Cause looks transient: {kind.__name__}: {command_words(error.cmd)} timed out after {error.timeout}s']
+    if isinstance(error, subprocess.CalledProcessError):
+        return [f'Cause may be transient: {kind.__name__}: {command_words(error.cmd)} exited with status {error.returncode}']
+    if isinstance(error, subprocess.SubprocessError):
+        return [f'Cause may be transient: {kind.__name__}']
+    return [f'Cause: {kind.__name__}']
+
+
+def one_line(error, limit=300):
+    return ' '.join(str(error).split())[:limit]
+
+
+def command_words(command):
+    words = command.split() if isinstance(command, str) else list(command or [])
+    return ' '.join(str(word)[:40] for word in words[:2]) or 'command'
+
+
 def ssh_arguments(config):
     config = Path(config)
     with release_packet.regular(config, 65536) as (_, info):
