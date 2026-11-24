@@ -149,16 +149,18 @@ class OperationalAuthority(unittest.TestCase):
                 self.admit(environment, operation=operation)
 
     def test_production_and_paid_accept_deploy_or_verify_production_callers(self):
-        for operation in ['production', 'paid']:
-            for filename in ['deploy.yml', 'verify-production.yml']:
-                environment = self.paid_environment() | {
-                    'GITHUB_WORKFLOW_REF': 'owner/demo/.github/workflows/' + filename + '@refs/heads/main'}
-                self.event.write_text(json.dumps({'inputs': {'mode': 'verify', 'model_smoke': True}}))
-                self.deploy = 'name: Deploy\n'
-                (self.root / '.github/workflows' / filename).write_text(self.deploy)
-                with self.subTest(operation=operation, filename=filename):
-                    self.admit(environment, operation, 'model_smoke' if operation == 'paid' else '',
-                               lookup=lambda path: self.lookup(path))
+        self.assertEqual({operation: set(driver.WORKFLOWS[operation]) for operation in ['production', 'paid']},
+                         {operation: {'deploy.yml', 'verify-production.yml'} for operation in ['production', 'paid']})
+        self.event.write_text(json.dumps({'inputs': {'mode': 'verify', 'model_smoke': True}}))
+        for filename in ['deploy.yml', 'verify-production.yml']:
+            (self.root / '.github/workflows' / filename).write_text(self.deploy)
+            self.git(self.root, 'add', '.')
+            self.git(self.root, 'commit', '-qm', 'Caller ' + filename, '--allow-empty')
+            self.revision = self.git(self.root, 'rev-parse', 'HEAD')
+            environment = self.paid_environment() | dict(GITHUB_SHA=self.revision, GITHUB_WORKFLOW_SHA=self.revision,
+                GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/' + filename + '@refs/heads/main')
+            with self.subTest(filename=filename):
+                self.admit(environment, 'paid', 'model_smoke')
 
     def test_source_workflow_runner_budget_and_policy_identity_refusals(self):
         for changes in [dict(GITHUB_REF='refs/heads/feature'), dict(GITHUB_SHA='f' * 40),
