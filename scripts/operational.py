@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import tomllib
 
 sys.dont_write_bytecode=True
@@ -117,7 +118,31 @@ def successful_deployment(repository, revision, lookup, exact=None):
     return False
 
 
-def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_tools=None,return_context=False):
+DEPLOYMENT_WAITS=6
+DEPLOYMENT_PAUSE=10
+
+
+def awaited_deployment(repository, revision, lookup, exact, *, waits=DEPLOYMENT_WAITS, pause=DEPLOYMENT_PAUSE, sleep=time.sleep):
+    """Confirm that the exact triggering Deploy run succeeded, tolerating a listing that lags its completion.
+
+    The successful-run listing can briefly omit a run whose completion just triggered this workflow. Each miss
+    reads that one run: a completed run without a success conclusion refuses at once, anything else waits and
+    reads again, at most `waits` times. Only a later read that shows the exact run and attempt successful under
+    every condition of `successful_deployment` passes, so the wait never weakens the check."""
+    run_id, attempt = exact
+    for waited in range(waits + 1):
+        if successful_deployment(repository, revision, lookup, exact):
+            return
+        run = json.loads(lookup(f'repos/{repository}/actions/runs/{run_id}/attempts/{attempt}'))
+        if isinstance(run, dict) and run.get('status') == 'completed' and run.get('conclusion') != 'success':
+            raise ValueError('production verification requires a successful deployment of this exact Deploy run')
+        if waited < waits:
+            sleep(pause)
+    raise ValueError('production verification requires a successful deployment of this exact Deploy run;'
+                     f' it was not reported successful after waiting {waits * pause} seconds')
+
+
+def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_tools=None,return_context=False,sleep=time.sleep):
     lookup=lookup or (lambda path:capture(['gh','api',path]))
     repository=environment.get('GITHUB_REPOSITORY','')
     revision=environment.get('GITHUB_SHA','')
@@ -197,8 +222,7 @@ def authority(root,tools,operation,selected,environment,lookup=None,*,supplied_t
     if operation in {'backup','production','paid'}:
         current=json.loads(lookup(f'repos/{repository}/git/ref/heads/main')).get('object',{}).get('sha')
         if current!=revision:raise ValueError('operational source is no longer current main')
-    if triggering is not None and not successful_deployment(repository,revision,lookup,triggering):
-        raise ValueError('production verification requires a successful deployment of this exact Deploy run')
+    if triggering is not None:awaited_deployment(repository,revision,lookup,triggering,sleep=sleep)
     if operation=='paid' and record.get('deployment_required') and not successful_deployment(repository,revision,lookup):
         raise ValueError('paid production check requires a successful deployment of this exact revision')
     result=(config,data,record)
@@ -211,6 +235,18 @@ def execute(arguments,root,environment,timeout=300):
 
 def pinned(arguments,root,environment,timeout=300):
     execute(['mise','exec','--',*arguments],root,environment,timeout)
+
+
+def install_browser(arguments,root,environment,*,attempts=3,pause=5,sleep=time.sleep):
+    """Install the declared browser, retrying a failed or timed-out install a bounded number of times.
+
+    The install only fetches packages, and the assertions that follow check the exact result, so a later
+    successful attempt is equivalent to a first one; the last failure is raised unchanged."""
+    for attempt in range(1,attempts+1):
+        try:return pinned(arguments,root,environment)
+        except (subprocess.CalledProcessError,subprocess.TimeoutExpired):
+            if attempt==attempts:raise
+            sleep(pause)
 
 
 def native(root,record,environment,run=pinned):
@@ -265,7 +301,7 @@ def prepare(root,tools,config,record,operation,environment,*,helpers=None,contex
         package=next((item for item in selected if item['directory']==prepare['browser']),None)
         if package is None:raise ValueError('operational browser requires its frozen native package')
         command=['bun','x','--no-install','playwright'] if package.get('manager','npm')=='bun' else ['npm','exec','--no','--','playwright']
-        pinned([*command,'install','--with-deps',*(['--only-shell'] if prepare.get('browser_only_shell',False) else []),'chromium'],directory,environment)
+        install_browser([*command,'install','--with-deps',*(['--only-shell'] if prepare.get('browser_only_shell',False) else []),'chromium'],directory,environment)
     if operation!='paid':
         for check in prepare.get('native',[]):native(root,check,environment)
 

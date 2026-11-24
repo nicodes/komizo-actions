@@ -113,7 +113,7 @@ class OperationalAuthority(unittest.TestCase):
         return json.dumps({'workflow_runs': [dict(id=1234, head_sha=self.revision, head_branch='main', conclusion='success',
             path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=1)]})
 
-    def admit(self, environment=None, operation='security', selected='', lookup=None):
+    def admit(self, environment=None, operation='security', selected='', lookup=None, sleep=lambda _: None):
         def module(name):
             if name == 'operational_workflows':
                 return self.operations
@@ -125,7 +125,7 @@ class OperationalAuthority(unittest.TestCase):
         with patch.object(driver, 'ROOT', self.actions), patch.object(driver, 'tools_modules', return_value=(self.operations, None, None)), \
                 patch.object(driver.recipe_context, 'accepted_context', return_value=context):
             return driver.authority(self.root, self.tools, operation, selected,
-                                    environment or self.environment, lookup or self.lookup)
+                                    environment or self.environment, lookup or self.lookup, sleep=sleep)
 
     def paid_environment(self):
         return self.environment | dict(GITHUB_WORKFLOW_REF='owner/demo/.github/workflows/deploy.yml@refs/heads/main',
@@ -247,6 +247,53 @@ class OperationalAuthority(unittest.TestCase):
             return json.dumps(value)
         with self.assertRaisesRegex(ValueError, 'exact Deploy run'):
             self.admit(environment, 'production', lookup=lookup)
+
+    def lagging_lookup(self, appears_on, run=None, other_runs=()):
+        """A run listing that omits the triggering run until its `appears_on`th read."""
+        reads = []
+        def lookup(path):
+            if '/workflows/deploy.yml/runs' in path:
+                reads.append(path)
+                value = json.loads(self.lookup(path))
+                if len(reads) < appears_on:
+                    value['workflow_runs'] = []
+                value['workflow_runs'] = [*other_runs, *value['workflow_runs']]
+                return json.dumps(value)
+            if path.endswith('/runs/1234/attempts/1'):
+                return json.dumps(run or dict(id=1234, run_attempt=1, status='in_progress', conclusion=None))
+            return self.lookup(path)
+        lookup.reads = reads
+        return lookup
+
+    def test_a_listing_that_lags_the_deploy_run_passes_on_a_later_read(self):
+        sleeps = []
+        lookup = self.lagging_lookup(2)
+        self.admit(self.workflow_run_environment(), 'production', lookup=lookup, sleep=sleeps.append)
+        self.assertEqual((len(lookup.reads), sleeps), (2, [10]))
+
+    def test_a_deploy_run_that_never_appears_is_refused_after_bounded_waits(self):
+        sleeps = []
+        lookup = self.lagging_lookup(10 ** 6)
+        with self.assertRaisesRegex(ValueError, 'exact Deploy run; it was not reported successful after waiting 60 seconds'):
+            self.admit(self.workflow_run_environment(), 'production', lookup=lookup, sleep=sleeps.append)
+        self.assertEqual((len(lookup.reads), sleeps), (7, [10] * 6))
+
+    def test_a_deploy_run_reported_failed_is_refused_without_waiting(self):
+        sleeps = []
+        failed = dict(id=1234, run_attempt=1, status='completed', conclusion='failure')
+        lookup = self.lagging_lookup(10 ** 6, run=failed)
+        with self.assertRaisesRegex(ValueError, 'exact Deploy run$'):
+            self.admit(self.workflow_run_environment(), 'production', lookup=lookup, sleep=sleeps.append)
+        self.assertEqual((len(lookup.reads), sleeps), (1, []))
+
+    def test_unrelated_deploy_runs_for_the_same_revision_never_satisfy_the_wait(self):
+        sleeps = []
+        other = dict(id=77, head_sha=self.revision, head_branch='main', conclusion='success',
+                     path='.github/workflows/deploy.yml', event='push', run_attempt=1)
+        lookup = self.lagging_lookup(10 ** 6, other_runs=[other, dict(other, id=1234, run_attempt=2)])
+        with self.assertRaisesRegex(ValueError, 'waiting 60 seconds'):
+            self.admit(self.workflow_run_environment(), 'production', lookup=lookup, sleep=sleeps.append)
+        self.assertEqual(len(sleeps), 6)
 
     def test_workflow_run_is_only_the_ordinary_production_check_from_the_separate_caller(self):
         environment = self.workflow_run_environment()
@@ -412,6 +459,25 @@ class OperationalAuthority(unittest.TestCase):
             record['prepare']['browser_only_shell'] = True
             driver.prepare(self.root, self.tools, config, record, 'production', self.environment)
             self.assertIn('--only-shell', calls[-1])
+
+    def test_browser_install_is_retried_a_bounded_number_of_times(self):
+        failure = subprocess.CalledProcessError(100, ['apt-get'])
+        attempts, sleeps = [], []
+        def flaky(*args):
+            attempts.append(args)
+            if len(attempts) < 3: raise failure
+        with patch.object(driver, 'pinned', flaky):
+            driver.install_browser(['playwright', 'install'], self.root, {}, sleep=sleeps.append)
+        self.assertEqual((len(attempts), sleeps), (3, [5, 5]))
+        attempts.clear()
+        with patch.object(driver, 'pinned', side_effect=subprocess.TimeoutExpired('apt-get', 300)) as pinned:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                driver.install_browser(['playwright', 'install'], self.root, {}, sleep=lambda _: None)
+        self.assertEqual(pinned.call_count, 3)
+        with patch.object(driver, 'pinned', side_effect=ValueError('refused')) as pinned:
+            with self.assertRaises(ValueError):
+                driver.install_browser(['playwright', 'install'], self.root, {}, sleep=lambda _: None)
+        self.assertEqual(pinned.call_count, 1)
 
     def test_retired_operational_audit_report_refuses_before_any_sdk_or_issue_effect(self):
         with patch.dict(os.environ, {'OPERATION':'security'}, clear=True), \
