@@ -259,6 +259,8 @@ jobs:
       uses: ./_delivery_actions/application-readiness
       if: steps.deploy.outputs.phase == 'ready' && (steps.plan.outputs.readiness != '' || steps.plan.outputs.readiness-operation == 'true')
       timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness }}
+      env:
+        EXPECTED_REVISION: ${{ github.sha }}
       with:
         declaration: ${{ inputs.declaration }}
     - name: Retain the bounded historical activation receipt
