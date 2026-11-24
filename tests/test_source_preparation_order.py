@@ -74,6 +74,7 @@ class SourcePreparationOrder(unittest.TestCase):
             ('.github/workflows/deliver.yml','deliver'),
             ('.github/workflows/deploy.yml','deliver'),
             ('.github/workflows/pr-preview.yml','effects'),
+            ('.github/workflows/preview.yml','preview'),
             ('.github/workflows/publish-preview.yml','publish'),
             ('.github/workflows/readiness.yml','verify'),
             ('.github/workflows/report-failure.yml','report'),

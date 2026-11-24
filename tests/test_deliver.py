@@ -105,7 +105,7 @@ class Fixture(unittest.TestCase):
         self.stack.enter_context(patch.object(deliver.publication, 'release_proof',
             lambda admitted, environment: real(admitted, environment, token_request=lambda *_: 'a.b.c')))
         self.args = SimpleNamespace(source=SOURCE, project='mailroom', cookbook_root=self.root, cookbook_ref=COOKBOOK,
-                                    tools_root=self.root)
+                                    tools_root=self.root, preview=False, controller_root=None)
 
     def write_proof(self):
         (self.root / '.artifacts/cookbook-validation.json').write_text(json.dumps(self.proof))
@@ -229,6 +229,85 @@ class Publish(Fixture):
     def test_head_that_is_not_main_source_publishes_nothing(self):
         self.state['head'] = 'd' * 40
         with self.assertRaisesRegex(ValueError, 'final main source'): self.run_publish()
+        self.publish.assert_not_called()
+
+
+PLAN = {'action': 'up', 'head': SOURCE, 'pr': 7, 'repository': 'example/mailroom',
+        'policy': {'project': 'mailroom', 'test_groups': GROUPS}}
+
+
+class PreviewMixin:
+    """The same local checks serve a manual preview whose plan comes from the trusted main controller."""
+    def setUp(self):
+        super().setUp()
+        self.plan = copy.deepcopy(PLAN)
+        self.environment |= {'GITHUB_EVENT_NAME': 'workflow_dispatch',
+                             'GITHUB_WORKFLOW_REF': 'example/mailroom/.github/workflows/pr-preview.yml@refs/heads/main'}
+        for key in ['GITHUB_EVENT_NAME', 'GITHUB_WORKFLOW_REF']:
+            self.proof['execution_context'][key] = self.environment[key]
+        self.write_proof()
+        self.publication['validation_sha256'] = hashlib.sha256(registry.canonical(self.proof)).hexdigest()
+        self.publication['execution_context'] = self.proof['execution_context']
+        (self.root / '.artifacts/komizo-release/publication.json').write_bytes(registry.canonical(self.publication))
+        self.args.preview, self.args.controller_root = True, self.root / 'controller'
+        self.state['main'] = 'd' * 40  # a preview never requires its source to be main
+        import preview
+        self.validate = self.stack.enter_context(patch.object(preview, 'validate_plan', side_effect=lambda *_a, **_k: self.plan))
+        self.policy = self.stack.enter_context(patch.object(preview, 'source_policy'))
+        self.current = self.stack.enter_context(patch.object(preview, 'require_current'))
+        self.stack.enter_context(patch.object(preview, 'current_pr', return_value={}))
+        self.environment['PLAN'] = '{}'; self.context.cookbook = self.root
+
+
+class PreviewAuthorize(PreviewMixin, Authorize):
+    def test_mints_one_release_proof_for_the_local_packet(self):
+        super().test_mints_one_release_proof_for_the_local_packet()
+        self.assertGreaterEqual(self.validate.call_count, 2)
+        self.policy.assert_called()
+
+    def test_main_advanced_is_refused(self):
+        self.authorize()  # main moving is irrelevant to a preview; the pull request is rechecked instead
+        self.current.assert_not_called()
+
+    def test_wrong_caller_workflow_is_refused(self):
+        self.validate.side_effect = ValueError('Preview requires its trusted-main controller')
+        self.refused('trusted-main controller')
+
+    def test_head_that_is_not_the_run_source_is_refused(self):
+        self.state['head'] = 'd' * 40
+        self.refused('checked-out head')
+
+    def test_a_plan_for_another_head_project_or_action_is_refused(self):
+        for key, value in [('head', 'e' * 40), ('action', 'down')]:
+            with self.subTest(key=key):
+                self.plan = copy.deepcopy(PLAN) | {key: value}
+                self.refused('authorized request')
+        self.plan = copy.deepcopy(PLAN); self.plan['policy']['project'] = 'other'
+        self.refused('authorized request')
+
+    def test_only_a_manual_dispatch_is_a_preview(self):
+        self.environment['GITHUB_EVENT_NAME'] = 'push'
+        self.refused('manual dispatch')
+
+    def test_a_missing_controller_checkout_is_refused(self):
+        self.args.controller_root = None
+        self.refused('controller checkout')
+
+
+class PreviewPublish(PreviewMixin, Publish):
+    def test_head_that_is_not_main_source_publishes_nothing(self):
+        self.state['head'] = 'd' * 40
+        with self.assertRaisesRegex(ValueError, 'checked-out head'): self.run_publish()
+        self.publish.assert_not_called()
+
+    def test_publishes_after_and_before_rechecking_the_pull_request(self):
+        self.run_publish()
+        self.assertEqual(self.current.call_count, 2)
+        self.publish.assert_called_once()
+
+    def test_a_stale_pull_request_publishes_nothing(self):
+        self.current.side_effect = ValueError('stale')
+        with self.assertRaisesRegex(ValueError, 'stale'): self.run_publish()
         self.publish.assert_not_called()
 
 

@@ -1,0 +1,343 @@
+name: Preview
+'on':
+  workflow_call:
+    inputs:
+      cookbook-ref:
+        type: string
+        required: true
+      komizo-ref:
+        type: string
+        required: true
+      declaration:
+        description: Repository path of the native Preview policy declaration
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      timeout-minutes:
+        description: Whole job deadline, covering build, test and preview effects
+        type: number
+        required: true
+      deploy-timeout-minutes:
+        description: Effects phase budget retained across connection, publication and deployment
+        type: number
+        required: true
+      step-timeouts:
+        type: string
+        required: true
+      notify:
+        type: boolean
+        default: true
+      preview-clerk-key:
+        type: string
+        default: ''
+    outputs:
+      action:
+        description: The confirmed operation, up or down
+        value: ${{ jobs.preview.outputs.action }}
+      preview-url:
+        description: Public application URL of the ready preview, empty after down
+        value: ${{ jobs.preview.outputs.preview-url }}
+      api-url:
+        description: Public API URL of the ready preview when it has a backend
+        value: ${{ jobs.preview.outputs.api-url }}
+      release-digest:
+        description: Exact admitted preview release identity
+        value: ${{ jobs.preview.outputs.release-digest }}
+    secrets:
+      KOMIZO_DEPLOY_KEY:
+        required: true
+      DISCORD_WEBHOOK_URL:
+        required: false
+permissions: {}
+jobs:
+  preview:
+    name: Preview
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    environment: Preview
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      packages: write
+      attestations: read
+      id-token: write
+    env:
+      COOKBOOK_REF: ${{ inputs.cookbook-ref }}
+      KOMIZO_REF: ${{ inputs.komizo-ref }}
+      DECLARATION: ${{ inputs.declaration }}
+      PREVIEW_PR: ${{ github.event.inputs.pr }}
+      PREVIEW_ACTION: ${{ github.event.inputs.action }}
+      GH_TOKEN: ${{ github.token }}
+      MISE_AUTO_INSTALL: 'false'
+      MISE_EXEC_AUTO_INSTALL: 'false'
+      MISE_TASK_RUN_AUTO_INSTALL: 'false'
+    steps:
+    - name: Require the exact trusted main dispatch and request shape
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ && "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+        [[ "$COOKBOOK_REF" =~ ^[a-f0-9]{40}$ && "$KOMIZO_REF" =~ ^[a-f0-9]{40}$ ]]
+        [[ "$PREVIEW_ACTION" == up || "$PREVIEW_ACTION" == down ]]
+        [[ "$PREVIEW_PR" =~ ^[1-9][0-9]{0,9}$ ]]
+    - name: Resolve the requested pull request head
+      id: head
+      if: github.event.inputs.action == 'up'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        head="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PREVIEW_PR" --jq .head.sha)"
+        [[ "$head" =~ ^[a-f0-9]{40}$ ]]
+        printf 'sha=%s\n' "$head" >> "$GITHUB_OUTPUT"
+    - name: Check out source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).checkout || 5 }}
+      with:
+        ref: ${{ steps.head.outputs.sha || github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Check out deployment actions
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup || 10 }}
+      with:
+        repository: nicodes/komizo-actions
+        ref: ${{ inputs.komizo-ref }}
+        path: _preview_actions
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Bootstrap Python for protected SDK sources
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      id: sdk-private-python
+      timeout-minutes: 5
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      env:
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      with:
+        python-version: 3.13.11
+        check-latest: false
+    - name: Prepare the private artifact parent with actual pinned Python
+      if: ${{ runner.os == 'Windows' && inputs.cookbook-ref != '' }}
+      timeout-minutes: 1
+      shell: bash
+      env:
+        PRIVATE_PYTHON: ${{ steps.sdk-private-python.outputs.python-path }}
+        MISE_AUTO_INSTALL: 'false'
+        MISE_EXEC_AUTO_INSTALL: 'false'
+        MISE_TASK_RUN_AUTO_INSTALL: 'false'
+      run: |
+        set -euo pipefail
+        "$PRIVATE_PYTHON" -I -B -c 'exec('"'"'import os\nfrom pathlib import Path\nimport stat\nimport sys\nif os.name == "nt" and sys.version_info < (3, 13):\n    raise SystemExit("Windows private SDK directories require the selected Python 3.13 or newer")\nparent = Path.cwd() / ".artifacts"\nfor candidate in [parent, *parent.parents]:\n    try:\n        info = candidate.lstat()\n    except FileNotFoundError:\n        continue\n    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:\n        raise SystemExit("SDK artifact parent must not traverse links or reparse points")\nif parent.exists():\n    if not parent.is_dir():\n        raise SystemExit("SDK artifact parent must be a directory")\nelse:\n    parent.mkdir(mode=0o700)\n'"'"')'
+        printf 'COOKBOOK_BOOTSTRAP_PYTHON=%s\n' "$PRIVATE_PYTHON" >> "$GITHUB_ENV"
+        printf '%s\n' 'MISE_AUTO_INSTALL=false' 'MISE_EXEC_AUTO_INSTALL=false' 'MISE_TASK_RUN_AUTO_INSTALL=false' >> "$GITHUB_ENV"
+    - name: Check out Cookbook
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup || 10 }}
+      with:
+        repository: nicodes/cookbook
+        ref: ${{ inputs.cookbook-ref }}
+        path: .artifacts/recipe-sdks/_cookbook
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Check out the trusted main controller
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).checkout || 5 }}
+      with:
+        ref: ${{ github.sha }}
+        path: _preview_controller
+        fetch-depth: 1
+        persist-credentials: false
+    - name: Prepare accepted recipe SDKs
+      uses: ./_preview_actions/recipe-sources
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).setup || 10 }}
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+    - name: Plan the preview request from trusted main
+      id: request
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py request --declaration "$DECLARATION" --controller-root _preview_controller "${sdk[@]}"
+    - name: Revalidate the plan before host access
+      id: plan
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py plan --controller-root _preview_controller "${sdk[@]}"
+    - name: Require the checked-out source to be the planned head
+      if: steps.plan.outputs.action == 'up'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
+      shell: bash
+      env:
+        PLANNED_HEAD: ${{ steps.plan.outputs.head }}
+      run: |
+        set -euo pipefail
+        [[ "$(git rev-parse HEAD)" == "$PLANNED_HEAD" ]]
+    - name: Resolve public routes from protected host policy
+      id: routes
+      if: steps.plan.outputs.action == 'up'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).connect || 5 }}
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+        KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
+        KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
+        KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
+      run: |
+        set -euo pipefail
+        # The host is asked before the pull request is built, so its key lives and dies inside this one step.
+        scratch="$(mktemp -d)"
+        cleanup() {
+          directory="$(sed -n 's/^directory=//p' "$scratch/state")"
+          if [[ -n "$directory" ]]; then STATE_directory="$directory" node _preview_actions/connect/cleanup.cjs; fi
+          rm -rf "$scratch"
+        }
+        trap cleanup EXIT
+        touch "$scratch/state" "$scratch/env" "$scratch/output"
+        GITHUB_STATE="$scratch/state" GITHUB_ENV="$scratch/env" GITHUB_OUTPUT="$scratch/output" node _preview_actions/connect/connect.cjs
+        config="$(sed -n 's/^KOMIZO_SSH_CONFIG=//p' "$scratch/env")"
+        [[ -n "$config" ]]
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        KOMIZO_SSH_CONFIG="$config" python3 -I -B _preview_actions/scripts/preview.py routes --controller-root _preview_controller "${sdk[@]}"
+    - name: Record the planned origins for the build
+      if: steps.plan.outputs.action == 'up'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).plan || 5 }}
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+        APP_ORIGIN: ${{ steps.routes.outputs['app-origin'] }}
+        API_ORIGIN: ${{ steps.routes.outputs['api-origin'] }}
+        VALIDATION_TIMEOUT: ${{ inputs.timeout-minutes }}
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py environment --controller-root _preview_controller "${sdk[@]}"
+    - name: Prepare recipe sources and dependencies
+      if: steps.plan.outputs.action == 'up'
+      uses: ./.artifacts/recipe-sdks/_cookbook/prepare
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).prepare || 30 }}
+      with:
+        cookbook-ref: ${{ inputs.cookbook-ref }}
+        source: ${{ steps.plan.outputs.head }}
+        checkout: 'false'
+        advisories: skip
+        preview-clerk-key: ${{ inputs.preview-clerk-key || vars.CLERK_PUBLISHABLE_KEY }}
+    - name: Build
+      if: steps.plan.outputs.action == 'up'
+      uses: ./.artifacts/recipe-sdks/_cookbook/build
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).build || 30 }}
+    - name: Test
+      if: steps.plan.outputs.action == 'up'
+      uses: ./.artifacts/recipe-sdks/_cookbook/test
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).test || 30 }}
+    - name: Start preview effect budget
+      shell: bash
+      env:
+        TOTAL_MINUTES: ${{ inputs.deploy-timeout-minutes }}
+      run: python3 -I -B _preview_actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES"
+    - name: Prepare host connection
+      uses: ./_preview_actions/connect
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).connect || 5 }}
+      env:
+        KOMIZO_SERVER_URL: ${{ vars.KOMIZO_SERVER_URL }}
+        KOMIZO_KNOWN_HOSTS: ${{ vars.KOMIZO_KNOWN_HOSTS }}
+        KOMIZO_DEPLOY_KEY: ${{ secrets.KOMIZO_DEPLOY_KEY }}
+    - name: Publish
+      if: steps.plan.outputs.action == 'up'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).publish || 30 }}
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+        PROJECT: ${{ steps.plan.outputs.project }}
+        PLANNED_HEAD: ${{ steps.plan.outputs.head }}
+        KOMIZO_REGISTRY_USER: ${{ github.repository_owner }}
+        KOMIZO_REGISTRY_TOKEN: ${{ github.token }}
+      run: python3 -I -B _preview_actions/scripts/deliver.py publish --preview --controller-root _preview_controller --source "$PLANNED_HEAD" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
+    - name: Authorize
+      if: steps.plan.outputs.action == 'up'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).download || 10 }}
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+        PROJECT: ${{ steps.plan.outputs.project }}
+        PLANNED_HEAD: ${{ steps.plan.outputs.head }}
+      run: python3 -I -B _preview_actions/scripts/deliver.py authorize --preview --controller-root _preview_controller --source "$PLANNED_HEAD" --project "$PROJECT" --cookbook-root "$COOKBOOK_ROOT" --cookbook-ref "$COOKBOOK_REF" --tools-root "$TOOLS_ROOT"
+    - name: Bound the preview operation to its remaining phase budget
+      shell: bash
+      env:
+        TOTAL_MINUTES: ${{ inputs.deploy-timeout-minutes }}
+        PHASE_MINUTES: ${{ fromJSON(inputs.step-timeouts).deploy || 30 }}
+      run: python3 -I -B _preview_actions/scripts/operation_budget.py --from-now --total-minutes "$TOTAL_MINUTES" --phase-seconds "$((PHASE_MINUTES * 60))"
+    - name: Apply the exact preview operation
+      id: preview
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).deploy || 30 }}
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+        KOMIZO_REGISTRY_USER: ${{ steps.plan.outputs.action == 'up' && github.repository_owner || '' }}
+        KOMIZO_REGISTRY_TOKEN: ${{ steps.plan.outputs.action == 'up' && github.token || '' }}
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py apply --controller-root _preview_controller "${sdk[@]}"
+    - name: Verify exact source readiness on verified routes
+      if: steps.plan.outputs.action == 'up'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).readiness || 10 }}
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+        PREVIEW_URL: ${{ steps.preview.outputs['preview-url'] }}
+        API_URL: ${{ steps.preview.outputs['api-url'] }}
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py health --controller-root _preview_controller "${sdk[@]}"
+    - name: Comment the preview lifecycle on the pull request
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).report || 5 }}
+      shell: bash
+      env:
+        PLAN: ${{ steps.request.outputs.plan }}
+        PREVIEW_URL: ${{ steps.preview.outputs['preview-url'] }}
+        API_URL: ${{ steps.preview.outputs['api-url'] }}
+      run: |
+        set -euo pipefail
+        sdk=(--cookbook-root .artifacts/recipe-sdks/_cookbook --cookbook-ref "$COOKBOOK_REF" --tools-root .artifacts/recipe-sdks/_tools)
+        python3 -I -B _preview_actions/scripts/preview.py report --controller-root _preview_controller "${sdk[@]}"
+    - name: Finish
+      uses: ./.artifacts/recipe-sdks/_cookbook/finish
+      if: always() && steps.plan.outputs.action == 'up'
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).finish || 5 }}
+      with:
+        status: ${{ job.status }}
+    - name: Announce successful Preview
+      if: inputs.notify && steps.plan.outputs.action == 'up'
+      uses: ./_preview_actions/notify-discord
+      continue-on-error: true
+      timeout-minutes: ${{ fromJSON(inputs.step-timeouts).notify || 2 }}
+      with:
+        webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        environment: preview
+        status: success
+        revision: ${{ steps.plan.outputs.head }}
+        pr-number: ${{ steps.plan.outputs.pr }}
+        deployment-url: ${{ steps.preview.outputs['preview-url'] }}
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      preview-url: ${{ steps.preview.outputs['preview-url'] }}
+      api-url: ${{ steps.preview.outputs['api-url'] }}
+      release-digest: ${{ steps.preview.outputs['release-digest'] }}
+concurrency:
+  group: preview-${{ github.event.inputs.pr }}
+  cancel-in-progress: false

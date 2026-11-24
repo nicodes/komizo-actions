@@ -105,7 +105,7 @@ class NativeWorkflowContext(unittest.TestCase):
     def assert_environment_scope(self, workflow, name, job):
         effects = {('deploy.yml', 'deliver'): '${{ inputs.environment }}',
                    ('deliver.yml', 'deliver'): '${{ inputs.environment }}',
-                   ('pr-preview.yml', 'effects'): 'Preview'}
+                   ('pr-preview.yml', 'effects'): 'Preview', ('preview.yml', 'preview'): 'Preview'}
         value = job['environment']
         if (workflow, name) in effects:
             expected = effects[workflow, name]
@@ -132,7 +132,7 @@ class NativeWorkflowContext(unittest.TestCase):
                 observed.add((path.name, name))
         self.assertEqual(observed, {
             ('deploy.yml', 'deliver'), ('deliver.yml', 'deliver'), ('pr-preview.yml', 'effects'),
-            ('backup.yml', 'backup'),
+            ('preview.yml', 'preview'), ('backup.yml', 'backup'),
             ('notify.yml', 'notify'), ('request-preview.yml', 'request'),
             ('verify-production.yml', 'verify')})
 
