@@ -302,7 +302,8 @@ def prepare(root,tools,config,record,operation,environment,*,helpers=None,contex
             if policy['go']:tools_needed.update(['go','go:golang.org/x/vuln/cmd/govulncheck'])
         selected=packages
         for package in selected:tools_needed.add('bun' if package.get('manager','npm')=='bun' else 'node')
-    if not tools_needed<=pins.keys():raise ValueError('operational SDKs require exact native Mise pins')
+    if not tools_needed<=pins.keys():
+        raise ValueError('operational SDKs require exact native Mise pins; missing: '+', '.join(sorted(tools_needed-pins.keys())))
     environment=runtime_environment(root,helpers or tools,environment,context)
     execute(['mise','install',*sorted(tools_needed)],root,environment)
     manifests=sorted({check['path'] for check in checks if check['runner'].startswith('cargo-')})

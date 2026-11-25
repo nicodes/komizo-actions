@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -116,3 +117,26 @@ class ActivationReader(unittest.TestCase):
                 patch('sys.argv', ['activation_reader.py', '--github-output']):
             reader.main()
         self.assertEqual(output.read_text(), 'repository=nicodes/tools\nrevision=' + self.revision + '\n')
+
+
+class PinnedReaderAcceptsDeliveryAdapters(unittest.TestCase):
+    """The reader audits deployments made by every delivery workflow in this repository."""
+
+    def test_pinned_reader_names_every_workflow_that_has_a_deliver_job(self):
+        import urllib.error
+        import urllib.request
+        identity = reader.identity()
+        url = ('https://raw.githubusercontent.com/' + identity['repository'] + '/' + identity['revision']
+               + '/helpers/scan-deployed.py')
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                source = response.read().decode()
+        except urllib.error.URLError as error:
+            self.skipTest('reader source is unreachable: ' + str(error))
+        providers = sorted(path.name for path in (ROOT / '.github/workflows').glob('*.yml')
+                           if re.search(r'^  deliver:\s*$', path.read_text(), re.M))
+        self.assertIn('deliver.yml', providers)
+        for name in providers:
+            with self.subTest(workflow=name):
+                self.assertIn("'" + name + "'", source,
+                              'pinned reader does not accept deployments made by ' + name)
