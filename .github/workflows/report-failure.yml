@@ -40,12 +40,14 @@ jobs:
         [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ && "$GITHUB_WORKFLOW_SHA" == "$GITHUB_SHA" ]]
         [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
         [[ "$GITHUB_REF" == refs/heads/main ]]
-        [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+        [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch || "$GITHUB_EVENT_NAME" == workflow_run ]]
         case "$GITHUB_WORKFLOW_REF" in
           "$GITHUB_REPOSITORY/.github/workflows/security.yml@refs/heads/main")
             [[ "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]] ;;
           "$GITHUB_REPOSITORY/.github/workflows/deploy.yml@refs/heads/main")
             [[ "$GITHUB_EVENT_NAME" == push || "$GITHUB_EVENT_NAME" == workflow_dispatch ]] ;;
+          "$GITHUB_REPOSITORY/.github/workflows/verify-production.yml@refs/heads/main")
+            [[ "$GITHUB_EVENT_NAME" == workflow_run || "$GITHUB_EVENT_NAME" == schedule || "$GITHUB_EVENT_NAME" == workflow_dispatch ]] ;;
           *) exit 1 ;;
         esac
     - name: Check out source
