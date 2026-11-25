@@ -566,6 +566,27 @@ class OperationalAuthority(unittest.TestCase):
         self.assertIn("fromJSON(inputs['step-timeouts']).source",text)
         self.assertIn("fromJSON(inputs['step-timeouts']).deployed",text)
 
+    def test_artifact_tasks_run_without_this_workflows_komizo_checkout_variable(self):
+        # The caller's recipe admits its own prepared SDK source and refuses a KOMIZO_ACTIONS_ROOT naming any other
+        # tree, so the tasks must not receive this workflow's checkout as that variable.
+        record = dict(self.data['security'], artifact_validation=True)
+        context = SimpleNamespace(tools=self.tools, cookbook_revision=self.revision, tools_revision=self.revision,
+                                  cookbook=self.tools)
+        inherited = dict(self.environment, OPERATION='security', KOMIZO_ACTIONS_ROOT='/stale')
+        for command, task in [('setup-artifacts', 'setup'), ('build-artifacts', 'build'), ('audit-artifacts', 'test:security')]:
+            calls = []
+            with self.subTest(command=command), chdir(self.root), patch.dict(os.environ, inherited, clear=True), \
+                    patch.object(driver, 'authority', return_value=(self.config, self.data, record, context)), \
+                    patch.object(driver.recipe_data, 'canonical_entrypoint'), \
+                    patch.object(driver.recipe_data, 'task_command', side_effect=lambda cookbook, name: ['mise', 'run', name]), \
+                    patch.object(driver, 'execute', side_effect=lambda argv, root, env, timeout: calls.append((argv, env))), \
+                    patch.object(sys, 'argv', ['operational.py', command, '--cookbook-root', str(self.tools),
+                                               '--cookbook-ref', self.revision]):
+                driver.main()
+            self.assertEqual([argv for argv, _ in calls], [['mise', 'run', task]])
+            self.assertNotIn('KOMIZO_ACTIONS_ROOT', calls[0][1])
+            self.assertEqual(calls[0][1]['TOOLS_ROOT'], str(self.tools))
+
     def test_deployed_go_policy_prepares_real_scanners_and_refuses_missing_pins(self):
         (self.root/'mise.toml').write_text('[tools]\npython="3.13.11"\ngo="1.27.3"\ntrivy="0.74.0"\n"go:golang.org/x/vuln/cmd/govulncheck"="1.7.0"\n')
         node=SimpleNamespace(validate=lambda value,root:(value,None),install=lambda *args:None)
