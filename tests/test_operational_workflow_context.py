@@ -91,7 +91,16 @@ class NativeWorkflowContext(unittest.TestCase):
         self.assertEqual(run({}), 0)
         self.assertEqual(run({'GITHUB_EVENT_NAME': 'push',
             'GITHUB_WORKFLOW_REF': 'owner/application/.github/workflows/deploy.yml@refs/heads/main'}), 0)
-        for changes in [{'COOKBOOK_REF': 'main'}, {'KOMIZO_REF': 'main'},
+        verify = 'owner/application/.github/workflows/verify-production.yml@refs/heads/main'
+        for event in ['workflow_run', 'schedule', 'workflow_dispatch']:
+            self.assertEqual(run({'GITHUB_EVENT_NAME': event, 'GITHUB_WORKFLOW_REF': verify}), 0)
+        for changes in [{'GITHUB_EVENT_NAME': 'push', 'GITHUB_WORKFLOW_REF': verify},
+            {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_WORKFLOW_REF': verify},
+            {'GITHUB_EVENT_NAME': 'workflow_run'},
+            {'GITHUB_EVENT_NAME': 'workflow_run', 'GITHUB_WORKFLOW_REF': 'owner/application/.github/workflows/deploy.yml@refs/heads/main'},
+            {'GITHUB_WORKFLOW_REF': 'other/application/.github/workflows/verify-production.yml@refs/heads/main'},
+            {'GITHUB_WORKFLOW_REF': verify.replace('refs/heads/main', 'refs/heads/feature')},
+            {'COOKBOOK_REF': 'main'}, {'KOMIZO_REF': 'main'},
             {'GITHUB_REPOSITORY': 'other'}, {'GITHUB_WORKFLOW_SHA': 'd' * 40},
             {'GITHUB_RUN_ID': '0'}, {'GITHUB_RUN_ATTEMPT': '0'},
             {'GITHUB_REF': 'refs/heads/feature'}, {'GITHUB_EVENT_NAME': 'push'}, {'GITHUB_EVENT_NAME': 'pull_request'},
