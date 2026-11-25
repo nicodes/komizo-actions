@@ -55,7 +55,8 @@ class Admission(unittest.TestCase):
             return json.dumps({'total_count': len(self.artifacts), 'artifacts': self.artifacts})
         if '/attempts/' in path and '/jobs' in path:
             return json.dumps({'total_count': 1, 'jobs': [self.job]})
-        return json.dumps({'workflow_runs': self.runs})
+        assert 'status=' not in path
+        return json.dumps({'total_count': len(self.runs), 'workflow_runs': self.runs})
 
     def admit(self, environment=None):
         return deployed.admit(environment or self.environment(), self.lookup)

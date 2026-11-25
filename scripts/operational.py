@@ -92,10 +92,23 @@ def deployment_run(event, repository, revision):
     return run_id, attempt
 
 
+def deployment_runs(repository, revision, lookup):
+    """Every Deploy run of this revision, whatever its state, each at its latest attempt.
+
+    The listing is filtered by head SHA only. The `status=` filter is served from an index that can lag a
+    completed run by many minutes, whereas the head SHA listing is current, so success is judged here from each
+    run's own fields. A re-run replaces its run's attempt in place, so a run is never listed twice. A listing
+    that is not complete within one page is refused rather than judged from part of it."""
+    runs = json.loads(lookup(f'repos/{repository}/actions/workflows/deploy.yml/runs?head_sha={revision}&per_page=100'))
+    rows = runs.get('workflow_runs')
+    if not isinstance(rows, list) or type(runs.get('total_count')) is not int or runs['total_count'] != len(rows):
+        raise ValueError('complete Deploy run records of this revision are required')
+    return [run for run in rows if isinstance(run, dict)]
+
+
 def successful_deployment(repository, revision, lookup, exact=None):
     endpoint = f'repos/{repository}/actions'
-    runs = json.loads(lookup(f'{endpoint}/workflows/deploy.yml/runs?head_sha={revision}&status=success&per_page=100'))
-    for run in runs['workflow_runs']:
+    for run in deployment_runs(repository, revision, lookup):
         run_id, attempt = run.get('id'), run.get('run_attempt')
         if exact is not None and (run_id, attempt) != exact:
             continue
@@ -125,7 +138,8 @@ DEPLOYMENT_PAUSE=10
 def awaited_deployment(repository, revision, lookup, exact, *, waits=DEPLOYMENT_WAITS, pause=DEPLOYMENT_PAUSE, sleep=time.sleep):
     """Confirm that the exact triggering Deploy run succeeded, tolerating a listing that lags its completion.
 
-    The successful-run listing can briefly omit a run whose completion just triggered this workflow. Each miss
+    The head SHA listing is current, but a run whose completion just triggered this workflow may still be
+    missing from it for a few seconds. (The `status=success` filter lags far longer and is not used.) Each miss
     reads that one run: a completed run without a success conclusion refuses at once, anything else waits and
     reads again, at most `waits` times. Only a later read that shows the exact run and attempt successful under
     every condition of `successful_deployment` passes, so the wait never weakens the check."""
