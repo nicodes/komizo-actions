@@ -69,6 +69,15 @@ def runtime_environment(root,tools,environment,context=None):
     return values
 
 
+def artifact_environment(environment):
+    """Environment for the caller's own native tasks that build and audit its artifacts.
+
+    Those tasks prepare and select their own accepted Komizo SDK source inside the caller checkout, and their
+    recipe refuses any other KOMIZO_ACTIONS_ROOT. This workflow's checkout is a different tree, so it is not
+    passed on; the recipe derives the variable itself from the source it admitted."""
+    return {key:value for key,value in environment.items() if key!='KOMIZO_ACTIONS_ROOT'}
+
+
 def deployment_run(event, repository, revision):
     """Identify the one Deploy run whose completion triggered a separate verification workflow.
 
@@ -382,6 +391,7 @@ def main():
             if operation!='security' or not record.get('artifact_validation'):
                 raise ValueError('artifact validation requires its explicit source build policy')
             recipe_data.canonical_entrypoint(root,cookbook,revision)
+            environment=artifact_environment(environment)
             commands={'setup-artifacts':'setup','build-artifacts':'build','audit-artifacts':'test:security'}
             if args.command in commands:execute(recipe_data.task_command(cookbook,commands[args.command]),root,environment,record['timeout_minutes']*60)
             else:
