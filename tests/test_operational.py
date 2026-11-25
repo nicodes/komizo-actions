@@ -293,11 +293,10 @@ class OperationalAuthority(unittest.TestCase):
     def test_a_rerun_deploy_run_is_only_accepted_at_the_attempt_the_listing_reports(self):
         # The listing reports a run's latest attempt: a triggering attempt 1 is refused once attempt 2 exists.
         environment = self.workflow_run_environment()
-        rerun = dict(id=1234, head_sha=self.revision, head_branch='main', conclusion='success',
-                     path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=2)
         def lookup(path):
             if '/workflows/deploy.yml/runs' in path:
-                return self.listing([rerun])
+                return self.listing([dict(id=1234, head_sha=self.revision, head_branch='main', conclusion='success',
+                    path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=2)])
             if '/attempts/2/jobs' in path:
                 return json.dumps({'total_count': 1, 'jobs': [dict(name='Deploy / Deploy', status='completed', conclusion='success',
                     run_id=1234, run_attempt=2, head_sha=self.revision)]})
@@ -306,7 +305,7 @@ class OperationalAuthority(unittest.TestCase):
             return self.lookup(path)
         with self.assertRaisesRegex(ValueError, 'exact Deploy run'):
             self.admit(environment, 'production', lookup=lookup, sleep=lambda _: None)
-        self.admit(self.workflow_run_environment(run_attempt=2) | dict(GITHUB_SHA=self.revision), 'production', lookup=lookup)
+        self.admit(self.workflow_run_environment(run_attempt=2), 'production', lookup=lookup)
 
     def test_an_incomplete_deploy_listing_is_refused(self):
         def lookup(path):
