@@ -75,9 +75,9 @@ def admit(environment, lookup):
 
 def latest(driver, repository, revision, lookup):
     """The newest successful Deploy run of this exact revision, by the same checks as a triggered run."""
-    runs = json.loads(lookup(f'repos/{repository}/actions/workflows/deploy.yml/runs?head_sha={revision}&status=success&per_page=100'))
-    candidates = sorted((run for run in runs.get('workflow_runs', []) if isinstance(run, dict)
-                         and type(run.get('id')) is int and type(run.get('run_attempt')) is int),
+    runs = driver.deployment_runs(repository, revision, lookup)
+    candidates = sorted((run for run in runs
+                         if type(run.get('id')) is int and type(run.get('run_attempt')) is int),
                         key=lambda run: (run['id'], run['run_attempt']), reverse=True)
     for run in candidates:
         if driver.successful_deployment(repository, revision, lookup, (run['id'], run['run_attempt'])):

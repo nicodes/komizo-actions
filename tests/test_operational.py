@@ -110,8 +110,12 @@ class OperationalAuthority(unittest.TestCase):
         if '/attempts/1/jobs' in path:
             return json.dumps({'total_count': 1, 'jobs': [dict(name='Deploy / Deploy', status='completed', conclusion='success',
                 run_id=1234, run_attempt=1, head_sha=self.revision)]})
-        return json.dumps({'workflow_runs': [dict(id=1234, head_sha=self.revision, head_branch='main', conclusion='success',
-            path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=1)]})
+        return self.listing([dict(id=1234, head_sha=self.revision, head_branch='main', conclusion='success',
+            path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=1)])
+
+    @staticmethod
+    def listing(runs):
+        return json.dumps({'total_count': len(runs), 'workflow_runs': runs})
 
     def admit(self, environment=None, operation='security', selected='', lookup=None, sleep=lambda _: None):
         def module(name):
@@ -257,13 +261,59 @@ class OperationalAuthority(unittest.TestCase):
                 value = json.loads(self.lookup(path))
                 if len(reads) < appears_on:
                     value['workflow_runs'] = []
-                value['workflow_runs'] = [*other_runs, *value['workflow_runs']]
-                return json.dumps(value)
+                return self.listing([*other_runs, *value['workflow_runs']])
             if path.endswith('/runs/1234/attempts/1'):
                 return json.dumps(run or dict(id=1234, run_attempt=1, status='in_progress', conclusion=None))
             return self.lookup(path)
         lookup.reads = reads
         return lookup
+
+    def test_the_deploy_listing_is_by_head_sha_and_never_filtered_by_status(self):
+        lookup = self.lagging_lookup(1)
+        self.admit(self.workflow_run_environment(), 'production', lookup=lookup)
+        self.assertEqual(lookup.reads, [f'repos/owner/demo/actions/workflows/deploy.yml/runs?head_sha={self.revision}&per_page=100'])
+        self.assertTrue(all('status=' not in read for read in lookup.reads))
+
+    def test_unsuccessful_runs_of_the_same_revision_in_the_listing_are_refused(self):
+        environment = self.workflow_run_environment()
+        base = dict(id=1234, head_sha=self.revision, head_branch='main', conclusion='success',
+                    path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=1)
+        for change in [dict(status='in_progress', conclusion=None), dict(conclusion='failure'), dict(conclusion='cancelled'),
+                       dict(head_branch='feature'), dict(event='pull_request'), dict(path='.github/workflows/other.yml'),
+                       dict(head_sha='f' * 40), dict(run_attempt=2)]:
+            def lookup(path, change=change):
+                if '/workflows/deploy.yml/runs' in path:
+                    return self.listing([base | change])
+                if path.endswith('/runs/1234/attempts/1'):
+                    return json.dumps(dict(id=1234, run_attempt=1, status='in_progress', conclusion=None))
+                return self.lookup(path)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.admit(environment, 'production', lookup=lookup, sleep=lambda _: None)
+
+    def test_a_rerun_deploy_run_is_only_accepted_at_the_attempt_the_listing_reports(self):
+        # The listing reports a run's latest attempt: a triggering attempt 1 is refused once attempt 2 exists.
+        environment = self.workflow_run_environment()
+        def lookup(path):
+            if '/workflows/deploy.yml/runs' in path:
+                return self.listing([dict(id=1234, head_sha=self.revision, head_branch='main', conclusion='success',
+                    path='.github/workflows/deploy.yml', event='workflow_dispatch', run_attempt=2)])
+            if '/attempts/2/jobs' in path:
+                return json.dumps({'total_count': 1, 'jobs': [dict(name='Deploy / Deploy', status='completed', conclusion='success',
+                    run_id=1234, run_attempt=2, head_sha=self.revision)]})
+            if path.endswith('/runs/1234/attempts/1'):
+                return json.dumps(dict(id=1234, run_attempt=1, status='completed', conclusion='success'))
+            return self.lookup(path)
+        with self.assertRaisesRegex(ValueError, 'exact Deploy run'):
+            self.admit(environment, 'production', lookup=lookup, sleep=lambda _: None)
+        self.admit(self.workflow_run_environment(run_attempt=2), 'production', lookup=lookup)
+
+    def test_an_incomplete_deploy_listing_is_refused(self):
+        def lookup(path):
+            if '/workflows/deploy.yml/runs' in path:
+                return json.dumps({'total_count': 101, 'workflow_runs': json.loads(self.lookup(path))['workflow_runs']})
+            return self.lookup(path)
+        with self.assertRaisesRegex(ValueError, 'complete Deploy run records'):
+            self.admit(self.workflow_run_environment(), 'production', lookup=lookup, sleep=lambda _: None)
 
     def test_a_listing_that_lags_the_deploy_run_passes_on_a_later_read(self):
         sleeps = []
