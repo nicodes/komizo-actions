@@ -578,7 +578,7 @@ class OperationalAuthority(unittest.TestCase):
             self.assertTrue({'go','go:golang.org/x/vuln/cmd/govulncheck','trivy'}<=set(effects[0]))
             effects.clear()
             (self.root/'mise.toml').write_text('[tools]\npython="3.13.11"\ngo="1.27.3"\ntrivy="0.74.0"\n')
-            with self.assertRaisesRegex(ValueError,'exact native Mise pins'):
+            with self.assertRaisesRegex(ValueError,'exact native Mise pins; missing: go:golang.org/x/vuln/cmd/govulncheck'):
                 driver.prepare(self.root,self.tools,self.config,self.data['security'],'security',self.environment)
             self.assertEqual(effects,[])
 
